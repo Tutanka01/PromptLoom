@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+
+# Manim and generated media artifacts.
+media/
+videos/**/media/
+videos/**/audio/
+videos/**/final/
+videos/**/renders/
+videos/**/concat*.txt
+**/renders/check_*.png
+
+# Local one-off TTS test output.
+darijat_sample.mp3
