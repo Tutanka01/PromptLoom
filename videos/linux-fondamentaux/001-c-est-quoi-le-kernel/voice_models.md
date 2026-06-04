@@ -1,32 +1,27 @@
-# Voix off locale
+# Voice Notes
 
-## Objectif qualite
-Pour la version finale, il faut viser une voix française expressive, stable sur 5 minutes, avec peu d'artefacts sur les mots techniques : kernel, syscall, scheduler, namespaces, cgroups.
+The final English video uses the main Chatterbox model, not Chatterbox Turbo.
 
-## Backends locaux prévus
-
-### 1. Modèle local haute qualité
-À privilégier pour la version finale. Le script `generate_voice.py` est volontairement séparé du rendu vidéo pour pouvoir brancher un moteur local plus haut de gamme sans toucher à Manim.
-
-Critères :
-- inférence locale ;
-- voix française ou clonage/licence compatible ;
-- export WAV/MP3 ;
-- contrôle du débit et des pauses ;
-- pas de dépendance cloud pour le rendu final.
-
-### 2. Piper local
-Bon fallback entièrement local, simple à automatiser, mais souvent moins naturel qu'un modèle neural plus récent. Utilisable avec :
+Preferred command:
 
 ```bash
-python3 generate_voice.py --engine piper --piper-model /path/to/model.onnx
+uv run --python 3.11 --with chatterbox-tts python generate_voice_en.py \
+  --engine chatterbox \
+  --exaggeration 0.45 \
+  --cfg-weight 0.55 \
+  --temperature 0.55 \
+  --tail-padding 0.45
 ```
 
-### 3. Voix macOS locale
-Fallback de maquette, pas le rendu final recommandé :
+Notes:
 
-```bash
-python3 generate_voice.py --engine macos --voice Thomas --rate 155
-```
+- Chatterbox main is slower than Turbo, but it produced the preferred voice quality for the final version.
+- Do not regenerate accepted voice files unless the segment text changes.
+- If only one segment changes, regenerate only what is necessary when possible.
+- `audio/en/durations.json` is generated from the real audio durations and drives Manim synchronization.
+- `audio/` is not committed; it is regenerated from `segments_en.json`.
 
-Ce backend génère `audio/voiceover.mp3` si `afconvert` sait encoder MP3 sur la machine. Il génère aussi `audio/voiceover.aiff`.
+Fallbacks available in `generate_voice_en.py`:
+
+- `--engine chatterbox-turbo`: faster, lower preferred quality.
+- `--engine kokoro`: lightweight fallback for quick tests.

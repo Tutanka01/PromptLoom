@@ -1,112 +1,112 @@
 # manim-video-voice-generator
 
-Pipeline de generation de videos explicatives avec Manim, voix off TTS, synchronisation audio/video et assemblage final avec `ffmpeg`.
+Create polished explainer videos from a structured script, synchronized TTS voiceover, Manim animations, and an `ffmpeg` final assembly step.
 
-L'usage actuel du projet est la production de videos pedagogiques sur Linux, le noyau et les systemes bas niveau. L'objectif n'est pas de generer de simples prototypes Manim : chaque video doit etre construite comme une vraie video pedagogique, avec narration claire, scenes synchronisees avec la voix, rendu propre, verification technique et controle visuel avant livraison.
+This repository is built around a simple idea: a good technical video is not just code that renders. The narration, the audio timing, and the visual explanation must move together scene by scene. If the voice explains the scheduler, the animation shows scheduling. If the voice explains virtual memory, the animation shows virtual addresses, page tables, and RAM.
 
-## Etat du projet
+The current showcase topic is Linux internals, starting with a first final video: **What is the Linux kernel?**
 
-La video de reference actuelle est :
+## Demo
+
+First generated video, English version, rendered in 1080p60 with the preferred full Chatterbox voice:
+
+<video src="videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4" controls width="100%"></video>
+
+Direct file:
+
+```text
+videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4
+```
+
+## What This Project Provides
+
+- A repeatable structure for educational videos.
+- One narration segment per Manim scene.
+- TTS generation driven by JSON segments.
+- Real audio durations exported to `durations.json`.
+- Manim scenes synchronized to the generated voice.
+- Final audio/video muxing with `ffmpeg`.
+- Technical checks with `ffprobe`.
+- Visual snapshot checks before accepting a render.
+
+The goal is a production workflow, not a throwaway animation prototype.
+
+## Repository Strategy
+
+The repository keeps:
+
+- source scripts;
+- video plans and narration;
+- segment metadata;
+- Manim scene code;
+- TTS generation scripts;
+- render and assembly scripts;
+- documentation;
+- selected final approved videos.
+
+The repository does not keep generated working files:
+
+- raw generated voice segments;
+- Manim cache/output directories;
+- silent intermediate videos;
+- render snapshots;
+- concat temp files;
+- secrets.
+
+This keeps the project reproducible without turning Git into a storage dump.
+
+## Current Video
 
 ```text
 videos/linux-fondamentaux/001-c-est-quoi-le-kernel/
 ```
 
-Elle sert de modele pour l'organisation, la synchronisation audio/video, le rendu Manim et l'assemblage final avec `ffmpeg`.
-
-Les fichiers generes lourds ne sont pas versionnes par defaut :
-
-- `audio/`
-- `final/`
-- `media/`
-- `renders/`
-- fichiers `concat*.txt`
-
-Le depot versionne surtout la recette reproductible : scripts, plans, narration, segments, scenes Manim et documentation.
-
-## Documentation importante
-
-Avant de modifier ou creer une video, lire :
+Canonical files:
 
 ```text
-AGENTS.md
-PROCEDURE.md
+plan.md
+script_en.md
+segments_en.json
+kernel_intro_en.py
+kernel_style.py
+generate_voice_en.py
+render_en.sh
+assemble_en.sh
+voice_models.md
+final/kernel-intro-en-final.mp4
 ```
 
-`AGENTS.md` definit les regles de qualite, les priorites et les comportements attendus.
+The final video is kept because it is the first accepted reference output. Intermediate audio, Manim media, caches, and silent renders are ignored.
 
-`PROCEDURE.md` decrit le pipeline operationnel complet : generation de voix, synchronisation, rendu, assemblage et verification.
+## Workflow
 
-## Structure d'une video
+For each new video:
 
-Chaque video doit vivre dans son propre dossier :
+1. Define the topic, audience, and teaching goal.
+2. Write `plan.md`.
+3. Write the narration script.
+4. Split the script into `segments_<lang>.json`.
+5. Create one Manim scene per segment.
+6. Generate the TTS voiceover.
+7. Export real audio durations.
+8. Synchronize Manim animation timing to those durations.
+9. Render a low-quality pass.
+10. Fix timing, layout, and visual clarity.
+11. Render the final 1080p60 version.
+12. Assemble audio and video.
+13. Verify with `ffprobe`.
+14. Extract and inspect snapshots.
+15. Keep only source files and selected final outputs.
+
+## Generate Voice
+
+Preferred final English voice:
 
 ```text
-videos/<thematique>/<numero-slug>/
+Chatterbox main model, non-turbo
 ```
 
-Exemple :
-
-```text
-videos/linux-fondamentaux/001-c-est-quoi-le-kernel/
-```
-
-Structure recommandee :
-
-```text
-plan.md                  # intention, public, scenes et logique pedagogique
-script.md                # narration complete
-segments_en.json         # segments synchronises avec les scenes
-kernel_intro_en.py       # scenes Manim
-generate_voice_en.py     # generation TTS
-render_en.sh             # rendu Manim et concat video silencieuse
-assemble_en.sh           # assemblage audio/video
-audio/en/                # genere, ignore par git
-final/                   # genere, ignore par git
-renders/                 # controles visuels, ignore par git
-```
-
-Adapter les noms selon le sujet, mais garder la separation :
-
-- narration ;
-- segments ;
-- scenes Manim ;
-- voix ;
-- rendu ;
-- assemblage ;
-- verification.
-
-## Workflow de production
-
-Le pipeline attendu est :
-
-1. definir le sujet et le public ;
-2. ecrire ou mettre a jour `plan.md` ;
-3. ecrire le script narratif ;
-4. decouper le script en segments ;
-5. creer une classe Manim par segment ;
-6. generer la voix off ;
-7. produire `durations.json` ;
-8. synchroniser les scenes sur les durees audio reelles ;
-9. rendre en basse qualite ;
-10. corriger les problemes de timing, texte et mise en scene ;
-11. rendre en 1080p60 ;
-12. assembler audio et video ;
-13. verifier avec `ffprobe` ;
-14. extraire et inspecter plusieurs frames ;
-15. livrer le chemin du MP4 final.
-
-Regle centrale : la voix et l'image doivent raconter exactement le meme segment pedagogique. Si la narration parle du scheduler, l'image montre le scheduler. Si elle parle de memoire virtuelle, l'image montre les adresses virtuelles, les tables de pages et la RAM.
-
-## Audio
-
-Le moteur de reference pour les videos finales anglaises est :
-
-```text
-Chatterbox principal non-turbo
-```
-
-Commande type depuis le dossier d'une video :
+From the video folder:
 
 ```bash
 uv run --python 3.11 --with chatterbox-tts python generate_voice_en.py \
@@ -117,158 +117,108 @@ uv run --python 3.11 --with chatterbox-tts python generate_voice_en.py \
   --tail-padding 0.45
 ```
 
-Le fichier cle de synchronisation est :
+This creates:
 
 ```text
 audio/en/durations.json
+audio/en/voiceover_en.wav
+audio/en/voiceover_en.mp3
 ```
 
-Les scenes Manim doivent utiliser les memes cles que les segments audio.
+`audio/` is generated and ignored by Git.
 
-## Rendu
+## Render And Assemble
 
-Rendu de test :
+Low-quality iteration:
 
 ```bash
 QUALITY=ql ./render_en.sh
 ```
 
-Rendu final :
+Final render:
 
 ```bash
 QUALITY=qh ./render_en.sh
 ```
 
-Le rendu final attendu est en 1080p60. Une scene qui echoue doit etre corrigee, pas supprimee sans modifier la narration.
-
-## Assemblage
-
-Depuis le dossier de la video :
+Assemble:
 
 ```bash
 ./assemble_en.sh
 ```
 
-Le fichier final doit etre ecrit dans :
-
-```text
-final/
-```
-
-Exemple :
+Final output:
 
 ```text
 final/kernel-intro-en-final.mp4
 ```
 
-## Verification
+## Verify
 
-Verifier le fichier final avec :
+Run:
 
 ```bash
-ffprobe -v error -show_entries format=duration,size -show_streams -of json final/<video>.mp4
+ffprobe -v error -show_entries format=duration,size -show_streams -of json final/kernel-intro-en-final.mp4
 ```
 
-Points attendus :
+Expected:
 
-- stream video present ;
-- stream audio present ;
-- resolution 1920x1080 ;
-- framerate 60 fps ;
-- audio AAC ;
-- duree audio proche de la duree video ;
-- pas de video muette ou anormalement courte.
+- video stream present;
+- audio stream present;
+- 1920x1080;
+- 60 fps;
+- H.264 video;
+- AAC audio;
+- audio and video durations aligned.
 
-Extraire ensuite plusieurs frames, une commande par timestamp :
+Extract visual checks one timestamp at a time:
 
 ```bash
 mkdir -p renders
-ffmpeg -y -ss 00:00:10 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0010.png
-ffmpeg -y -ss 00:01:30 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0130.png
-ffmpeg -y -ss 00:03:00 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0300.png
+ffmpeg -y -ss 00:00:10 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0010.png
+ffmpeg -y -ss 00:01:35 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0135.png
+ffmpeg -y -ss 00:03:20 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0320.png
+ffmpeg -y -ss 00:04:20 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0420.png
 ```
 
-Inspecter les images pour verifier :
+Check for:
 
-- pas de texte coupe ;
-- pas de labels hors cadre ;
-- pas de chevauchements incoherents ;
-- pas d'ecran vide ;
-- pas de scene statique trop longtemps ;
-- coherence entre ce qui est montre et ce qui est raconte.
+- clipped text;
+- labels outside the frame;
+- incoherent overlaps;
+- blank screens;
+- long static scenes;
+- mismatch between narration and visuals.
 
-## Darijat TTS
+## Documentation For Agents
 
-Le depot contient un petit test d'integration Darijat :
+Before changing or generating a video, read:
 
 ```text
-generate_darijat_sample.py
-darijat_sample_text.txt
+AGENTS.md
+PROCEDURE.md
 ```
 
-La cle API doit rester dans `.env` :
+`AGENTS.md` defines quality rules and project standards.
 
-```text
-DARIJAT_API_TOKEN=...
-```
+`PROCEDURE.md` defines the operational pipeline and known pitfalls.
 
-`.env` est ignore par Git.
+## Dependencies
 
-Generer un sample :
+- Python 3.11.
+- `uv`.
+- Manim Community Edition.
+- `ffmpeg` and `ffprobe`.
+- Chatterbox TTS.
+- Optional: Darijat TTS API for Arabic/Moroccan voice tests.
 
-```bash
-./generate_darijat_sample.py
-```
+## Git Checklist
 
-Le sample MP3 genere a la racine est ignore par Git. Pour les scripts arabes, la strategie actuelle est d'ecrire un texte en arabe standard clair, puis de laisser la voix marocaine apporter la couleur vocale.
-
-## Strategie Git
-
-Ce depot doit rester centre sur les sources reproductibles.
-
-A versionner :
-
-- plans ;
-- scripts narratifs ;
-- fichiers de segments ;
-- scenes Manim ;
-- scripts de generation audio ;
-- scripts de rendu et assemblage ;
-- documentation.
-
-A ne pas versionner :
-
-- secrets `.env` ;
-- caches Python ;
-- sorties Manim ;
-- voix generees ;
-- videos finales ;
-- snapshots de verification ;
-- fichiers temporaires de concat.
-
-Avant de committer :
+Before committing:
 
 ```bash
 git status --short --ignored
 git ls-files --others --exclude-standard
 ```
 
-Puis :
-
-```bash
-git add -A
-git commit -m "Add kernel video generation pipeline"
-```
-
-## Dependances
-
-Outils utilises dans le pipeline :
-
-- Python 3.11 pour la generation TTS ;
-- `uv` pour lancer les dependances Python ponctuelles ;
-- Manim Community Edition ;
-- `ffmpeg` et `ffprobe` ;
-- Chatterbox TTS pour la voix locale de reference ;
-- API Darijat TTS pour les tests de voix arabe/marocaine.
-
-Installer ou verifier ces dependances selon la machine avant de lancer un rendu complet.
+Commit only source files, documentation, and selected final videos.

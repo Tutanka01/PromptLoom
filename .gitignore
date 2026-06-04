@@ -7,7 +7,8 @@ __pycache__/
 media/
 videos/**/media/
 videos/**/audio/
-videos/**/final/
+videos/**/final/*
+!videos/**/final/*-en-final.mp4
 videos/**/renders/
 videos/**/concat*.txt
 **/renders/check_*.png

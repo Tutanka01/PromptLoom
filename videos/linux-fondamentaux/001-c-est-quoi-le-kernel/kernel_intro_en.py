@@ -3,7 +3,7 @@ from pathlib import Path
 
 from manim import *
 
-from kernel_intro import (
+from kernel_style import (
     BG,
     DANGER,
     HARDWARE,
