@@ -1,112 +1,109 @@
 # manim-video-voice-generator
 
-Create polished explainer videos from a structured script, synchronized TTS voiceover, Manim animations, and an `ffmpeg` final assembly step.
+Production workflow for polished educational videos about Linux and low-level systems.
 
-This repository is built around a simple idea: a good technical video is not just code that renders. The narration, the audio timing, and the visual explanation must move together scene by scene. If the voice explains the scheduler, the animation shows scheduling. If the voice explains virtual memory, the animation shows virtual addresses, page tables, and RAM.
+The repository now follows the v2 video standard: narration is split into scene segments, TTS audio provides real scene durations, and `beats_en.json` maps important spoken moments to visual actions inside each scene.
 
-The current showcase topic is Linux internals, starting with a first final video: **What is the Linux kernel?**
+## References
 
-## Demo
-
-First generated video, English version, rendered in 1080p60 with the preferred full Chatterbox voice:
-
-<video src="videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4" controls width="100%"></video>
-
-Direct file:
+Current videos:
 
 ```text
 videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4
+videos/linux-fondamentaux/002-c-est-quoi-un-syscall/final/syscall-intro-en-final.mp4
 ```
 
-## What This Project Provides
+Reference roles:
 
-- A repeatable structure for educational videos.
-- One narration segment per Manim scene.
-- TTS generation driven by JSON segments.
-- Real audio durations exported to `durations.json`.
-- Manim scenes synchronized to the generated voice.
-- Final audio/video muxing with `ffmpeg`.
-- Technical checks with `ffprobe`.
-- Visual snapshot checks before accepting a render.
+- `001-c-est-quoi-le-kernel`: historical stable pipeline reference.
+- `002-c-est-quoi-un-syscall`: v2 reference for beat-sync, visual focus, dimming, and `freezedetect` checks.
 
-The goal is a production workflow, not a throwaway animation prototype.
+## Documentation
 
-## Repository Strategy
+All reusable documentation lives at the repository root or in `docs/`.
 
-The repository keeps:
-
-- source scripts;
-- video plans and narration;
-- segment metadata;
-- Manim scene code;
-- TTS generation scripts;
-- render and assembly scripts;
-- documentation;
-- selected final approved videos.
-
-The repository does not keep generated working files:
-
-- raw generated voice segments;
-- Manim cache/output directories;
-- silent intermediate videos;
-- render snapshots;
-- concat temp files;
-- secrets.
-
-This keeps the project reproducible without turning Git into a storage dump.
-
-## Current Video
+Read in this order:
 
 ```text
-videos/linux-fondamentaux/001-c-est-quoi-le-kernel/
+AGENTS.md
+PROCEDURE.md
+docs/README.md
+docs/VIDEO_PRODUCTION_STANDARD.md
+docs/VOICE_AND_AUDIO.md
+docs/VIDEOS.md
+docs/boilerplate/README.md
 ```
 
-Canonical files:
+Do not add README or operational documentation inside individual video folders. Video folders should contain production source files only.
+
+## Video Folder Shape
+
+Each video has two locations.
+
+Narrative documentation lives under:
+
+```text
+docs/videos/<theme>/<number-slug>/
+```
+
+Video production files live under:
+
+```text
+videos/<theme>/<number-slug>/
+```
+
+Expected documentation files:
 
 ```text
 plan.md
-script_en.md
+script.md or script_en.md
+```
+
+Expected production files:
+
+```text
 segments_en.json
-kernel_intro_en.py
-kernel_style.py
+beats_en.json
+<slug>_en.py
+<slug>_style.py
 generate_voice_en.py
 render_en.sh
 assemble_en.sh
-voice_models.md
-final/kernel-intro-en-final.mp4
+final/<slug>-en-final.mp4
 ```
 
-The final video is kept because it is the first accepted reference output. Intermediate audio, Manim media, caches, and silent renders are ignored.
+Generated working artifacts such as `audio/`, `media/`, `renders/`, `concat*.txt`, and silent MP4 files are not source documentation.
 
-## Workflow
-
-For each new video:
+## Core Workflow
 
 1. Define the topic, audience, and teaching goal.
-2. Write `plan.md`.
-3. Write the narration script.
-4. Split the script into `segments_<lang>.json`.
-5. Create one Manim scene per segment.
-6. Generate the TTS voiceover.
-7. Export real audio durations.
-8. Synchronize Manim animation timing to those durations.
-9. Render a low-quality pass.
-10. Fix timing, layout, and visual clarity.
-11. Render the final 1080p60 version.
-12. Assemble audio and video.
-13. Verify with `ffprobe`.
-14. Extract and inspect snapshots.
-15. Keep only source files and selected final outputs.
+2. Write or update `docs/videos/<theme>/<slug>/plan.md`.
+3. Write the narration in `docs/videos/<theme>/<slug>/script.md`.
+4. Split narration into `segments_en.json`.
+5. Add narrative beats in `beats_en.json`.
+6. Build Manim scenes and a local style system.
+7. Generate or reuse Chatterbox voice audio.
+8. Render low quality with `QUALITY=ql ./render_en.sh`.
+9. Assemble with `./assemble_en.sh`.
+10. Verify with `ffprobe`, `freezedetect`, and snapshots.
+11. Render final quality with `QUALITY=qh ./render_en.sh`.
+12. Assemble and verify the final MP4.
 
-## Generate Voice
+The voice and the image must explain the same concept at the same time. A video is not final until the technical checks and visual snapshots have been inspected.
 
-Preferred final English voice:
+## Boilerplate
+
+Use the templates in:
 
 ```text
-Chatterbox main model, non-turbo
+docs/boilerplate/
 ```
 
-From the video folder:
+They define both the documentation files to copy into `docs/videos/...` and the production files to copy into `videos/...`.
+
+## Preferred Voice
+
+Use Chatterbox main, non-turbo, unless the user explicitly asks for a change:
 
 ```bash
 uv run --python 3.11 --with chatterbox-tts python generate_voice_en.py \
@@ -117,108 +114,13 @@ uv run --python 3.11 --with chatterbox-tts python generate_voice_en.py \
   --tail-padding 0.45
 ```
 
-This creates:
+## Git Hygiene
 
-```text
-audio/en/durations.json
-audio/en/voiceover_en.wav
-audio/en/voiceover_en.mp3
-```
-
-`audio/` is generated and ignored by Git.
-
-## Render And Assemble
-
-Low-quality iteration:
+Before finishing work:
 
 ```bash
-QUALITY=ql ./render_en.sh
+git status --short
+git diff --check
 ```
 
-Final render:
-
-```bash
-QUALITY=qh ./render_en.sh
-```
-
-Assemble:
-
-```bash
-./assemble_en.sh
-```
-
-Final output:
-
-```text
-final/kernel-intro-en-final.mp4
-```
-
-## Verify
-
-Run:
-
-```bash
-ffprobe -v error -show_entries format=duration,size -show_streams -of json final/kernel-intro-en-final.mp4
-```
-
-Expected:
-
-- video stream present;
-- audio stream present;
-- 1920x1080;
-- 60 fps;
-- H.264 video;
-- AAC audio;
-- audio and video durations aligned.
-
-Extract visual checks one timestamp at a time:
-
-```bash
-mkdir -p renders
-ffmpeg -y -ss 00:00:10 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0010.png
-ffmpeg -y -ss 00:01:35 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0135.png
-ffmpeg -y -ss 00:03:20 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0320.png
-ffmpeg -y -ss 00:04:20 -i final/kernel-intro-en-final.mp4 -frames:v 1 -update 1 renders/check_0420.png
-```
-
-Check for:
-
-- clipped text;
-- labels outside the frame;
-- incoherent overlaps;
-- blank screens;
-- long static scenes;
-- mismatch between narration and visuals.
-
-## Documentation For Agents
-
-Before changing or generating a video, read:
-
-```text
-AGENTS.md
-PROCEDURE.md
-```
-
-`AGENTS.md` defines quality rules and project standards.
-
-`PROCEDURE.md` defines the operational pipeline and known pitfalls.
-
-## Dependencies
-
-- Python 3.11.
-- `uv`.
-- Manim Community Edition.
-- `ffmpeg` and `ffprobe`.
-- Chatterbox TTS.
-- Optional: Darijat TTS API for Arabic/Moroccan voice tests.
-
-## Git Checklist
-
-Before committing:
-
-```bash
-git status --short --ignored
-git ls-files --others --exclude-standard
-```
-
-Commit only source files, documentation, and selected final videos.
+Commit source files, documentation in `docs/`, scripts, plans, segments, beats, Manim code, style files, and selected final MP4s. Do not commit generated working artifacts by default.

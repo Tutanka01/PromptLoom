@@ -5,8 +5,14 @@ from manim import *
 
 from syscall_style import (
     BG,
+    BODY,
+    CAP,
+    CODE,
     DANGER,
+    EDGE,
     HARDWARE,
+    H1,
+    H2,
     KERNEL,
     MUTED,
     PANEL,
@@ -18,17 +24,24 @@ from syscall_style import (
     arrow,
     card,
     code_card,
+    connect,
+    dim,
+    flow_dot,
+    glow,
     hardware_box,
     kernel_badge,
+    make_background,
     mono,
     t,
     title_bar,
+    undim,
 )
 
 
 ROOT = Path(__file__).resolve().parent
 DURATIONS_FILE = ROOT / "audio" / "en" / "durations.json"
 SEGMENTS_FILE = ROOT / "segments_en.json"
+BEATS_FILE = ROOT / "beats_en.json"
 
 
 def load_durations():
@@ -44,8 +57,15 @@ def load_segments():
     return {segment["key"]: segment["text"] for segment in data["segments"]}
 
 
+def load_beats():
+    if not BEATS_FILE.exists():
+        return {}
+    return json.loads(BEATS_FILE.read_text(encoding="utf-8"))
+
+
 DURATIONS = load_durations()
 SEGMENT_TEXT = load_segments()
+BEATS = load_beats()
 
 
 def duration(key: str, fallback: float) -> float:
@@ -79,14 +99,31 @@ class EnglishSyscallScene(Scene):
 
     def begin_sync(self):
         self._sync_start = self.time
+        self._scene_duration = duration(self.scene_key, self.fallback_duration)
         text = SEGMENT_TEXT.get(self.scene_key)
         if text:
-            self.add_subcaption(text, duration=duration(self.scene_key, self.fallback_duration))
+            self.add_subcaption(text, duration=self._scene_duration)
 
     def finish_sync(self, trailing_animation=0.7):
-        target = duration(self.scene_key, self.fallback_duration)
+        target = self.scene_duration()
         elapsed = self.time - self._sync_start
         self.wait(max(0, target - elapsed - trailing_animation))
+
+    def scene_duration(self):
+        return getattr(self, "_scene_duration", duration(self.scene_key, self.fallback_duration))
+
+    def cue(self, ratio):
+        return self._sync_start + self.scene_duration() * ratio
+
+    def hold_until(self, ratio):
+        self.wait(max(0, self.cue(ratio) - self.time))
+
+    def play_until(self, ratio, *animations, min_run_time=0.25, rate_func=smooth):
+        run_time = max(min_run_time, self.cue(ratio) - self.time)
+        self.play(*animations, run_time=run_time, rate_func=rate_func)
+
+    def beats(self):
+        return BEATS.get(self.scene_key, [])
 
 
 class Scene1_HookEN(EnglishSyscallScene):
@@ -95,37 +132,80 @@ class Scene1_HookEN(EnglishSyscallScene):
 
     def construct(self):
         self.begin_sync()
+        bg = make_background()
         title = title_bar("A command is not direct")
-        cmd = code_card("$ cat notes.txt", width=4.2, height=0.78, color=USER, font_size=25).to_edge(UP, buff=1.15)
-        app = card("program", width=2.25, color=USER, font_size=23).move_to(LEFT * 4.85 + UP * 0.15)
-        libc = card("libc\nwrapper", width=2.15, height=1.1, color=PURPLE, font_size=20).move_to(LEFT * 2.65 + UP * 0.15)
-        gate = card("syscall\ngate", width=2.05, height=1.1, color=KERNEL, font_size=20).move_to(LEFT * 0.35 + UP * 0.15)
-        kernel = kernel_badge("KERNEL").scale(0.85).move_to(RIGHT * 2.05 + UP * 0.15)
-        disk = hardware_box("storage", "NVMe", width=2.2).move_to(RIGHT * 4.85 + UP * 0.15)
-        flow = VGroup(app, libc, gate, kernel, disk)
-        arrows = VGroup(*[arrow(a.get_right(), b.get_left(), color=c) for a, b, c in zip(flow[:-1], flow[1:], [USER, PURPLE, KERNEL, HARDWARE])])
+        terminal = RoundedRectangle(width=7.2, height=1.05, corner_radius=0.16, color=USER, stroke_width=2)
+        terminal.set_fill("#101722", opacity=1).to_edge(UP, buff=1.12)
+        prompt = mono("$ cat notes.txt", CODE + 4, TEXT).move_to(terminal)
+        cursor = Rectangle(width=0.08, height=0.46, color=USER, stroke_width=0).set_fill(USER, opacity=1)
+        cursor.next_to(prompt, RIGHT, buff=0.16)
 
-        self.play(FadeIn(title), FadeIn(cmd, shift=DOWN * 0.15), run_time=1.4)
-        self.play(LaggedStart(*[FadeIn(item, shift=UP * 0.15) for item in flow], lag_ratio=0.12), run_time=1.8)
-        self.play(LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.15), run_time=1.8)
+        user_zone = RoundedRectangle(width=3.0, height=2.25, corner_radius=0.18, color=USER, stroke_width=2)
+        user_zone.set_fill("#12243E", opacity=0.35).move_to(LEFT * 4.35 + UP * 0.05)
+        user_label = t("user space", CAP, USER, BOLD).next_to(user_zone, UP, buff=0.16)
+        app = card("program", width=2.25, height=0.9, color=USER, font_size=BODY).move_to(user_zone)
 
-        forbidden = DashedLine(app.get_bottom(), disk.get_bottom(), color=DANGER, stroke_width=3).shift(DOWN * 0.95)
+        disk = hardware_box("storage", "NVMe", width=2.25, height=1.15).move_to(RIGHT * 4.65 + UP * 0.05)
+        direct = DashedLine(app.get_right(), disk.get_left(), color=DANGER, stroke_width=3).shift(DOWN * 1.0)
+        direct_label = t("direct hardware command", CAP, DANGER, BOLD).next_to(direct, DOWN, buff=0.18)
         no = VGroup(
-            Line(LEFT * 0.22 + DOWN * 0.22, RIGHT * 0.22 + UP * 0.22, color=DANGER, stroke_width=5),
-            Line(LEFT * 0.22 + UP * 0.22, RIGHT * 0.22 + DOWN * 0.22, color=DANGER, stroke_width=5),
-        ).move_to(forbidden)
-        label = t("user code asks; the kernel performs", 35, TEXT, BOLD).to_edge(DOWN, buff=0.78)
-        protected = VGroup(
-            pill("disk", HARDWARE),
-            pill("memory", SUCCESS),
-            pill("network", PURPLE),
+            Line(LEFT * 0.22 + DOWN * 0.22, RIGHT * 0.22 + UP * 0.22, color=DANGER, stroke_width=6),
+            Line(LEFT * 0.22 + UP * 0.22, RIGHT * 0.22 + DOWN * 0.22, color=DANGER, stroke_width=6),
+        ).move_to(direct)
+
+        resources = VGroup(
+            pill("disk", HARDWARE, width=1.25),
+            pill("memory", SUCCESS, width=1.55),
+            pill("network", PURPLE, width=1.7),
             pill("processes", KERNEL, width=1.9),
-        ).arrange(RIGHT, buff=0.22).next_to(label, UP, buff=0.38)
-        self.play(Create(forbidden), FadeIn(no, scale=0.7), run_time=1.2)
-        self.play(LaggedStart(*[FadeIn(item, shift=UP * 0.15) for item in protected], lag_ratio=0.13), Write(label), run_time=2.0)
-        self.play(Circumscribe(gate, color=KERNEL), Circumscribe(kernel, color=KERNEL), run_time=1.6)
+        ).arrange(RIGHT, buff=0.24).to_edge(DOWN, buff=1.05)
+
+        libc = card("libc\nwrapper", width=2.05, height=1.05, color=PURPLE, font_size=CAP).move_to(LEFT * 2.25 + UP * 0.05)
+        gate = card("syscall\ngate", width=2.05, height=1.05, color=KERNEL, font_size=CAP).move_to(ORIGIN + UP * 0.05)
+        kernel = kernel_badge("KERNEL").scale(0.82).move_to(RIGHT * 2.25 + UP * 0.05)
+        flow = VGroup(app, libc, gate, kernel, disk)
+        paths = VGroup(
+            connect(app, libc, USER),
+            connect(libc, gate, PURPLE),
+            connect(gate, kernel, KERNEL),
+            connect(kernel, disk, HARDWARE),
+        )
+        token_box = RoundedRectangle(width=0.74, height=0.34, corner_radius=0.08, color=USER, stroke_width=3)
+        token_box.set_fill("#16345A", opacity=1)
+        token_lines = VGroup(
+            Line(LEFT * 0.18, RIGHT * 0.18, color=TEXT, stroke_width=2),
+            Line(LEFT * 0.14, RIGHT * 0.14, color=TEXT, stroke_width=2),
+        ).arrange(DOWN, buff=0.08).move_to(token_box)
+        token = VGroup(token_box, token_lines).move_to(paths[0].get_start())
+        token.set_z_index(10)
+        summary = t("user code asks; the kernel performs", 34, TEXT, BOLD).to_edge(DOWN, buff=0.44)
+
+        focus_glow = None
+        self.add(bg)
+        self.play_until(0.08, FadeIn(title), FadeIn(terminal, shift=DOWN * 0.12), Write(prompt), FadeIn(cursor))
+        self.play_until(0.20, FadeIn(VGroup(user_zone, user_label, app), shift=RIGHT * 0.2), FadeIn(disk, shift=LEFT * 0.2), Create(direct), Write(direct_label))
+
+        focus_glow = glow(VGroup(direct, direct_label), DANGER)
+        self.play_until(
+            0.36,
+            FadeIn(no, scale=0.75),
+            FadeIn(focus_glow),
+            LaggedStart(*[FadeIn(item, shift=UP * 0.12) for item in resources], lag_ratio=0.12),
+            dim(disk),
+        )
+        self.play_until(0.50, FadeOut(focus_glow), undim(app), dim(VGroup(disk, resources, direct, direct_label, no)), user_zone.animate.set_stroke(USER, width=4).set_fill("#12243E", opacity=0.72))
+
+        self.play_until(0.62, FadeIn(VGroup(libc, gate, kernel), shift=UP * 0.16), FadeOut(VGroup(direct_label)), undim(disk), undim(resources), user_zone.animate.set_stroke(USER, width=2).set_fill("#12243E", opacity=0.35))
+        self.play_until(0.68, LaggedStart(*[Create(path) for path in paths], lag_ratio=0.18), FadeIn(token))
+        self.play_until(0.74, MoveAlongPath(token, paths[0]), gate.animate.set_stroke(PURPLE, width=3), rate_func=linear)
+        self.play_until(0.80, MoveAlongPath(token, paths[1]), rate_func=linear)
+        self.play_until(0.86, MoveAlongPath(token, paths[2]), kernel.animate.scale(1.08), rate_func=linear)
+        self.play_until(0.88, MoveAlongPath(token, paths[3]), disk.animate.set_opacity(1), rate_func=linear)
+
+        final_glow = glow(VGroup(gate, kernel), KERNEL)
+        self.play_until(0.94, FadeIn(final_glow), Write(summary), dim(VGroup(app, libc, disk, resources)))
         self.finish_sync()
-        self.play(FadeOut(fade_group(title, cmd, flow, arrows, forbidden, no, label, protected)), run_time=0.7)
+        self.play(FadeOut(fade_group(bg, title, terminal, prompt, cursor, user_zone, user_label, flow, paths, token, direct, no, resources, summary, final_glow)), run_time=0.7)
 
 
 class Scene2_PrivilegeBoundaryEN(EnglishSyscallScene):
@@ -134,42 +214,65 @@ class Scene2_PrivilegeBoundaryEN(EnglishSyscallScene):
 
     def construct(self):
         self.begin_sync()
+        bg = make_background()
         title = title_bar("User mode and kernel mode")
-        user_zone = RoundedRectangle(width=12.2, height=2.35, corner_radius=0.12, color=USER, stroke_width=2).set_fill("#12243E", 0.82).shift(UP * 1.35)
-        kernel_zone = RoundedRectangle(width=12.2, height=2.35, corner_radius=0.12, color=KERNEL, stroke_width=2).set_fill("#2A220B", 0.82).shift(DOWN * 1.35)
-        boundary = DashedLine(LEFT * 6.15, RIGHT * 6.15, color=TEXT, stroke_width=3)
+        user_zone = RoundedRectangle(width=12.1, height=2.35, corner_radius=0.16, color=USER, stroke_width=2).set_fill("#12243E", 0.72).shift(UP * 1.35)
+        kernel_zone = RoundedRectangle(width=12.1, height=2.35, corner_radius=0.16, color=KERNEL, stroke_width=2).set_fill("#2A220B", 0.72).shift(DOWN * 1.35)
+        boundary = DashedLine(LEFT * 6.1, RIGHT * 6.1, color=TEXT, stroke_width=3)
         labels = VGroup(
-            t("USER MODE", 28, USER, BOLD).move_to(user_zone.get_left() + RIGHT * 1.55 + UP * 0.75),
-            t("KERNEL MODE", 28, KERNEL, BOLD).move_to(kernel_zone.get_left() + RIGHT * 1.75 + DOWN * 0.75),
+            t("USER MODE", H2, USER, BOLD).move_to(user_zone.get_left() + RIGHT * 1.65 + UP * 0.72),
+            t("KERNEL MODE", H2, KERNEL, BOLD).move_to(kernel_zone.get_left() + RIGHT * 1.86 + DOWN * 0.72),
         )
         apps = VGroup(
-            card("browser", width=1.85, height=0.65, color=USER, font_size=18),
-            card("shell", width=1.65, height=0.65, color=USER, font_size=18),
-            card("editor", width=1.75, height=0.65, color=USER, font_size=18),
-            card("database", width=2.05, height=0.65, color=USER, font_size=18),
-        ).arrange(RIGHT, buff=0.23).move_to(UP * 1.3 + RIGHT * 1.5)
-        kernel = kernel_badge("Linux\nkernel").scale(0.8).move_to(DOWN * 1.35 + LEFT * 2.4)
+            card("browser", width=1.85, height=0.66, color=USER, font_size=18),
+            card("shell", width=1.65, height=0.66, color=USER, font_size=18),
+            card("editor", width=1.75, height=0.66, color=USER, font_size=18),
+            card("database", width=2.05, height=0.66, color=USER, font_size=18),
+        ).arrange(RIGHT, buff=0.24).move_to(UP * 1.3 + RIGHT * 1.55)
+        kernel = kernel_badge("Linux\nkernel").scale(0.78).move_to(DOWN * 1.35 + LEFT * 2.45)
         powers = VGroup(
             pill("hardware", HARDWARE, width=1.7),
             pill("memory", SUCCESS, width=1.55),
             pill("scheduler", PURPLE, width=1.85),
             pill("isolation", KERNEL, width=1.75),
-        ).arrange(RIGHT, buff=0.18).move_to(DOWN * 1.35 + RIGHT * 2.35)
+        ).arrange(RIGHT, buff=0.2).move_to(DOWN * 1.35 + RIGHT * 2.35)
 
-        self.play(FadeIn(title), FadeIn(user_zone), FadeIn(kernel_zone), Create(boundary), Write(labels), run_time=1.8)
-        self.play(FadeIn(apps, shift=DOWN * 0.15), FadeIn(kernel, scale=0.75), FadeIn(powers, shift=UP * 0.15), run_time=1.8)
-        bad_jump = Arrow(apps[0].get_bottom(), kernel.get_top(), buff=0.08, color=DANGER, stroke_width=4)
-        blocked = t("direct jump blocked", 24, DANGER, BOLD).next_to(boundary, UP, buff=0.18).shift(LEFT * 2.2)
-        gate = card("CPU entry\npath", width=2.05, height=1.0, color=KERNEL, font_size=19).move_to(ORIGIN + RIGHT * 1.3)
-        down = Arrow(apps[1].get_bottom(), gate.get_top(), buff=0.08, color=KERNEL, stroke_width=4)
-        up = Arrow(gate.get_bottom(), kernel.get_top(), buff=0.08, color=KERNEL, stroke_width=4)
-        ret = CurvedArrow(kernel.get_right(), apps[2].get_bottom(), angle=-TAU / 5, color=SUCCESS, stroke_width=3)
-        self.play(Create(bad_jump), Write(blocked), run_time=1.2)
-        self.play(bad_jump.animate.set_opacity(0.25), FadeIn(gate, scale=0.8), run_time=0.9)
-        self.play(Create(down), Create(up), Circumscribe(gate, color=KERNEL), run_time=1.5)
-        self.play(Create(ret), Write(t("return to user mode", 24, SUCCESS, BOLD).next_to(ret, RIGHT, buff=0.2)), run_time=1.5)
+        cpu_chip = RoundedRectangle(width=2.35, height=0.7, corner_radius=0.14, color=HARDWARE, stroke_width=2)
+        cpu_chip.set_fill(PANEL_2, opacity=0.94).move_to(UP * 0.05 + LEFT * 4.55)
+        cpu_label = t("CPU privilege levels", CAP, TEXT, BOLD).move_to(cpu_chip)
+
+        bad_jump = Arrow(apps[0].get_bottom(), kernel.get_top(), buff=0.08, color=DANGER, stroke_width=4, max_tip_length_to_length_ratio=0.14)
+        blocked = t("direct jump blocked", CAP + 2, DANGER, BOLD).next_to(boundary, UP, buff=0.18).shift(LEFT * 2.2)
+        block_mark = VGroup(
+            Line(LEFT * 0.18 + DOWN * 0.18, RIGHT * 0.18 + UP * 0.18, color=DANGER, stroke_width=5),
+            Line(LEFT * 0.18 + UP * 0.18, RIGHT * 0.18 + DOWN * 0.18, color=DANGER, stroke_width=5),
+        ).move_to(boundary.get_center() + LEFT * 1.55)
+
+        gate = card("CPU entry\npath", width=2.05, height=1.0, color=KERNEL, font_size=CAP).move_to(ORIGIN + RIGHT * 1.3)
+        request = Dot(apps[1].get_bottom(), radius=0.075, color=KERNEL).set_z_index(10)
+        down = Arrow(apps[1].get_bottom(), gate.get_top(), buff=0.08, color=KERNEL, stroke_width=4, max_tip_length_to_length_ratio=0.14)
+        up = Arrow(gate.get_bottom(), kernel.get_top(), buff=0.08, color=KERNEL, stroke_width=4, max_tip_length_to_length_ratio=0.14)
+        ret = CurvedArrow(kernel.get_right(), apps[2].get_bottom(), angle=-TAU / 5, color=SUCCESS, stroke_width=3.5)
+        ret_label = t("return to user mode", CAP + 1, SUCCESS, BOLD).move_to(RIGHT * 4.2 + UP * 0.25)
+
+        self.add(bg)
+        self.play_until(0.08, FadeIn(title), FadeIn(cpu_chip, shift=RIGHT * 0.15), Write(cpu_label))
+        self.play_until(0.24, FadeIn(user_zone), FadeIn(kernel_zone), Create(boundary), Write(labels), FadeIn(apps, shift=DOWN * 0.12), FadeOut(VGroup(cpu_chip, cpu_label)))
+
+        kernel_focus = glow(VGroup(kernel, powers), KERNEL)
+        self.play_until(0.40, FadeIn(kernel, scale=0.75), LaggedStart(*[FadeIn(power, shift=UP * 0.12) for power in powers], lag_ratio=0.12), FadeIn(kernel_focus))
+        self.play_until(0.56, FadeOut(kernel_focus), Create(bad_jump), FadeIn(block_mark, scale=0.8), Write(blocked), dim(powers))
+        self.play_until(0.64, bad_jump.animate.set_opacity(0.22), FadeIn(gate, scale=0.8), FadeOut(block_mark), undim(powers))
+
+        gate_focus = glow(gate, KERNEL)
+        self.play_until(0.74, Create(down), Create(up), FadeIn(request), FadeIn(gate_focus), dim(VGroup(apps[0], apps[3], powers)))
+        self.play_until(0.81, MoveAlongPath(request, down), rate_func=linear)
+        self.play_until(0.87, MoveAlongPath(request, up), rate_func=linear)
+        self.play_until(0.92, Create(ret), FadeIn(ret_label, shift=LEFT * 0.12), request.animate.move_to(apps[2].get_bottom()), FadeOut(gate_focus), undim(VGroup(apps[0], apps[3], powers)))
+        final_focus = glow(VGroup(down, up, ret, gate), SUCCESS)
+        self.play_until(0.95, FadeIn(final_focus), kernel_zone.animate.set_stroke(KERNEL, width=4), user_zone.animate.set_stroke(USER, width=4))
         self.finish_sync()
-        self.play(FadeOut(fade_group(title, user_zone, kernel_zone, boundary, labels, apps, kernel, powers, bad_jump, blocked, gate, down, up, ret)), run_time=0.7)
+        self.play(FadeOut(fade_group(bg, title, cpu_chip, cpu_label, user_zone, kernel_zone, boundary, labels, apps, kernel, powers, bad_jump, blocked, gate, down, up, ret, ret_label, request, final_focus)), run_time=0.7)
 
 
 class Scene3_NotAFunctionCallEN(EnglishSyscallScene):
@@ -187,7 +290,10 @@ class Scene3_NotAFunctionCallEN(EnglishSyscallScene):
             code_card("helper()", width=2.6, height=0.58, color=USER, font_size=18),
             code_card("return", width=2.6, height=0.58, color=SUCCESS, font_size=18),
         ).arrange(DOWN, buff=0.12).move_to(LEFT * 3.7 + UP * 0.55)
-        same_process = t("same process\nsame privilege", 22, MUTED).next_to(stack, DOWN, buff=0.45)
+        same_process = VGroup(
+            pill("same process", USER, width=2.25).scale(0.88),
+            pill("same privilege", SUCCESS, width=2.35).scale(0.88),
+        ).arrange(DOWN, buff=0.1).next_to(stack, DOWN, buff=0.38)
         wrapper = code_card("libc: read(fd, buf, n)", width=4.35, color=PURPLE, font_size=18).move_to(RIGHT * 3.4 + UP * 1.45)
         registers = VGroup(
             code_card("rax = SYS_read", width=2.55, height=0.52, color=KERNEL, font_size=15),
@@ -199,19 +305,19 @@ class Scene3_NotAFunctionCallEN(EnglishSyscallScene):
         entry = card("kernel\nentry", width=2.15, height=0.95, color=KERNEL, font_size=20).move_to(RIGHT * 5.35 + DOWN * 1.15)
         handler = card("handler\nreturns result", width=2.55, height=0.95, color=SUCCESS, font_size=19).move_to(RIGHT * 2.65 + DOWN * 1.15)
 
-        self.play(FadeIn(title), Write(left_title), Write(right_title), run_time=1.2)
-        self.play(LaggedStart(*[FadeIn(frame, shift=UP * 0.12) for frame in stack], lag_ratio=0.12), Write(same_process), run_time=1.8)
-        self.play(FadeIn(wrapper, shift=DOWN * 0.15), LaggedStart(*[FadeIn(reg, shift=LEFT * 0.12) for reg in registers], lag_ratio=0.09), run_time=2.2)
-        self.play(FadeIn(instr, scale=0.85), Circumscribe(registers, color=KERNEL), run_time=1.4)
+        self.play_until(0.08, FadeIn(title), Write(left_title), Write(right_title))
+        self.play_until(0.23, LaggedStart(*[FadeIn(frame, shift=UP * 0.12) for frame in stack], lag_ratio=0.12), FadeIn(same_process, shift=UP * 0.08))
+        self.play_until(0.38, FadeIn(wrapper, shift=DOWN * 0.15), LaggedStart(*[FadeIn(reg, shift=LEFT * 0.12) for reg in registers], lag_ratio=0.09))
+        self.play_until(0.52, FadeIn(instr, scale=0.85), Circumscribe(registers, color=KERNEL))
         path = VGroup(
             arrow(instr.get_right(), entry.get_left(), DANGER),
             arrow(entry.get_left(), handler.get_right(), KERNEL),
             CurvedArrow(handler.get_top(), wrapper.get_bottom(), angle=-TAU / 5, color=SUCCESS, stroke_width=3),
         )
-        self.play(FadeIn(entry), FadeIn(handler), Create(path[0]), run_time=1.3)
-        self.play(Create(path[1]), Create(path[2]), run_time=1.5)
+        self.play_until(0.66, FadeIn(entry), FadeIn(handler), Create(path[0]))
+        self.play_until(0.80, Create(path[1]), Create(path[2]))
         result = code_card("return: bytes or -errno", width=3.35, height=0.64, color=SUCCESS, font_size=18).next_to(handler, DOWN, buff=0.36)
-        self.play(FadeIn(result, shift=UP * 0.1), Circumscribe(instr, color=DANGER), run_time=1.4)
+        self.play_until(0.90, FadeIn(result, shift=UP * 0.1), Circumscribe(instr, color=DANGER))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, left_title, right_title, stack, same_process, wrapper, registers, instr, entry, handler, path, result)), run_time=0.7)
 
@@ -249,15 +355,15 @@ class Scene4_SyscallTableEN(EnglishSyscallScene):
         ret = card("return value", width=2.8, height=0.75, color=SUCCESS, font_size=23).to_edge(DOWN, buff=0.72).shift(RIGHT * 3.1)
         notes = VGroup(abi, validate, ret)
 
-        self.play(FadeIn(title), FadeIn(columns), run_time=1.1)
-        self.play(LaggedStart(*[FadeIn(row, shift=UP * 0.12) for row in rows], lag_ratio=0.09), run_time=2.2)
+        self.play_until(0.08, FadeIn(title), FadeIn(columns))
+        self.play_until(0.28, LaggedStart(*[FadeIn(row, shift=UP * 0.12) for row in rows], lag_ratio=0.09))
         highlights = VGroup(SurroundingRectangle(rows[0], color=KERNEL, buff=0.06), SurroundingRectangle(rows[2], color=KERNEL, buff=0.06), SurroundingRectangle(rows[5], color=KERNEL, buff=0.06))
-        self.play(Create(highlights[0]), run_time=0.8)
-        self.play(ReplacementTransform(highlights[0], highlights[1]), run_time=0.8)
-        self.play(ReplacementTransform(highlights[1], highlights[2]), run_time=0.8)
-        self.play(LaggedStart(*[FadeIn(note, shift=UP * 0.15) for note in notes], lag_ratio=0.16), run_time=1.5)
+        self.play_until(0.40, Create(highlights[0]))
+        self.play_until(0.52, ReplacementTransform(highlights[0], highlights[1]))
+        self.play_until(0.64, ReplacementTransform(highlights[1], highlights[2]))
+        self.play_until(0.78, LaggedStart(*[FadeIn(note, shift=UP * 0.15) for note in notes], lag_ratio=0.16))
         arrows = VGroup(arrow(abi.get_right(), validate.get_left(), MUTED), arrow(validate.get_right(), ret.get_left(), MUTED))
-        self.play(Create(arrows), Circumscribe(columns, color=MUTED), run_time=1.4)
+        self.play_until(0.90, Create(arrows), Circumscribe(columns, color=MUTED))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, columns, rows, highlights[2], notes, arrows)), run_time=0.7)
 
@@ -285,18 +391,18 @@ class Scene5_FileDescriptorsEN(EnglishSyscallScene):
         disk = hardware_box("storage", "SSD", width=1.75, height=0.95).move_to(RIGHT * 5.75 + UP * 1.25)
         chain = VGroup(open_file, vfs, fs, driver)
 
-        self.play(FadeIn(title), FadeIn(process), FadeIn(call), run_time=1.5)
-        self.play(LaggedStart(*[FadeIn(row, shift=RIGHT * 0.12) for row in fd_table], lag_ratio=0.12), Write(fd_label), run_time=1.7)
-        self.play(FadeIn(open_file, shift=RIGHT * 0.15), Create(arrow(fd_table[3].get_right(), open_file.get_left(), SUCCESS)), run_time=1.2)
+        self.play_until(0.10, FadeIn(title), FadeIn(process), FadeIn(call))
+        self.play_until(0.25, LaggedStart(*[FadeIn(row, shift=RIGHT * 0.12) for row in fd_table], lag_ratio=0.12), Write(fd_label))
+        self.play_until(0.40, FadeIn(open_file, shift=RIGHT * 0.15), Create(arrow(fd_table[3].get_right(), open_file.get_left(), SUCCESS)))
         arrows = VGroup(*[arrow(a.get_right(), b.get_left(), c) for a, b, c in zip(chain[:-1], chain[1:], [KERNEL, PURPLE, KERNEL])])
-        self.play(FadeIn(vfs), FadeIn(fs), FadeIn(driver), FadeIn(disk), run_time=1.5)
-        self.play(LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.14), Create(arrow(driver.get_top(), disk.get_bottom(), HARDWARE)), run_time=1.7)
+        self.play_until(0.55, FadeIn(vfs), FadeIn(fs), FadeIn(driver), FadeIn(disk))
+        self.play_until(0.70, LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.14), Create(arrow(driver.get_top(), disk.get_bottom(), HARDWARE)))
         readwrite = VGroup(
             code_card("read(3, buf, n)", width=2.75, height=0.58, color=KERNEL, font_size=16),
             code_card("write(1, buf, n)", width=2.75, height=0.58, color=KERNEL, font_size=16),
         ).arrange(RIGHT, buff=0.35).to_edge(DOWN, buff=0.74).shift(RIGHT * 1.1)
         label = t("after open, the path becomes a small handle", 28, TEXT, BOLD).next_to(readwrite, UP, buff=0.28)
-        self.play(FadeIn(readwrite, shift=UP * 0.15), Write(label), Circumscribe(fd_table[3], color=SUCCESS), run_time=1.8)
+        self.play_until(0.90, FadeIn(readwrite, shift=UP * 0.15), Write(label), Circumscribe(fd_table[3], color=SUCCESS))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, process, call, fd_table, fd_label, open_file, vfs, fs, driver, disk, arrows, readwrite, label)), run_time=0.7)
 
@@ -328,12 +434,12 @@ class Scene6_PermissionsErrorsEN(EnglishSyscallScene):
             code_card("ptrace(...)", width=2.1, height=0.52, color=PURPLE, font_size=15),
         ).arrange(RIGHT, buff=0.25).to_edge(DOWN, buff=0.55).shift(LEFT * 3.1)
 
-        self.play(FadeIn(title), FadeIn(request, shift=RIGHT * 0.15), run_time=1.4)
-        self.play(LaggedStart(*[FadeIn(c, shift=UP * 0.12) for c in checks], lag_ratio=0.11), run_time=1.8)
-        self.play(LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.12), run_time=1.6)
-        self.play(FadeIn(allowed, shift=UP * 0.12), Create(arrow(checks[-1].get_bottom(), allowed.get_top(), SUCCESS)), run_time=1.2)
-        self.play(FadeIn(denied, shift=UP * 0.12), FadeIn(errno), Create(arrow(checks[-1].get_bottom(), denied.get_top(), DANGER)), run_time=1.3)
-        self.play(FadeIn(examples, shift=UP * 0.12), Circumscribe(checks[-1], color=DANGER), run_time=1.5)
+        self.play_until(0.10, FadeIn(title), FadeIn(request, shift=RIGHT * 0.15))
+        self.play_until(0.25, LaggedStart(*[FadeIn(c, shift=UP * 0.12) for c in checks], lag_ratio=0.11))
+        self.play_until(0.40, LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.12))
+        self.play_until(0.55, FadeIn(allowed, shift=UP * 0.12), Create(arrow(checks[-1].get_bottom(), allowed.get_top(), SUCCESS)))
+        self.play_until(0.68, FadeIn(denied, shift=UP * 0.12), FadeIn(errno), Create(arrow(checks[-1].get_bottom(), denied.get_top(), DANGER)))
+        self.play_until(0.88, FadeIn(examples, shift=UP * 0.12), Circumscribe(checks[-1], color=DANGER))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, request, checks, arrows, allowed, denied, errno, examples)), run_time=0.7)
 
@@ -356,13 +462,13 @@ class Scene7_BlockingWakeupsEN(EnglishSyscallScene):
         runnable = pill("runnable again", SUCCESS, width=2.2).next_to(proc, UP, buff=0.18)
         result = code_card("read returns bytes", width=3.0, height=0.62, color=SUCCESS, font_size=18).move_to(RIGHT * 3.7 + DOWN * 1.65)
 
-        self.play(FadeIn(title), FadeIn(proc), FadeIn(call), FadeIn(waitq), run_time=1.5)
-        self.play(Create(arrow(call.get_right(), waitq.get_left(), KERNEL)), FadeIn(sleeping, shift=DOWN * 0.1), run_time=1.3)
-        self.play(FadeIn(scheduler), Create(arrow(waitq.get_right(), scheduler.get_left(), KERNEL)), FadeIn(proc_b, shift=LEFT * 0.15), run_time=1.6)
-        self.play(FadeIn(nic), FadeIn(interrupt), Create(arrow(nic.get_right(), interrupt.get_left(), DANGER)), Flash(interrupt, color=DANGER), run_time=1.6)
+        self.play_until(0.10, FadeIn(title), FadeIn(proc), FadeIn(call), FadeIn(waitq))
+        self.play_until(0.25, Create(arrow(call.get_right(), waitq.get_left(), KERNEL)), FadeIn(sleeping, shift=DOWN * 0.1))
+        self.play_until(0.40, FadeIn(scheduler), Create(arrow(waitq.get_right(), scheduler.get_left(), KERNEL)), FadeIn(proc_b, shift=LEFT * 0.15))
+        self.play_until(0.55, FadeIn(nic), FadeIn(interrupt), Create(arrow(nic.get_right(), interrupt.get_left(), DANGER)), Flash(interrupt, color=DANGER))
         wake_path = VGroup(arrow(interrupt.get_top(), waitq.get_bottom(), DANGER), arrow(waitq.get_right(), proc.get_right(), SUCCESS))
-        self.play(Create(wake_path), ReplacementTransform(sleeping, runnable), run_time=1.6)
-        self.play(FadeIn(result, shift=UP * 0.12), Create(arrow(proc.get_bottom(), result.get_left(), SUCCESS)), Circumscribe(waitq, color=KERNEL), run_time=1.5)
+        self.play_until(0.70, Create(wake_path), ReplacementTransform(sleeping, runnable))
+        self.play_until(0.88, FadeIn(result, shift=UP * 0.12), Create(arrow(proc.get_bottom(), result.get_left(), SUCCESS)), Circumscribe(waitq, color=KERNEL))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, proc, call, waitq, scheduler, proc_b, nic, interrupt, runnable, result, wake_path)), run_time=0.7)
 
@@ -390,14 +496,14 @@ class Scene8_ProcessSyscallsEN(EnglishSyscallScene):
             pill("priority", HARDWARE, width=1.45),
         ).arrange(RIGHT, buff=0.16).to_edge(DOWN, buff=0.65)
 
-        self.play(FadeIn(title), FadeIn(shell), run_time=1.0)
+        self.play_until(0.08, FadeIn(title), FadeIn(shell))
         flow = VGroup(shell, fork, child, execve, program)
-        self.play(LaggedStart(*[FadeIn(item, shift=RIGHT * 0.12) for item in flow[1:]], lag_ratio=0.16), run_time=2.0)
-        self.play(LaggedStart(*[Create(arrow(a.get_right(), b.get_left(), KERNEL)) for a, b in zip(flow[:-1], flow[1:])], lag_ratio=0.15), run_time=1.7)
-        self.play(FadeIn(wait), FadeIn(exit_box), Create(arrow(program.get_bottom(), exit_box.get_top(), DANGER)), Create(arrow(exit_box.get_left(), wait.get_right(), SUCCESS)), run_time=1.6)
-        self.play(LaggedStart(*[FadeIn(obj, shift=UP * 0.12) for obj in objects], lag_ratio=0.08), run_time=1.7)
+        self.play_until(0.22, LaggedStart(*[FadeIn(item, shift=RIGHT * 0.12) for item in flow[1:]], lag_ratio=0.16))
+        self.play_until(0.38, LaggedStart(*[Create(arrow(a.get_right(), b.get_left(), KERNEL)) for a, b in zip(flow[:-1], flow[1:])], lag_ratio=0.15))
+        self.play_until(0.54, FadeIn(wait), FadeIn(exit_box), Create(arrow(program.get_bottom(), exit_box.get_top(), DANGER)), Create(arrow(exit_box.get_left(), wait.get_right(), SUCCESS)))
+        self.play_until(0.70, LaggedStart(*[FadeIn(obj, shift=UP * 0.12) for obj in objects], lag_ratio=0.08))
         summary = t("launching an app creates kernel-managed objects", 29, TEXT, BOLD).next_to(objects, UP, buff=0.28)
-        self.play(Write(summary), Circumscribe(child, color=SUCCESS), run_time=1.4)
+        self.play_until(0.88, Write(summary), Circumscribe(child, color=SUCCESS))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, shell, fork, child, execve, program, wait, exit_box, objects, summary)), run_time=0.7)
 
@@ -429,11 +535,11 @@ class Scene9_MemorySyscallsEN(EnglishSyscallScene):
         fault = card("page fault\ntrap", width=2.3, height=0.9, color=DANGER, font_size=19).move_to(LEFT * 0.35 + DOWN * 1.2)
         allocate = card("allocate / load\nor reject", width=2.85, height=0.9, color=SUCCESS, font_size=19).move_to(RIGHT * 0.75 + DOWN * 2.45)
 
-        self.play(FadeIn(title), FadeIn(process), LaggedStart(*[FadeIn(r, shift=UP * 0.1) for r in regions], lag_ratio=0.08), run_time=1.9)
-        self.play(FadeIn(mmap), FadeIn(kernel), FadeIn(table), Create(arrow(mmap.get_right(), kernel.get_left(), KERNEL)), Create(arrow(kernel.get_right(), table.get_left(), SUCCESS)), run_time=1.8)
-        self.play(FadeIn(pages), FadeIn(ram), Create(arrow(table.get_bottom(), pages.get_top(), SUCCESS)), run_time=1.4)
-        self.play(FadeIn(fault, shift=UP * 0.12), Create(arrow(regions[2].get_right(), fault.get_left(), DANGER)), Flash(fault, color=DANGER), run_time=1.5)
-        self.play(FadeIn(allocate, shift=UP * 0.12), Create(arrow(fault.get_bottom(), allocate.get_top(), SUCCESS)), Circumscribe(pages[3], color=DANGER), run_time=1.6)
+        self.play_until(0.12, FadeIn(title), FadeIn(process), LaggedStart(*[FadeIn(r, shift=UP * 0.1) for r in regions], lag_ratio=0.08))
+        self.play_until(0.30, FadeIn(mmap), FadeIn(kernel), FadeIn(table), Create(arrow(mmap.get_right(), kernel.get_left(), KERNEL)), Create(arrow(kernel.get_right(), table.get_left(), SUCCESS)))
+        self.play_until(0.48, FadeIn(pages), FadeIn(ram), Create(arrow(table.get_bottom(), pages.get_top(), SUCCESS)))
+        self.play_until(0.66, FadeIn(fault, shift=UP * 0.12), Create(arrow(regions[2].get_right(), fault.get_left(), DANGER)), Flash(fault, color=DANGER))
+        self.play_until(0.84, FadeIn(allocate, shift=UP * 0.12), Create(arrow(fault.get_bottom(), allocate.get_top(), SUCCESS)), Circumscribe(pages[3], color=DANGER))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, process, regions, mmap, kernel, table, pages, ram, fault, allocate)), run_time=0.7)
 
@@ -463,13 +569,13 @@ class Scene10_NetworkSyscallsEN(EnglishSyscallScene):
         internet = VGroup(Circle(radius=0.72, color=PURPLE, stroke_width=3).set_fill("#201833", 0.9), t("peer", 24, TEXT, BOLD)).move_to(RIGHT * 5.25 + UP * 0.15)
         buffers = VGroup(card("kernel\nbuffers", width=2.25, height=0.9, color=SUCCESS, font_size=19), card("packets", width=2.05, height=0.7, color=PURPLE, font_size=21)).arrange(RIGHT, buff=0.25).to_edge(DOWN, buff=0.75).shift(RIGHT * 1.2)
 
-        self.play(FadeIn(title), FadeIn(app), LaggedStart(*[FadeIn(c, shift=UP * 0.1) for c in calls], lag_ratio=0.08), run_time=1.7)
-        self.play(FadeIn(fd), Create(arrow(calls.get_right(), fd.get_left(), SUCCESS)), run_time=1.2)
-        self.play(FadeIn(stack), FadeIn(nic), FadeIn(internet), run_time=1.6)
+        self.play_until(0.10, FadeIn(title), FadeIn(app), LaggedStart(*[FadeIn(c, shift=UP * 0.1) for c in calls], lag_ratio=0.08))
+        self.play_until(0.24, FadeIn(fd), Create(arrow(calls.get_right(), fd.get_left(), SUCCESS)))
+        self.play_until(0.40, FadeIn(stack), FadeIn(nic), FadeIn(internet))
         path = VGroup(arrow(fd.get_right(), stack.get_left(), KERNEL), arrow(stack.get_right(), nic.get_left(), HARDWARE), arrow(nic.get_right(), internet.get_left(), PURPLE))
-        self.play(LaggedStart(*[Create(a) for a in path], lag_ratio=0.16), run_time=1.7)
-        self.play(FadeIn(buffers, shift=UP * 0.12), Create(arrow(calls[2].get_bottom(), buffers[0].get_left(), SUCCESS)), Create(arrow(buffers[1].get_top(), calls[3].get_bottom(), PURPLE)), run_time=1.6)
-        self.play(Circumscribe(stack, color=KERNEL), Flash(nic, color=DANGER), run_time=1.5)
+        self.play_until(0.56, LaggedStart(*[Create(a) for a in path], lag_ratio=0.16))
+        self.play_until(0.72, FadeIn(buffers, shift=UP * 0.12), Create(arrow(calls[2].get_bottom(), buffers[0].get_left(), SUCCESS)), Create(arrow(buffers[1].get_top(), calls[3].get_bottom(), PURPLE)))
+        self.play_until(0.88, Circumscribe(stack, color=KERNEL), Flash(nic, color=DANGER))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, app, calls, fd, stack, nic, internet, buffers, path)), run_time=0.7)
 
@@ -507,12 +613,12 @@ class Scene11_ObserveControlCostEN(EnglishSyscallScene):
             code_card("async interfaces", width=2.75, height=0.54, color=SUCCESS, font_size=15),
         ).arrange(DOWN, buff=0.1).to_edge(RIGHT, buff=0.75).shift(DOWN * 0.75)
 
-        self.play(FadeIn(title), FadeIn(terminal), Write(term_title), run_time=1.2)
-        self.play(LaggedStart(*[FadeIn(line, shift=UP * 0.08) for line in logs], lag_ratio=0.12), run_time=1.6)
-        self.play(FadeIn(seccomp, shift=LEFT * 0.12), FadeIn(sandbox, shift=LEFT * 0.12), Create(arrow(seccomp.get_right(), sandbox.get_left(), PURPLE)), run_time=1.5)
-        self.play(FadeIn(allow), FadeIn(deny), Circumscribe(seccomp, color=DANGER), run_time=1.4)
-        self.play(Write(cost_label), LaggedStart(*[FadeIn(item, shift=UP * 0.12) for item in timeline], lag_ratio=0.1), run_time=1.8)
-        self.play(FadeIn(batching, shift=UP * 0.12), Circumscribe(timeline[1], color=KERNEL), run_time=1.5)
+        self.play_until(0.08, FadeIn(title), FadeIn(terminal), Write(term_title))
+        self.play_until(0.22, LaggedStart(*[FadeIn(line, shift=UP * 0.08) for line in logs], lag_ratio=0.12))
+        self.play_until(0.36, FadeIn(seccomp, shift=LEFT * 0.12), FadeIn(sandbox, shift=LEFT * 0.12), Create(arrow(seccomp.get_right(), sandbox.get_left(), PURPLE)))
+        self.play_until(0.50, FadeIn(allow), FadeIn(deny), Circumscribe(seccomp, color=DANGER))
+        self.play_until(0.68, Write(cost_label), LaggedStart(*[FadeIn(item, shift=UP * 0.12) for item in timeline], lag_ratio=0.1))
+        self.play_until(0.88, FadeIn(batching, shift=UP * 0.12), Circumscribe(timeline[1], color=KERNEL))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, terminal, term_title, logs, seccomp, allow, deny, sandbox, timeline, cost_label, batching)), run_time=0.7)
 
@@ -545,10 +651,10 @@ class Scene12_RecapEN(EnglishSyscallScene):
         ).arrange_in_grid(rows=3, cols=3, buff=(0.22, 0.18)).move_to(RIGHT * 4.1 + UP * 0.5)
         final = t("controlled doorway for protected operations", 34, TEXT, BOLD).to_edge(DOWN, buff=0.86).shift(RIGHT * 1.15)
 
-        self.play(FadeIn(title), LaggedStart(*[FadeIn(step, shift=UP * 0.1) for step in steps], lag_ratio=0.08), run_time=1.9)
-        self.play(LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.09), run_time=1.5)
-        self.play(FadeIn(kernel, scale=0.75), Circumscribe(steps[3], color=DANGER), run_time=1.4)
-        self.play(LaggedStart(*[FadeIn(ex, shift=UP * 0.1) for ex in examples], lag_ratio=0.08), run_time=1.8)
-        self.play(Write(final), Circumscribe(kernel, color=KERNEL), run_time=1.6)
+        self.play_until(0.12, FadeIn(title), LaggedStart(*[FadeIn(step, shift=UP * 0.1) for step in steps], lag_ratio=0.08))
+        self.play_until(0.30, LaggedStart(*[Create(a) for a in arrows], lag_ratio=0.09))
+        self.play_until(0.48, FadeIn(kernel, scale=0.75), Circumscribe(steps[3], color=DANGER))
+        self.play_until(0.68, LaggedStart(*[FadeIn(ex, shift=UP * 0.1) for ex in examples], lag_ratio=0.08))
+        self.play_until(0.90, Write(final), Circumscribe(kernel, color=KERNEL))
         self.finish_sync()
         self.play(FadeOut(fade_group(title, steps, arrows, kernel, examples, final)), run_time=0.7)

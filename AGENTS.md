@@ -6,9 +6,12 @@ Avant de modifier quoi que ce soit, lire aussi :
 
 ```text
 PROCEDURE.md
+docs/VIDEO_PRODUCTION_STANDARD.md
 ```
 
-`PROCEDURE.md` contient le pipeline operationnel detaille. Ce fichier-ci fixe les regles de comportement, les priorites et les standards attendus.
+`PROCEDURE.md` contient le pipeline operationnel detaille. `docs/VIDEO_PRODUCTION_STANDARD.md` contient le standard v2 complet : beats narratifs, design system, controles de fluidite et criteres d'acceptation. Ce fichier-ci fixe les regles de comportement, les priorites et les standards attendus.
+
+La documentation reusable doit rester a la racine ou dans `docs/`. Ne pas ajouter de README, notes de voix ou documentation operationnelle dans les dossiers `videos/...`; ces dossiers ne doivent contenir que les sources de production de la video.
 
 ## Mission du projet
 
@@ -28,15 +31,24 @@ La video de reference actuelle est :
 
 ```text
 videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4
+videos/linux-fondamentaux/002-c-est-quoi-un-syscall/final/syscall-intro-en-final.mp4
 ```
 
-Elle sert d'exemple pour :
+La premiere sert d'exemple pour :
 
 - l'organisation des dossiers ;
 - la separation script / segments / scenes Manim / audio / final ;
 - le choix Chatterbox principal non-turbo ;
 - la synchronisation par durees audio reelles ;
 - les verifications avec `ffprobe` et snapshots.
+
+La seconde sert d'exemple pour le standard v2 :
+
+- `beats_en.json` ;
+- synchro interne avec `cue()`, `play_until()` et `hold_until()` ;
+- design system local dans `syscall_style.py` ;
+- focus/dim plutot que surlignage permanent ;
+- validation avec `freezedetect` et snapshots.
 
 ## Regle principale
 
@@ -60,13 +72,21 @@ videos/linux-fondamentaux/002-c-est-quoi-un-syscall/
 
 Ne pas mettre les fichiers d'une nouvelle video a la racine du projet.
 
-Structure recommandee :
+Structure documentation recommandee :
 
 ```text
+docs/videos/<thematique>/<numero-slug>/
 plan.md
-script.md
+script.md ou script_en.md
+```
+
+Structure production recommandee :
+
+```text
 segments_en.json
+beats_en.json
 kernel_intro_en.py
+kernel_style.py
 generate_voice_en.py
 render_en.sh
 assemble_en.sh
@@ -77,23 +97,32 @@ renders/
 
 Adapter les noms Python si le sujet n'est plus `kernel_intro`, mais garder le meme principe.
 
+Pour demarrer une nouvelle video, copier le boilerplate depuis :
+
+```text
+docs/boilerplate/
+```
+
 ## Workflow obligatoire
 
 1. Comprendre le sujet et le public vise.
-2. Ecrire ou mettre a jour `plan.md`.
-3. Ecrire le script narratif dans `script.md`.
+2. Ecrire ou mettre a jour `docs/videos/<thematique>/<numero-slug>/plan.md`.
+3. Ecrire le script narratif dans `docs/videos/<thematique>/<numero-slug>/script.md`.
 4. Decouper le script dans `segments_en.json`.
-5. Creer une classe Manim par segment audio.
-6. Generer la voix off locale.
-7. Produire `durations.json`.
-8. Synchroniser les scenes avec les durees audio.
-9. Rendre en basse qualite.
-10. Corriger les problemes de narration, timing et visuel.
-11. Rendre en 1080p60.
-12. Assembler l'audio et la video.
-13. Verifier avec `ffprobe`.
-14. Extraire et inspecter plusieurs frames.
-15. Donner le chemin du MP4 final.
+5. Creer `beats_en.json` pour relier narration et actions visuelles.
+6. Creer une classe Manim par segment audio.
+7. Creer ou mettre a jour le design system local.
+8. Generer la voix off locale.
+9. Produire `durations.json`.
+10. Synchroniser les scenes avec les durees audio et les beats narratifs.
+11. Rendre en basse qualite.
+12. Assembler l'audio et la video basse qualite.
+13. Mesurer `ffprobe`, `freezedetect`, puis inspecter les snapshots.
+14. Corriger les problemes de narration, timing et visuel.
+15. Rendre en 1080p60.
+16. Assembler l'audio et la video finale.
+17. Refaire `ffprobe`, `freezedetect` et les snapshots finaux.
+18. Donner le chemin du MP4 final.
 
 Ne pas sauter les etapes de verification.
 
@@ -126,7 +155,7 @@ Regles :
 
 La lenteur de Chatterbox principal est acceptable. L'utilisateur a explicitement prefere cette version a Turbo.
 
-## Synchronisation
+## Synchronisation v2
 
 La synchro doit etre conduite par les durees audio, pas par intuition.
 
@@ -135,6 +164,14 @@ Le fichier cle est :
 ```text
 audio/en/durations.json
 ```
+
+Pour les videos v2, ajouter aussi :
+
+```text
+beats_en.json
+```
+
+`durations.json` fixe la duree totale de chaque scene. `beats_en.json` decrit les moments internes de narration ou l'image doit changer.
 
 Chaque scene Manim doit utiliser une cle qui correspond a un segment :
 
@@ -152,13 +189,33 @@ self.finish_sync()
 self.play(FadeOut(...), run_time=0.7)
 ```
 
+Pattern v2 attendu pour les scenes nouvelles ou refondues :
+
+```python
+self.begin_sync()
+self.play_until(0.08, FadeIn(title))
+self.play_until(0.25, FadeIn(first_visual))
+self.play_until(0.52, Transform(...))
+self.hold_until(0.72)
+self.play_until(0.88, FadeIn(summary))
+self.finish_sync()
+self.play(FadeOut(...), run_time=0.7)
+```
+
 Attention : `finish_sync()` doit tenir compte du fade-out final. Voir l'implementation existante dans :
 
 ```text
 videos/linux-fondamentaux/001-c-est-quoi-le-kernel/kernel_intro_en.py
+videos/linux-fondamentaux/002-c-est-quoi-un-syscall/syscall_intro_en.py
 ```
 
-Ne pas ajouter des `wait()` aleatoires qui cassent la synchro.
+Regles :
+
+- ne pas ajouter des `wait()` aleatoires qui cassent la synchro ;
+- viser 5 a 7 beats par scene importante ;
+- faire evoluer l'image jusqu'a environ 80-90% de la narration ;
+- eviter les longues attentes finales comme solution de synchronisation ;
+- utiliser `FadeIn` pour les labels fonctionnels si `Write` produit du texte partiellement dessine sur snapshots.
 
 ## Video et Manim
 
@@ -185,6 +242,14 @@ QUALITY=qh ./render_en.sh
 Le rendu final attendu est 1080p60.
 
 Si une scene echoue, corriger la scene et relancer. Ne pas contourner l'erreur en supprimant la scene sauf si le script narratif est modifie en consequence.
+
+Design attendu :
+
+- utiliser un fichier style local ;
+- garder une typographie lisible ;
+- limiter la densite ;
+- utiliser focus/dim/flux pour guider l'attention ;
+- eviter les schemas generiques sans lien avec la phrase entendue.
 
 ## Assemblage
 
@@ -238,6 +303,12 @@ ffmpeg -y -ss 00:01:30 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_
 ffmpeg -y -ss 00:03:00 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0300.png
 ```
 
+Mesurer aussi la fluidite :
+
+```bash
+ffmpeg -i final/<video>.mp4 -vf freezedetect=n=-60dB:d=3 -an -f null -
+```
+
 Ouvrir les images et verifier :
 
 - pas de texte coupe ;
@@ -255,6 +326,7 @@ Lire `PROCEDURE.md` pour le detail, mais retenir surtout :
 - ne pas ajouter du padding video sans le meme padding audio ;
 - ne pas oublier que le fade-out final allonge la scene ;
 - ne pas faire confiance au rendu sans snapshots ;
+- ne pas faire confiance a une scene dont la duree est correcte mais dont l'image reste figee ;
 - ne pas utiliser une commande ffmpeg multi-input pour extraire plusieurs timestamps, elle peut sortir plusieurs fois la meme frame.
 
 ## Travail dans le depot
@@ -308,12 +380,13 @@ Une video est terminee seulement si :
 
 - le script est present ;
 - les segments audio sont presents ;
+- `beats_en.json` est present pour les scenes v2 ou pilotes ;
 - le fichier audio global est present ;
 - le rendu video silencieux est present ;
 - le MP4 final audio+video est present ;
 - `ffprobe` confirme audio et video ;
+- `freezedetect` a ete mesure ;
 - plusieurs frames ont ete inspectees ;
 - le chemin final est donne a l'utilisateur.
 
 Si une de ces conditions manque, dire clairement ce qui manque.
-

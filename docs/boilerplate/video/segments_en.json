@@ -1,0 +1,22 @@
+{
+  "segments": [
+    {
+      "key": "Scene1_HookEN",
+      "class": "Scene1_HookEN",
+      "title": "Hook",
+      "text": "Replace this with the exact narration for scene one."
+    },
+    {
+      "key": "Scene2_ConceptEN",
+      "class": "Scene2_ConceptEN",
+      "title": "Core Concept",
+      "text": "Replace this with the exact narration for scene two."
+    },
+    {
+      "key": "Scene3_RecapEN",
+      "class": "Scene3_RecapEN",
+      "title": "Recap",
+      "text": "Replace this with the exact narration for scene three."
+    }
+  ]
+}

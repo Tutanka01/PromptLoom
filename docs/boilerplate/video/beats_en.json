@@ -1,0 +1,42 @@
+{
+  "Scene1_HookEN": [
+    {
+      "key": "opening_object",
+      "at": 0.08,
+      "text_hint": "The first concrete object or command is introduced.",
+      "visual_action": "Reveal the object the viewer should focus on."
+    },
+    {
+      "key": "hidden_mechanism",
+      "at": 0.35,
+      "text_hint": "The narration reveals that something hidden is happening.",
+      "visual_action": "Expose the hidden mechanism or path."
+    },
+    {
+      "key": "mental_model",
+      "at": 0.82,
+      "text_hint": "The scene resolves into the main mental model.",
+      "visual_action": "Focus the final diagram and reveal the summary."
+    }
+  ],
+  "Scene2_ConceptEN": [
+    {
+      "key": "first_piece",
+      "at": 0.12,
+      "text_hint": "The first part of the concept is introduced.",
+      "visual_action": "Reveal the first labeled component."
+    },
+    {
+      "key": "relationship",
+      "at": 0.48,
+      "text_hint": "The narration explains how parts relate.",
+      "visual_action": "Animate the connection or flow."
+    },
+    {
+      "key": "conclusion",
+      "at": 0.86,
+      "text_hint": "The scene concludes.",
+      "visual_action": "Dim context and focus the final takeaway."
+    }
+  ]
+}

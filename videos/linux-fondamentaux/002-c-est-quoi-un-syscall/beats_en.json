@@ -1,0 +1,78 @@
+{
+  "Scene1_HookEN": [
+    {
+      "key": "command",
+      "at": 0.08,
+      "text_hint": "Run a tiny command: cat notes dot txt.",
+      "visual_action": "Type the command into a terminal-like prompt."
+    },
+    {
+      "key": "simple_illusion",
+      "at": 0.20,
+      "text_hint": "It feels like the program simply opens a file and prints bytes.",
+      "visual_action": "Create the program and the target storage, then show the tempting direct route."
+    },
+    {
+      "key": "protected_work",
+      "at": 0.36,
+      "text_hint": "A normal program is not allowed to command the disk, rewrite page tables, or send packets directly.",
+      "visual_action": "Block the direct path and reveal protected resource chips."
+    },
+    {
+      "key": "user_space",
+      "at": 0.50,
+      "text_hint": "It lives in user space, with limited privileges.",
+      "visual_action": "Dim hardware and focus the user program zone."
+    },
+    {
+      "key": "syscall_path",
+      "at": 0.68,
+      "text_hint": "When it needs protected work, it asks the kernel through a system call.",
+      "visual_action": "Move a request token through libc, the syscall gate, the kernel, and storage."
+    },
+    {
+      "key": "doorway",
+      "at": 0.88,
+      "text_hint": "A syscall is the controlled doorway between ordinary code and the privileged core.",
+      "visual_action": "Focus the syscall gate and kernel together, then reveal the final summary."
+    }
+  ],
+  "Scene2_PrivilegeBoundaryEN": [
+    {
+      "key": "cpu_modes",
+      "at": 0.08,
+      "text_hint": "Modern CPUs support different privilege levels.",
+      "visual_action": "Reveal user mode and kernel mode as distinct CPU-enforced zones."
+    },
+    {
+      "key": "user_programs",
+      "at": 0.24,
+      "text_hint": "Your browser, shell, editor, and database run in user mode.",
+      "visual_action": "Populate the user zone with ordinary programs."
+    },
+    {
+      "key": "kernel_powers",
+      "at": 0.40,
+      "text_hint": "The kernel runs in kernel mode, where it can access hardware, manage memory, schedule threads, and enforce isolation.",
+      "visual_action": "Reveal the kernel and its powers in the privileged zone."
+    },
+    {
+      "key": "blocked_jump",
+      "at": 0.56,
+      "text_hint": "If a program could just jump into kernel memory, a bug or exploit could own the machine.",
+      "visual_action": "Animate a dangerous jump and block it at the boundary."
+    },
+    {
+      "key": "controlled_entry",
+      "at": 0.74,
+      "text_hint": "A syscall crosses the border only through a CPU-defined entry path.",
+      "visual_action": "Create a controlled entry gate and route the request through it."
+    },
+    {
+      "key": "return_user",
+      "at": 0.90,
+      "text_hint": "Then returns back to user mode.",
+      "visual_action": "Animate the result returning to user mode and focus the safe round trip."
+    }
+  ]
+}
