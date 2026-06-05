@@ -1,0 +1,78 @@
+{
+  "language": "en",
+  "voice_target": "local neural English narration",
+  "segments": [
+    {
+      "key": "Scene1_HookEN",
+      "class": "Scene1_HookEN",
+      "title": "A command is not direct",
+      "text": "Run a tiny command: cat notes dot txt. It feels like the program simply opens a file and prints bytes. But a normal program is not allowed to command the disk, rewrite page tables, or send packets directly. It lives in user space, with limited privileges. So when it needs protected work, it asks the kernel through a system call. A syscall is the controlled doorway between ordinary code and the privileged core of the operating system."
+    },
+    {
+      "key": "Scene2_PrivilegeBoundaryEN",
+      "class": "Scene2_PrivilegeBoundaryEN",
+      "title": "User mode and kernel mode",
+      "text": "Modern CPUs support different privilege levels. Your browser, shell, editor, and database run in user mode. The kernel runs in kernel mode, where it can access hardware, manage memory, schedule threads, and enforce isolation. The border is deliberate. If a program could just jump into kernel memory, a bug or exploit could own the machine. A syscall crosses the border only through a CPU-defined entry path, then returns back to user mode."
+    },
+    {
+      "key": "Scene3_NotAFunctionCallEN",
+      "class": "Scene3_NotAFunctionCallEN",
+      "title": "Not a normal function call",
+      "text": "A normal function call stays inside the same process: push a return address, run code, return. A syscall is different. A wrapper, often in libc, places a syscall number and arguments in CPU registers, then executes a special instruction such as syscall on x eighty six sixty four. The CPU switches context to a kernel entry point. The kernel reads the number, finds the handler, performs checked work, and places the result back where user code can read it."
+    },
+    {
+      "key": "Scene4_SyscallTableEN",
+      "class": "Scene4_SyscallTableEN",
+      "title": "The syscall table",
+      "text": "Inside the kernel, syscall numbers are dispatched through a table. Number zero might mean read on one architecture, number one might mean write, and another number means openat, mmap, clone, or execve. This table is part of the user-kernel ABI, so it changes very carefully. Programs do not get arbitrary kernel functions. They get a documented list of entry points, each with expected arguments, validation rules, and a return convention."
+    },
+    {
+      "key": "Scene5_FileDescriptorsEN",
+      "class": "Scene5_FileDescriptorsEN",
+      "title": "Files and file descriptors",
+      "text": "File syscalls make the idea concrete. Openat asks the kernel to resolve a path and create an open file description. If that succeeds, the process receives a small integer, often three, called a file descriptor. Later, read and write use that descriptor instead of the path. The descriptor points through the process table into kernel state, then into the virtual filesystem, a filesystem implementation, drivers, and eventually storage. The application sees bytes; the kernel manages the route."
+    },
+    {
+      "key": "Scene6_PermissionsErrorsEN",
+      "class": "Scene6_PermissionsErrorsEN",
+      "title": "Permissions and errors",
+      "text": "Every syscall is also a checkpoint. For openat, the kernel checks the process credentials, the requested flags, mount options, file permissions, and security modules. For kill, it checks whether one process may signal another. For ptrace, it checks a much stricter debugging permission. If the request is allowed, the kernel returns a non-negative result. If not, it returns an error code such as access denied. User libraries translate that into errno."
+    },
+    {
+      "key": "Scene7_BlockingWakeupsEN",
+      "class": "Scene7_BlockingWakeupsEN",
+      "title": "Blocking, sleeping, waking",
+      "text": "Syscalls also explain why programs can wait without burning the CPU. Imagine a process calls read on a socket, but no packet has arrived. The kernel can mark that process as sleeping and let the scheduler run something else. Later, a network interrupt arrives. The kernel handles the packet, marks the sleeping process runnable again, and read finally returns. To the program, read looked like one call. Inside the kernel, it involved queues, interrupts, and scheduling."
+    },
+    {
+      "key": "Scene8_ProcessSyscallsEN",
+      "class": "Scene8_ProcessSyscallsEN",
+      "title": "Process syscalls",
+      "text": "Processes are built with syscalls too. On Unix-like systems, fork or clone creates a new process shape. Execve replaces that process image with a new program. Wait lets a parent collect the child status. Exit tears the process down. Around those calls, the kernel tracks PIDs, credentials, memory maps, file descriptor tables, signal state, priorities, and accounting. Starting a program is not a shell trick. It is a negotiated construction of kernel-managed objects."
+    },
+    {
+      "key": "Scene9_MemorySyscallsEN",
+      "class": "Scene9_MemorySyscallsEN",
+      "title": "Memory syscalls and page faults",
+      "text": "Memory management uses syscalls and traps together. Mmap asks for a mapping: maybe anonymous memory, maybe a file mapped into the address space. Brk moves the process heap boundary. But the kernel often does not allocate every physical page immediately. It records the mapping, updates page tables, and waits. When the process touches a missing page, a page fault brings the kernel back in to allocate memory, load data, or reject invalid access."
+    },
+    {
+      "key": "Scene10_NetworkSyscallsEN",
+      "class": "Scene10_NetworkSyscallsEN",
+      "title": "Network syscalls",
+      "text": "Networking is another syscall surface. Socket creates an endpoint. Connect asks the kernel network stack to reach a peer. Send copies bytes from user memory into kernel buffers. Recv copies data back when packets arrive. Under that simple API are protocols, routing, congestion control, device drivers, and interrupts from the network card. A web request may look like application logic, but every packet crosses the user-kernel boundary through syscalls."
+    },
+    {
+      "key": "Scene11_ObserveControlCostEN",
+      "class": "Scene11_ObserveControlCostEN",
+      "title": "Observe, control, and cost",
+      "text": "Because syscalls are the boundary, they are useful places to observe and control software. Strace shows the syscalls a process makes and the results it gets. Seccomp can restrict which syscalls are allowed, which is why containers and sandboxes care about syscall filters. But crossing the boundary has a cost: registers must be saved, privilege changes, checks run, and data may be copied. Fast programs reduce unnecessary syscalls, batch work, or use newer interfaces when that matters."
+    },
+    {
+      "key": "Scene12_RecapEN",
+      "class": "Scene12_RecapEN",
+      "title": "Recap",
+      "text": "So a syscall is the kernel's public doorway for protected operations. User code usually calls a library wrapper. The wrapper loads a syscall number and arguments. The CPU enters the kernel through a controlled path. The kernel dispatches a handler, validates the request, touches protected resources if allowed, and returns a result or an error. Files, processes, memory, networking, clocks, signals, and permissions all meet at this boundary. Understand syscalls, and Linux stops feeling like a black box."
+    }
+  ]
+}
