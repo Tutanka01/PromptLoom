@@ -1,0 +1,35 @@
+[project]
+name = "kernel-video-api"
+version = "0.1.0"
+description = "Dockerized API and worker pipeline for generating Kernel Videos from prompts."
+requires-python = ">=3.11"
+dependencies = [
+  "celery[redis]>=5.4,<6",
+  "fastapi>=0.115,<1",
+  "openai>=1.55,<2",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.9,<3",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.32,<1",
+]
+
+[project.optional-dependencies]
+worker = [
+  "chatterbox-tts>=0.1",
+  "manim>=0.18,<0.20",
+  "numpy>=1.26",
+  "soundfile>=0.12",
+  "torch>=2.2",
+  "torchaudio>=2.2",
+]
+test = [
+  "pytest>=8.3,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

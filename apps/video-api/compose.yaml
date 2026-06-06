@@ -1,0 +1,91 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/video-api/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      VIDEO_API_DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_api
+      VIDEO_API_REDIS_URL: redis://redis:6379/0
+      VIDEO_API_JOBS_ROOT: /data/jobs
+      VIDEO_API_REPO_ROOT: /workspace
+    command: uvicorn video_api.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - video_jobs:/data/jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/video-api/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      VIDEO_API_DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_api
+      VIDEO_API_REDIS_URL: redis://redis:6379/0
+      VIDEO_API_JOBS_ROOT: /data/jobs
+      VIDEO_API_REPO_ROOT: /workspace
+      VIDEO_API_VOICE_COMMAND: python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45
+      MANIM_USE_UV: "0"
+    command: celery -A video_api.celery_app worker --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
+    volumes:
+      - video_jobs:/data/jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  test:
+    build:
+      context: ../..
+      dockerfile: apps/video-api/Dockerfile
+    environment:
+      VIDEO_API_DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      VIDEO_API_REDIS_URL: redis://redis:6379/0
+      VIDEO_API_JOBS_ROOT: /tmp/video-api-jobs
+      VIDEO_API_REPO_ROOT: /workspace
+      VIDEO_API_FAKE_LLM: "1"
+      MANIM_USE_UV: "0"
+    command: pytest -q
+    volumes:
+      - ./src:/workspace/apps/video-api/src:ro
+      - ./tests:/workspace/apps/video-api/tests:ro
+      - ./docs:/workspace/apps/video-api/docs:ro
+    profiles:
+      - test
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: video
+      POSTGRES_PASSWORD: video
+      POSTGRES_DB: video_api
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U video -d video_api"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  video_jobs:
+  postgres_data:

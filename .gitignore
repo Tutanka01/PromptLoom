@@ -15,3 +15,8 @@ videos/**/concat*.txt
 
 # Local one-off TTS test output.
 darijat_sample.mp3
+
+# Video API runtime artifacts.
+apps/video-api/data/
+apps/video-api/.venv/
+apps/video-api/.pytest_cache/
