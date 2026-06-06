@@ -110,7 +110,7 @@ def validate_static_video_source(video_dir: Path) -> None:
     manim_files = [path for path in video_dir.glob("*_en.py") if path.name != "generate_voice_en.py"]
     for manim_path in manim_files:
         source = manim_path.read_text(encoding="utf-8")
-        layouts = re.findall(r'build_layout\("([a-z_]+)"', source)
+        layouts = re.findall(r'layout_name = "([a-z_]+)"', source)
         unknown = sorted(set(layouts) - APPROVED_VISUAL_PRIMITIVES)
         if unknown:
             raise ValueError(f"generated scenes use unknown visual primitives: {unknown}")

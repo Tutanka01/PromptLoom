@@ -26,9 +26,12 @@ def test_generated_manim_uses_renderer_time_compatibility(tmp_path: Path) -> Non
     assert "def now(self):" in manim_source
     assert "self._sync_start = self.now()" in manim_source
     assert "self.time" not in manim_source
-    assert 'build_layout("concept_map"' in manim_source
-    assert 'build_layout("equation_transform"' in manim_source
-    assert 'build_layout("graph_plot"' in manim_source
+    assert 'layout_name = "concept_map"' in manim_source
+    assert 'layout_name = "equation_transform"' in manim_source
+    assert 'layout_name = "graph_plot"' in manim_source
+    # No placeholder/template residue text should ever be drawn on screen.
+    for ghost in ("structured comparison", "recap map", "sequence over time", "explanation path"):
+        assert ghost not in manim_source
 
     render_script = (video_dir / "render_en.sh").read_text(encoding="utf-8")
     assert "media/videos/prompt_to_academic_video_en/${QUALITY_DIR}/Scene1_HookEN.mp4" in render_script
