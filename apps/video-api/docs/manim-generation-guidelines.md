@@ -13,26 +13,28 @@ The LLM produces a structured blueprint. The worker turns that blueprint into de
 
 ## Visual Grammar
 
-Approved layouts:
+Approved visual primitives:
 
-- `process_pipeline`
-- `privilege_boundary`
-- `memory_translation`
-- `scheduler_timeline`
-- `syscall_gate`
-- `cpu_registers`
-- `hardware_path`
+- `concept_map`
+- `process_flow`
+- `layered_system`
+- `timeline`
+- `equation_transform`
+- `graph_plot`
+- `comparison_table`
+- `cycle_diagram`
+- `spatial_model`
 - `recap_map`
 
-The LLM must choose one layout per scene and describe concrete visual actions for the beats. The worker owns the Python implementation.
+The LLM must choose one visual primitive per scene and describe concrete visual actions for the beats. The worker owns the Python implementation.
 
 ## Beat Quality
 
 Good beats map a spoken idea to a screen change:
 
-- "Animate a direct jump from user mode and block it at the privilege boundary."
-- "Move the virtual address through the MMU and reveal the page-table entry."
-- "Advance the scheduler timeline and switch the CPU lane from task A to task B."
+- "Shrink the interval between two points until the secant line becomes a tangent."
+- "Transform the average-rate expression into a limit expression."
+- "Move focus from light capture, to carbon fixation, to energy storage."
 
 Bad beats are too vague:
 

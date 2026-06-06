@@ -35,15 +35,26 @@ def _plan_markdown(blueprint: VideoBlueprint) -> str:
         f"{scene.title} - {scene.visual_intent}"
         for scene in blueprint.scenes
     )
+    objectives = "\n".join(f"- {objective}" for objective in blueprint.learning_objectives)
     return f"""# {blueprint.title}
 
 ## Topic
 
 {blueprint.teaching_goal}
 
+## Subject
+
+Area: {blueprint.subject_area}
+
+Difficulty: {blueprint.difficulty}
+
 ## Audience
 
 {blueprint.audience}
+
+## Learning Objectives
+
+{objectives}
 
 ## Visual Style
 
@@ -189,145 +200,157 @@ def _small_card(label, color=USER, width=2.35):
     return card(label, width=width, height=0.72, color=color, font_size=18)
 
 
-def _zone(label, color, center):
-    box = RoundedRectangle(width=5.6, height=1.62, corner_radius=0.14, color=color, stroke_width=2)
-    box.set_fill(PANEL_2, opacity=0.38).move_to(center)
-    text = t(label, 18, color, BOLD).next_to(box, UP, buff=0.08)
+def _layer(label, color, center, width=5.6):
+    box = RoundedRectangle(width=width, height=1.18, corner_radius=0.14, color=color, stroke_width=2)
+    box.set_fill(PANEL_2, opacity=0.52).move_to(center)
+    text = t(label, 18, color, BOLD).move_to(box)
     return VGroup(box, text)
 
 
-def _table_block(title, rows, color=KERNEL):
-    box = RoundedRectangle(width=2.35, height=1.78, corner_radius=0.12, color=color, stroke_width=2)
+def _table_block(title, rows, color=KERNEL, width=3.2):
+    box = RoundedRectangle(width=width, height=1.86, corner_radius=0.12, color=color, stroke_width=2)
     box.set_fill(PANEL_2, opacity=0.95)
     heading = t(title, 18, color, BOLD)
-    row_items = VGroup(*[mono(row, 15, TEXT) for row in rows]).arrange(DOWN, buff=0.08)
+    row_items = VGroup(*[t(row, 15, TEXT) for row in rows]).arrange(DOWN, buff=0.08)
     body = VGroup(heading, row_items).arrange(DOWN, buff=0.12).move_to(box)
     return VGroup(box, body)
 
 
-def _ram_block():
-    bars = VGroup()
-    for index, color in enumerate([MUTED, SUCCESS, MUTED, KERNEL, MUTED]):
-        bar = Rectangle(width=1.55, height=0.28, color=EDGE, stroke_width=1)
-        bar.set_fill(color, opacity=0.42 if color == MUTED else 0.85)
-        bars.add(bar)
-    bars.arrange(DOWN, buff=0.06)
-    label = t("RAM frames", 18, TEXT, BOLD).next_to(bars, UP, buff=0.12)
-    return VGroup(label, bars)
+def _simple_axes():
+    x_axis = Line(LEFT * 2.45, RIGHT * 2.45, color=EDGE, stroke_width=3)
+    y_axis = Line(DOWN * 1.35, UP * 1.35, color=EDGE, stroke_width=3).move_to(x_axis.get_left())
+    curve = VMobject(color=SUCCESS, stroke_width=4)
+    curve.set_points_smoothly([
+        LEFT * 2.2 + DOWN * 0.95,
+        LEFT * 1.1 + DOWN * 0.15,
+        ORIGIN + UP * 0.55,
+        RIGHT * 1.2 + UP * 0.15,
+        RIGHT * 2.25 + UP * 0.95,
+    ])
+    curve.move_to(ORIGIN)
+    return VGroup(x_axis, y_axis, curve)
 
 
 def build_layout(layout_name, labels, summary_text):
     summary = t(summary_text, 27, TEXT, BOLD).to_edge(DOWN, buff=0.54)
 
-    if layout_name == "privilege_boundary":
-        user_zone = _zone("USER MODE", USER, UP * 1.35)
-        kernel_zone = _zone("KERNEL MODE", KERNEL, DOWN * 1.15)
-        boundary = DashedLine(LEFT * 5.9, RIGHT * 5.9, color=TEXT, stroke_width=2.5)
-        primary = VGroup(
-            _small_card("browser", USER, 1.65),
-            _small_card("shell", USER, 1.45),
-            _small_card("editor", USER, 1.55),
-        ).arrange(RIGHT, buff=0.18).move_to(UP * 1.35 + LEFT * 1.1)
-        secondary = card(_label(labels, 1, "controlled entry"), width=2.35, color=KERNEL, font_size=18).move_to(ORIGIN + RIGHT * 1.6)
-        tertiary = card("kernel", width=2.0, color=KERNEL, font_size=22).move_to(DOWN * 1.15 + LEFT * 2.2)
+    if layout_name == "concept_map":
+        primary = card(_label(labels, 0, "core idea"), width=3.0, color=KERNEL, font_size=22).move_to(ORIGIN + UP * 0.55)
+        secondary = card(_label(labels, 1, "first cue"), width=2.4, color=USER, font_size=18).move_to(LEFT * 4.0 + UP * 1.35)
+        tertiary = card(_label(labels, 2, "second cue"), width=2.4, color=SUCCESS, font_size=18).move_to(RIGHT * 4.0 + UP * 1.35)
         quaternary = VGroup(
-            _small_card("memory", SUCCESS, 1.55),
-            _small_card("drivers", HARDWARE, 1.55),
-            _small_card("scheduler", PURPLE, 1.75),
-        ).arrange(RIGHT, buff=0.18).move_to(DOWN * 1.15 + RIGHT * 2.25)
-        path_a = Arrow(primary.get_bottom(), secondary.get_top(), buff=0.12, color=DANGER, stroke_width=3.5)
-        path_b = Arrow(secondary.get_bottom(), tertiary.get_top(), buff=0.12, color=KERNEL, stroke_width=3.5)
-        stage = VGroup(user_zone, kernel_zone, boundary)
+            _small_card(_label(labels, 3, "example"), PURPLE, 1.9),
+            _small_card(_label(labels, 4, "transfer"), HARDWARE, 1.9),
+        ).arrange(RIGHT, buff=0.22).move_to(DOWN * 1.15)
+        path_a = Arrow(secondary.get_right(), primary.get_left(), buff=0.14, color=USER, stroke_width=3.5)
+        path_b = Arrow(primary.get_right(), tertiary.get_left(), buff=0.14, color=SUCCESS, stroke_width=3.5)
+        stage = VGroup(Line(primary.get_bottom(), quaternary.get_top(), color=EDGE, stroke_width=3))
+        focus = primary
+
+    elif layout_name == "layered_system":
+        layer_a = _layer(_label(labels, 0, "surface observation"), USER, UP * 1.45)
+        layer_b = _layer(_label(labels, 1, "hidden mechanism"), KERNEL, ORIGIN)
+        layer_c = _layer(_label(labels, 2, "measurable result"), SUCCESS, DOWN * 1.45)
+        primary = layer_a
+        secondary = layer_b
+        tertiary = layer_c
+        quaternary = card(_label(labels, 3, "why it matters"), width=3.2, height=0.76, color=PURPLE, font_size=18).to_edge(RIGHT, buff=0.74).shift(DOWN * 0.05)
+        path_a = Arrow(primary.get_bottom(), secondary.get_top(), buff=0.12, color=KERNEL, stroke_width=3.5)
+        path_b = Arrow(secondary.get_bottom(), tertiary.get_top(), buff=0.12, color=SUCCESS, stroke_width=3.5)
+        stage = VGroup(t(_label(labels, 4, "layered explanation"), 22, TEXT).to_edge(UP, buff=1.16))
         focus = secondary
 
-    elif layout_name == "memory_translation":
-        primary = code_card("0x7fff... virtual", width=2.65, color=USER).move_to(LEFT * 4.55 + UP * 0.45)
-        secondary = card("MMU", width=1.8, color=PURPLE, font_size=24).move_to(LEFT * 1.75 + UP * 0.45)
-        tertiary = _table_block("page table", ["vpn -> pfn", "flags: r/w", "valid: yes"], KERNEL).move_to(RIGHT * 1.15 + UP * 0.45)
-        quaternary = _ram_block().move_to(RIGHT * 4.55 + UP * 0.45)
-        caption = t(_label(labels, 0, "virtual address translation"), 20, TEXT).to_edge(UP, buff=1.16)
+    elif layout_name == "timeline":
+        timeline = Line(LEFT * 5.2 + DOWN * 0.92, RIGHT * 5.2 + DOWN * 0.92, color=EDGE, stroke_width=4)
+        ticks = VGroup(*[Line(UP * 0.12, DOWN * 0.12, color=MUTED).move_to(LEFT * 4.6 + RIGHT * i * 1.15 + DOWN * 0.92) for i in range(9)])
+        primary = card(_label(labels, 0, "start"), width=2.15, color=USER, font_size=19).move_to(LEFT * 4.15 + UP * 0.75)
+        secondary = card(_label(labels, 1, "change"), width=2.15, color=KERNEL, font_size=19).move_to(LEFT * 1.35 + UP * 0.75)
+        tertiary = card(_label(labels, 2, "transition"), width=2.15, color=PURPLE, font_size=19).move_to(RIGHT * 1.35 + UP * 0.75)
+        quaternary = card(_label(labels, 3, "result"), width=2.15, color=SUCCESS, font_size=19).move_to(RIGHT * 4.15 + UP * 0.75)
         path_a = connect(primary, secondary, USER)
         path_b = connect(secondary, quaternary, KERNEL)
-        stage = VGroup(caption)
+        stage = VGroup(timeline, ticks, t(_label(labels, 4, "sequence over time"), 19, MUTED).next_to(timeline, DOWN, buff=0.16))
+        focus = secondary
+
+    elif layout_name == "equation_transform":
+        primary = code_card(_label(labels, 0, "starting expression"), width=3.1, color=USER, font_size=19).move_to(LEFT * 4.1 + UP * 0.55)
+        secondary = code_card(_label(labels, 1, "rewrite"), width=2.7, color=KERNEL, font_size=19).move_to(LEFT * 1.25 + UP * 0.55)
+        tertiary = code_card(_label(labels, 2, "operation"), width=2.7, color=PURPLE, font_size=19).move_to(RIGHT * 1.55 + UP * 0.55)
+        quaternary = code_card(_label(labels, 3, "meaning"), width=2.9, color=SUCCESS, font_size=19).move_to(RIGHT * 4.55 + UP * 0.55)
+        path_a = connect(primary, secondary, USER)
+        path_b = connect(secondary, quaternary, KERNEL)
+        stage = VGroup(t(_label(labels, 4, "notation follows the idea"), 22, TEXT).to_edge(UP, buff=1.16))
         focus = tertiary
 
-    elif layout_name == "scheduler_timeline":
-        timeline = Line(LEFT * 5.2 + DOWN * 0.95, RIGHT * 5.2 + DOWN * 0.95, color=EDGE, stroke_width=4)
-        ticks = VGroup(*[Line(UP * 0.12, DOWN * 0.12, color=MUTED).move_to(LEFT * 4.6 + RIGHT * i * 1.15 + DOWN * 0.95) for i in range(9)])
-        primary = VGroup(
-            _small_card("task A", USER, 1.45),
-            _small_card("task B", SUCCESS, 1.45),
-            _small_card("task C", PURPLE, 1.45),
-        ).arrange(RIGHT, buff=0.2).move_to(UP * 1.25 + LEFT * 2.3)
-        secondary = card("CPU core", width=2.1, color=KERNEL, font_size=23).move_to(UP * 1.25 + RIGHT * 2.6)
-        tertiary = Rectangle(width=1.8, height=0.34, color=KERNEL, stroke_width=2).set_fill(KERNEL, opacity=0.55).move_to(DOWN * 0.95 + LEFT * 2.45)
-        quaternary = Rectangle(width=1.8, height=0.34, color=SUCCESS, stroke_width=2).set_fill(SUCCESS, opacity=0.55).move_to(DOWN * 0.95 + LEFT * 0.45)
-        path_a = Arrow(primary.get_right(), secondary.get_left(), buff=0.14, color=KERNEL, stroke_width=3.5)
-        path_b = Line(tertiary.get_right(), quaternary.get_left(), color=SUCCESS, stroke_width=4)
-        stage = VGroup(timeline, ticks, t("time slices", 19, MUTED).next_to(timeline, DOWN, buff=0.16))
+    elif layout_name == "graph_plot":
+        graph = _simple_axes().scale(1.2).move_to(LEFT * 2.15 + UP * 0.45)
+        primary = graph
+        secondary = Line(LEFT * 1.1, RIGHT * 1.1, color=KERNEL, stroke_width=4).rotate(0.42).move_to(LEFT * 2.15 + UP * 0.70)
+        tertiary = card(_label(labels, 1, "positive slope"), width=2.4, color=SUCCESS, font_size=18).move_to(RIGHT * 3.25 + UP * 1.15)
+        quaternary = card(_label(labels, 2, "negative or flat"), width=2.7, color=PURPLE, font_size=18).move_to(RIGHT * 3.25 + DOWN * 0.35)
+        path_a = Arrow(secondary.get_right(), tertiary.get_left(), buff=0.12, color=SUCCESS, stroke_width=3.5)
+        path_b = Arrow(secondary.get_right(), quaternary.get_left(), buff=0.12, color=PURPLE, stroke_width=3.5)
+        stage = VGroup(t(_label(labels, 4, "read the curve locally"), 22, TEXT).to_edge(UP, buff=1.16))
         focus = secondary
 
-    elif layout_name == "cpu_registers":
-        primary = _small_card("thread A", USER, 1.8).move_to(LEFT * 4.6 + UP * 0.75)
-        secondary = _table_block("CPU registers", ["IP", "SP", "RAX", "RBX"], KERNEL).move_to(LEFT * 1.35 + UP * 0.75)
-        tertiary = _table_block("saved state", ["A.ip", "A.sp", "A.regs"], USER).move_to(RIGHT * 1.45 + UP * 0.75)
-        quaternary = _small_card("thread B", SUCCESS, 1.8).move_to(RIGHT * 4.65 + UP * 0.75)
+    elif layout_name == "comparison_table":
+        primary = _table_block(_label(labels, 0, "case"), [_label(labels, 1, "example"), _label(labels, 2, "units"), _label(labels, 3, "meaning")], USER, width=3.25).move_to(LEFT * 3.55 + UP * 0.5)
+        secondary = _table_block("compare", ["before", "after", "interpret"], KERNEL, width=2.7).move_to(ORIGIN + UP * 0.5)
+        tertiary = _table_block(_label(labels, 4, "takeaway"), ["same structure", "different labels", "clear meaning"], SUCCESS, width=3.15).move_to(RIGHT * 3.55 + UP * 0.5)
+        quaternary = card("match form to meaning", width=3.6, color=PURPLE, font_size=20).move_to(DOWN * 1.45)
         path_a = connect(primary, secondary, USER)
-        path_b = connect(secondary, quaternary, SUCCESS)
-        stage = VGroup(t(_label(labels, 0, "save state, restore state"), 22, TEXT).to_edge(UP, buff=1.15))
+        path_b = connect(secondary, tertiary, KERNEL)
+        stage = VGroup(t("structured comparison", 22, TEXT).to_edge(UP, buff=1.16))
         focus = secondary
 
-    elif layout_name == "hardware_path":
-        primary = code_card("user request", width=2.35, color=USER).move_to(LEFT * 4.55 + UP * 0.55)
-        secondary = card("kernel validation", width=2.65, color=KERNEL, font_size=19).move_to(LEFT * 1.55 + UP * 0.55)
-        tertiary = card("driver", width=2.0, color=PURPLE, font_size=22).move_to(RIGHT * 1.55 + UP * 0.55)
-        quaternary = VGroup(
-            _small_card("disk", HARDWARE, 1.35),
-            _small_card("network", SUCCESS, 1.65),
-        ).arrange(DOWN, buff=0.16).move_to(RIGHT * 4.65 + UP * 0.55)
-        path_a = connect(primary, secondary, USER)
-        path_b = connect(secondary, quaternary, KERNEL)
-        stage = VGroup(t("mediated I/O path", 22, TEXT).to_edge(UP, buff=1.16))
-        focus = secondary
+    elif layout_name == "cycle_diagram":
+        primary = card(_label(labels, 0, "condition"), width=2.25, color=USER, font_size=18).move_to(UP * 1.55)
+        secondary = card(_label(labels, 1, "case A"), width=2.25, color=KERNEL, font_size=18).move_to(RIGHT * 3.25 + UP * 0.2)
+        tertiary = card(_label(labels, 2, "case B"), width=2.25, color=PURPLE, font_size=18).move_to(DOWN * 1.55)
+        quaternary = card(_label(labels, 3, "case C"), width=2.25, color=SUCCESS, font_size=18).move_to(LEFT * 3.25 + UP * 0.2)
+        path_a = ArcBetweenPoints(primary.get_right(), secondary.get_top(), angle=-TAU / 6, color=KERNEL, stroke_width=3.5)
+        path_b = ArcBetweenPoints(secondary.get_bottom(), tertiary.get_right(), angle=-TAU / 6, color=SUCCESS, stroke_width=3.5)
+        stage = VGroup(
+            ArcBetweenPoints(tertiary.get_left(), quaternary.get_bottom(), angle=-TAU / 6, color=PURPLE, stroke_width=3),
+            ArcBetweenPoints(quaternary.get_top(), primary.get_left(), angle=-TAU / 6, color=USER, stroke_width=3),
+            t(_label(labels, 4, "cycle through cases"), 22, TEXT).to_edge(UP, buff=1.16),
+        )
+        focus = primary
 
-    elif layout_name == "syscall_gate":
-        primary = code_card("write(fd, buf)", width=2.55, color=USER).move_to(LEFT * 4.4 + UP * 0.4)
-        secondary = card("syscall gate", width=2.35, color=KERNEL, font_size=22).move_to(LEFT * 1.25 + UP * 0.4)
-        tertiary = _table_block("arguments", ["rax: number", "rdi: fd", "rsi: buf"], PURPLE).move_to(RIGHT * 1.55 + UP * 0.4)
-        quaternary = card("kernel handler", width=2.45, color=SUCCESS, font_size=20).move_to(RIGHT * 4.55 + UP * 0.4)
-        blocked = DashedLine(primary.get_bottom(), quaternary.get_bottom(), color=DANGER, stroke_width=3).shift(DOWN * 1.0)
-        cross = VGroup(
-            Line(LEFT * 0.18 + DOWN * 0.18, RIGHT * 0.18 + UP * 0.18, color=DANGER, stroke_width=5),
-            Line(LEFT * 0.18 + UP * 0.18, RIGHT * 0.18 + DOWN * 0.18, color=DANGER, stroke_width=5),
-        ).move_to(blocked)
-        path_a = connect(primary, secondary, USER)
-        path_b = connect(secondary, quaternary, KERNEL)
-        stage = VGroup(blocked, cross, t("direct jump blocked", 18, DANGER, BOLD).next_to(blocked, DOWN, buff=0.12))
+    elif layout_name == "spatial_model":
+        primary = _simple_axes().move_to(LEFT * 3.55 + UP * 0.45)
+        point_a = Dot(LEFT * 3.85 + UP * 0.45, color=USER)
+        point_b = Dot(LEFT * 2.55 + UP * 0.82, color=SUCCESS)
+        primary.add(point_a, point_b)
+        secondary = card(_label(labels, 1, "movement"), width=2.45, color=KERNEL, font_size=18).move_to(ORIGIN + UP * 0.55)
+        tertiary = card(_label(labels, 2, "local view"), width=2.45, color=PURPLE, font_size=18).move_to(RIGHT * 3.3 + UP * 0.95)
+        quaternary = card(_label(labels, 3, "result"), width=2.45, color=SUCCESS, font_size=18).move_to(RIGHT * 3.3 + DOWN * 0.65)
+        path_a = Arrow(point_b.get_center(), secondary.get_left(), buff=0.12, color=KERNEL, stroke_width=3.5)
+        path_b = Arrow(secondary.get_right(), tertiary.get_left(), buff=0.12, color=SUCCESS, stroke_width=3.5)
+        stage = VGroup(t(_label(labels, 4, "spatial relationship"), 22, TEXT).to_edge(UP, buff=1.16))
         focus = secondary
 
     elif layout_name == "recap_map":
-        primary = card("programs ask", width=2.45, color=USER, font_size=22).move_to(LEFT * 3.8 + UP * 0.55)
-        secondary = card("kernel decides", width=2.55, color=KERNEL, font_size=22).move_to(ORIGIN + UP * 0.55)
-        tertiary = card("hardware acts", width=2.45, color=SUCCESS, font_size=22).move_to(RIGHT * 3.8 + UP * 0.55)
+        primary = card(_label(labels, 0, "idea"), width=2.45, color=USER, font_size=21).move_to(LEFT * 3.8 + UP * 0.55)
+        secondary = card(_label(labels, 1, "mechanism"), width=2.55, color=KERNEL, font_size=21).move_to(ORIGIN + UP * 0.55)
+        tertiary = card(_label(labels, 2, "result"), width=2.45, color=SUCCESS, font_size=21).move_to(RIGHT * 3.8 + UP * 0.55)
         quaternary = VGroup(
-            _small_card("syscalls", USER, 1.65),
-            _small_card("memory", SUCCESS, 1.55),
-            _small_card("scheduler", PURPLE, 1.85),
-            _small_card("drivers", HARDWARE, 1.55),
+            _small_card(_label(labels, 3, "application"), PURPLE, 1.85),
+            _small_card(_label(labels, 4, "takeaway"), HARDWARE, 1.85),
         ).arrange(RIGHT, buff=0.18).move_to(DOWN * 1.35)
         path_a = connect(primary, secondary, USER)
         path_b = connect(secondary, tertiary, KERNEL)
-        stage = VGroup(t("one recurring kernel pattern", 22, TEXT).to_edge(UP, buff=1.16))
+        stage = VGroup(t("recap map", 22, TEXT).to_edge(UP, buff=1.16))
         focus = secondary
 
     else:
-        primary = code_card(_label(labels, 0, "user action"), width=3.0, color=USER).move_to(LEFT * 4.05 + UP * 0.55)
-        secondary = card(_label(labels, 1, "kernel decision"), width=3.0, color=KERNEL).move_to(ORIGIN + UP * 0.55)
-        tertiary = card(_label(labels, 2, "resource access"), width=3.0, color=SUCCESS).move_to(RIGHT * 4.05 + UP * 0.55)
-        quaternary = card(_label(labels, 3, "result returns"), width=4.15, height=0.82, color=PURPLE, font_size=19).move_to(DOWN * 1.45)
+        primary = code_card(_label(labels, 0, "starting idea"), width=3.0, color=USER).move_to(LEFT * 4.05 + UP * 0.55)
+        secondary = card(_label(labels, 1, "mechanism"), width=3.0, color=KERNEL).move_to(ORIGIN + UP * 0.55)
+        tertiary = card(_label(labels, 2, "result"), width=3.0, color=SUCCESS).move_to(RIGHT * 4.05 + UP * 0.55)
+        quaternary = card(_label(labels, 3, "interpretation"), width=4.15, height=0.82, color=PURPLE, font_size=19).move_to(DOWN * 1.45)
         path_a = connect(primary, secondary, USER)
         path_b = connect(secondary, tertiary, KERNEL)
-        stage = VGroup(t(_label(labels, 4, "controlled path"), 22, TEXT).to_edge(UP, buff=1.16))
+        stage = VGroup(t(_label(labels, 4, "explanation path"), 22, TEXT).to_edge(UP, buff=1.16))
         focus = secondary
 
     moving = flow_dot(path_a, KERNEL)

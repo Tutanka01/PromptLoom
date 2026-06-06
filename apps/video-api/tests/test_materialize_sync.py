@@ -11,7 +11,7 @@ from video_api.pipeline.validate import validate_static_video_source
 def test_generated_manim_uses_renderer_time_compatibility(tmp_path: Path) -> None:
     settings = Settings(repo_root=Path("/workspace"))
     video_dir = Materializer(settings).materialize(
-        fake_blueprint("Explain page tables", "linux-fondamentaux"),
+        fake_blueprint("Explain derivatives", "math"),
         tmp_path,
     )
 
@@ -22,6 +22,13 @@ def test_generated_manim_uses_renderer_time_compatibility(tmp_path: Path) -> Non
     assert "def now(self):" in manim_source
     assert "self._sync_start = self.now()" in manim_source
     assert "self.time" not in manim_source
+    assert 'build_layout("concept_map"' in manim_source
+    assert 'build_layout("equation_transform"' in manim_source
+    assert 'build_layout("graph_plot"' in manim_source
 
     render_script = (video_dir / "render_en.sh").read_text(encoding="utf-8")
-    assert "media/videos/prompt_to_kernel_video_en/${QUALITY_DIR}/Scene1_HookEN.mp4" in render_script
+    assert "media/videos/prompt_to_academic_video_en/${QUALITY_DIR}/Scene1_HookEN.mp4" in render_script
+
+    plan = next(tmp_path.glob("docs/videos/math/prompt-to-academic-video/plan.md")).read_text(encoding="utf-8")
+    assert "Area: math" in plan
+    assert "## Learning Objectives" in plan

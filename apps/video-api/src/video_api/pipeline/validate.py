@@ -13,6 +13,20 @@ from video_api.schemas import CLASS_KEY_RE
 logger = logging.getLogger(__name__)
 
 
+APPROVED_VISUAL_PRIMITIVES = {
+    "concept_map",
+    "process_flow",
+    "layered_system",
+    "timeline",
+    "equation_transform",
+    "graph_plot",
+    "comparison_table",
+    "cycle_diagram",
+    "spatial_model",
+    "recap_map",
+}
+
+
 def validate_static_video_source(video_dir: Path) -> None:
     logger.info("validate.start video_dir=%s", video_dir)
     segments_path = video_dir / "segments_en.json"
@@ -31,6 +45,8 @@ def validate_static_video_source(video_dir: Path) -> None:
     for segment in segments:
         if segment["key"] != segment["class"]:
             raise ValueError(f"segment key/class mismatch: {segment['key']}")
+        if len(str(segment.get("text", "")).split()) < 10:
+            raise ValueError(f"segment narration too short: {segment['key']}")
         if not CLASS_KEY_RE.match(segment["key"]):
             raise ValueError(f"invalid segment key: {segment['key']}")
         if segment["key"] not in beats:
@@ -53,10 +69,13 @@ def validate_static_video_source(video_dir: Path) -> None:
     for manim_path in manim_files:
         source = manim_path.read_text(encoding="utf-8")
         layouts = re.findall(r'build_layout\("([a-z_]+)"', source)
+        unknown = sorted(set(layouts) - APPROVED_VISUAL_PRIMITIVES)
+        if unknown:
+            raise ValueError(f"generated scenes use unknown visual primitives: {unknown}")
         if len(layouts) >= 4 and len(set(layouts)) < 3:
-            raise ValueError("generated scenes use too little layout variety")
-        if 'build_layout("process_pipeline"' in source and source.count('build_layout("process_pipeline"') == len(segments):
-            raise ValueError("generated scenes use one generic process layout only")
+            raise ValueError("generated scenes use too little visual primitive variety")
+        if layouts and layouts.count("process_flow") == len(segments):
+            raise ValueError("generated scenes use one generic process flow only")
 
     for path in py_files:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

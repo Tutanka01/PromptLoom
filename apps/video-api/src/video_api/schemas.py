@@ -48,14 +48,28 @@ class BeatSpec(BaseModel):
         return value or "beat"
 
 
+SubjectArea = Literal[
+    "math",
+    "physics",
+    "cs",
+    "biology",
+    "chemistry",
+    "engineering",
+    "general_stem",
+]
+
+Difficulty = Literal["intro", "intermediate", "advanced"]
+
 SceneLayout = Literal[
-    "process_pipeline",
-    "privilege_boundary",
-    "memory_translation",
-    "scheduler_timeline",
-    "syscall_gate",
-    "cpu_registers",
-    "hardware_path",
+    "concept_map",
+    "process_flow",
+    "layered_system",
+    "timeline",
+    "equation_transform",
+    "graph_plot",
+    "comparison_table",
+    "cycle_diagram",
+    "spatial_model",
     "recap_map",
 ]
 
@@ -65,7 +79,7 @@ class SceneSpec(BaseModel):
     title: str = Field(min_length=2, max_length=80)
     text: str = Field(min_length=30, max_length=1600)
     duration_seconds: int = Field(default=30, ge=15, le=75)
-    layout: SceneLayout = "process_pipeline"
+    layout: SceneLayout = "concept_map"
     visual_intent: str = Field(min_length=10, max_length=500)
     beats: list[BeatSpec] = Field(min_length=3, max_length=8)
 
@@ -92,8 +106,15 @@ class VideoBlueprint(BaseModel):
     theme: str = Field(min_length=2, max_length=80)
     slug: str
     target_duration_seconds: int = Field(default=240, ge=45, le=900)
+    subject_area: SubjectArea = "general_stem"
+    difficulty: Difficulty = "intro"
     audience: str = Field(min_length=5, max_length=240)
     teaching_goal: str = Field(min_length=10, max_length=400)
+    learning_objectives: list[str] = Field(
+        default_factory=lambda: ["Explain the core idea clearly."],
+        min_length=1,
+        max_length=5,
+    )
     style_notes: str = Field(min_length=10, max_length=700)
     scenes: list[SceneSpec] = Field(min_length=3, max_length=14)
 
@@ -104,6 +125,16 @@ class VideoBlueprint(BaseModel):
         if not SLUG_RE.match(value):
             raise ValueError("slug must use lowercase kebab-case")
         return value
+
+    @field_validator("learning_objectives")
+    @classmethod
+    def validate_learning_objectives(cls, value: list[str]) -> list[str]:
+        cleaned = [" ".join(item.split()) for item in value if item and item.strip()]
+        if not cleaned:
+            raise ValueError("learning_objectives must contain at least one objective")
+        if any(len(item) > 180 for item in cleaned):
+            raise ValueError("learning_objectives entries must stay concise")
+        return cleaned
 
     @model_validator(mode="after")
     def validate_scene_sequence(self) -> "VideoBlueprint":

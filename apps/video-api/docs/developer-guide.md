@@ -194,7 +194,7 @@ docker compose up -d redis postgres api
 curl http://localhost:8080/healthz
 curl -X POST http://localhost:8080/v1/videos \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Make a short video explaining Linux syscalls"}'
+  -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math"}'
 docker compose down
 ```
 

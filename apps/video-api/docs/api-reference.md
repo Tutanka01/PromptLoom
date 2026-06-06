@@ -29,15 +29,15 @@ Cree un job de generation video.
 ```bash
 curl -X POST http://localhost:8080/v1/videos \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Make a short video explaining Linux syscalls"}'
+  -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math"}'
 ```
 
 ### Corps JSON
 
 ```json
 {
-  "prompt": "Make a short video explaining Linux syscalls",
-  "theme": "linux-fondamentaux",
+  "prompt": "Make a short video explaining derivatives intuitively",
+  "theme": "math",
   "language": "en",
   "target_duration_seconds": 240,
   "quality_profile": "final",

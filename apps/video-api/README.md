@@ -1,6 +1,6 @@
-# Kernel Video API
+# Academic Video API
 
-Dockerized API for turning a prompt into a rendered Manim video through a queued worker pipeline.
+Dockerized API for turning an academic STEM prompt into a rendered Manim video through a queued worker pipeline.
 
 ## Documentation
 
@@ -25,7 +25,7 @@ Submit a job:
 ```bash
 curl -X POST http://localhost:8080/v1/videos \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Make a short video explaining Linux page tables"}'
+  -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math"}'
 ```
 
 Poll:

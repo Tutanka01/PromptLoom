@@ -20,7 +20,7 @@ Il doit produire un blueprint structure qui decrit :
 - quelles scenes creer ;
 - quelle duree cible respecter ;
 - quelle narration lire ;
-- quel layout visuel utiliser par scene ;
+- quelle primitive visuelle utiliser par scene ;
 - quels beats visuels synchroniser avec la narration.
 
 Le code Manim est ensuite genere par le worker a partir de templates.
@@ -31,27 +31,33 @@ Le LLM doit retourner un objet JSON :
 
 ```json
 {
-  "title": "What Is A Linux Syscall?",
-  "theme": "linux-fondamentaux",
-  "slug": "what-is-a-linux-syscall",
+  "title": "What Is A Derivative?",
+  "theme": "math",
+  "slug": "what-is-a-derivative",
   "target_duration_seconds": 240,
-  "audience": "Developers learning Linux internals.",
-  "teaching_goal": "Explain why user programs use syscalls to ask the kernel for privileged work.",
-  "style_notes": "Dark technical style, stable cards, clear arrows, one active concept at a time.",
+  "subject_area": "math",
+  "difficulty": "intro",
+  "audience": "STEM learners meeting calculus for the first time.",
+  "teaching_goal": "Explain a derivative as an instantaneous rate of change.",
+  "learning_objectives": [
+    "Connect average rate of change to instantaneous rate.",
+    "Explain why the limit process creates a tangent slope."
+  ],
+  "style_notes": "Dark academic style, stable diagrams, clear arrows, one active concept at a time.",
   "scenes": [
     {
       "key": "Scene1_HookEN",
-      "title": "A command is not direct",
+      "title": "The changing quantity",
       "duration_seconds": 30,
-      "layout": "syscall_gate",
-      "text": "A command looks simple, but the program does not talk directly to hardware...",
-      "visual_intent": "Show terminal, program, blocked direct hardware path, then kernel path.",
+      "layout": "concept_map",
+      "text": "A derivative begins with a simple question: how fast is something changing right now?...",
+      "visual_intent": "Build a concept map from changing quantities to the question of instant rate.",
       "beats": [
         {
-          "key": "command",
+          "key": "question",
           "at": 0.08,
-          "text_hint": "A command looks simple",
-          "visual_action": "Reveal the terminal command."
+          "text_hint": "how fast is something changing",
+          "visual_action": "Reveal the central question and connect it to example quantities."
         }
       ]
     }
@@ -68,9 +74,12 @@ Regles principales :
 - `slug` en kebab-case minuscule.
 - 3 a 14 scenes.
 - par defaut, une video vise 240 secondes.
+- `subject_area` vaut `math`, `physics`, `cs`, `biology`, `chemistry`, `engineering` ou `general_stem`.
+- `difficulty` vaut `intro`, `intermediate` ou `advanced`.
+- `learning_objectives` contient 1 a 5 objectifs concis.
 - pour une cible 180-300 secondes, le blueprint doit utiliser 8 a 12 scenes.
 - chaque scene a un `duration_seconds` coherent avec la duree cible.
-- chaque scene choisit un layout approuve : `process_pipeline`, `privilege_boundary`, `memory_translation`, `scheduler_timeline`, `syscall_gate`, `cpu_registers`, `hardware_path`, `recap_map`.
+- chaque scene choisit une primitive visuelle approuvee : `concept_map`, `process_flow`, `layered_system`, `timeline`, `equation_transform`, `graph_plot`, `comparison_table`, `cycle_diagram`, `spatial_model`, `recap_map`.
 - chaque scene a une cle du type `Scene1_HookEN`.
 - les numeros de scenes doivent etre ordonnes.
 - chaque scene a 3 a 8 beats.

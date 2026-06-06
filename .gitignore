@@ -20,3 +20,5 @@ darijat_sample.mp3
 apps/video-api/data/
 apps/video-api/.venv/
 apps/video-api/.pytest_cache/
+
+CLAUDE.md

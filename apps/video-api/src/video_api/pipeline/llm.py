@@ -14,30 +14,53 @@ from video_api.schemas import BeatSpec, SceneSpec, VideoBlueprint
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT = """You produce educational Linux and low-level systems videos.
+SYSTEM_PROMPT = """You produce high-quality STEM educational explainer videos.
 Return only valid JSON. The JSON must describe a complete 3-5 minute video blueprint by default.
 Every scene must have a key like Scene1_HookEN, Scene2_CoreIdeaEN.
 For a 3-5 minute target, produce 8 to 12 scenes with enough narration to actually fill the duration.
-Each scene must include duration_seconds, one approved layout, narration text, and 5 to 7 concrete beats unless the scene is very short.
+Each scene must include duration_seconds, one approved visual primitive, narration text, and 5 to 7 concrete beats unless the scene is very short.
 Beat at values must be normalized ratios between 0.0 and 1.0 inside that scene, not seconds or global timestamps.
 The voice and image must explain the same idea at the same time.
+Plan the explanation from intuition, to mechanism, to transfer or recap. Use precise academic language, but introduce terms before relying on them.
 Do not request raw Python Manim. Plan with this deterministic visual grammar only:
-process_pipeline, privilege_boundary, memory_translation, scheduler_timeline, syscall_gate,
-cpu_registers, hardware_path, recap_map.
+concept_map, process_flow, layered_system, timeline, equation_transform,
+graph_plot, comparison_table, cycle_diagram, spatial_model, recap_map.
 Good Manim scenes use explicit Mobjects, stable positioning, transforms, movement, focus/dim,
 and one active idea at a time. Avoid generic "make it nice" visual actions."""
 
 
-LAYOUTS = [
-    "process_pipeline",
-    "privilege_boundary",
-    "memory_translation",
-    "scheduler_timeline",
-    "syscall_gate",
-    "cpu_registers",
-    "hardware_path",
+VISUAL_PRIMITIVES = [
+    "concept_map",
+    "process_flow",
+    "layered_system",
+    "timeline",
+    "equation_transform",
+    "graph_plot",
+    "comparison_table",
+    "cycle_diagram",
+    "spatial_model",
     "recap_map",
 ]
+
+LEGACY_LAYOUT_MAP = {
+    "process_pipeline": "process_flow",
+    "privilege_boundary": "layered_system",
+    "memory_translation": "spatial_model",
+    "scheduler_timeline": "timeline",
+    "syscall_gate": "process_flow",
+    "cpu_registers": "comparison_table",
+    "hardware_path": "process_flow",
+}
+
+SUBJECT_AREAS = {"math", "physics", "cs", "biology", "chemistry", "engineering", "general_stem"}
+DIFFICULTIES = {"intro", "intermediate", "advanced"}
+DIFFICULTY_ALIASES = {
+    "beginner": "intro",
+    "basic": "intro",
+    "introductory": "intro",
+    "medium": "intermediate",
+    "expert": "advanced",
+}
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -101,6 +124,24 @@ def _coerce_blueprint_shape(data: Any) -> Any:
         return data
     coerced = dict(data)
     coerced["target_duration_seconds"] = coerced.get("target_duration_seconds") or coerced.get("duration_seconds") or 240
+    subject_area = (
+        coerced.get("subject_area")
+        or coerced.get("discipline")
+        or coerced.get("domain")
+        or coerced.get("theme")
+        or "general_stem"
+    )
+    subject_area = str(subject_area).strip().lower().replace("-", "_")
+    coerced["subject_area"] = subject_area if subject_area in SUBJECT_AREAS else "general_stem"
+    difficulty = str(coerced.get("difficulty") or coerced.get("level") or "intro").strip().lower()
+    difficulty = DIFFICULTY_ALIASES.get(difficulty, difficulty)
+    coerced["difficulty"] = difficulty if difficulty in DIFFICULTIES else "intro"
+    coerced["learning_objectives"] = (
+        coerced.get("learning_objectives")
+        or coerced.get("objectives")
+        or coerced.get("learning_goals")
+        or [coerced.get("teaching_goal") or "Explain the core idea clearly."]
+    )
     scenes = coerced.get("scenes")
     if not isinstance(scenes, list):
         return coerced
@@ -130,7 +171,12 @@ def _coerce_blueprint_shape(data: Any) -> Any:
             or item.get("description")
         )
         layout = item.get("layout") or item.get("visual_layout") or item.get("template") or item.get("scene_type")
-        item["layout"] = layout if layout in LAYOUTS else LAYOUTS[(scene_index - 1) % len(LAYOUTS)]
+        mapped_layout = LEGACY_LAYOUT_MAP.get(layout, layout)
+        item["layout"] = (
+            mapped_layout
+            if mapped_layout in VISUAL_PRIMITIVES
+            else VISUAL_PRIMITIVES[(scene_index - 1) % len(VISUAL_PRIMITIVES)]
+        )
         item["duration_seconds"] = item.get("duration_seconds") or item.get("target_duration_seconds") or default_scene_duration
 
         beats = item.get("beats") or item.get("visual_beats") or item.get("beat_sync") or []
@@ -172,174 +218,138 @@ def fake_blueprint(
     theme: str | None = None,
     target_duration_seconds: int | None = None,
 ) -> VideoBlueprint:
-    safe_theme = theme or "linux-fondamentaux"
+    safe_theme = theme or "general-stem"
     target = int(target_duration_seconds or 240)
-    title = "Prompt To Kernel Video"
+    title = "Prompt To Academic Video"
     scene_duration = max(24, round(target / 8))
+    academic_scene_data = [
+        (
+            "Scene1_HookEN",
+            "The changing quantity",
+            "concept_map",
+            "Build a concept map from changing quantities to the question of instant rate.",
+            "A derivative begins with a simple question: how fast is something changing right now? Not over a whole trip, not across a long experiment, but at one precise input. The idea matters because many academic models are built from changing quantities: position, temperature, concentration, population, and cost.",
+            [
+                ("question", 0.10, "how fast is something changing", "Reveal the central question."),
+                ("now", 0.30, "right now", "Focus a single input point."),
+                ("not_average", 0.48, "not over a whole trip", "Dim a long interval and keep the point highlighted."),
+                ("examples", 0.68, "position, temperature, concentration", "Reveal example quantity cards around the central idea."),
+                ("purpose", 0.88, "models are built from changing quantities", "Connect the examples back to the derivative."),
+            ],
+        ),
+        (
+            "Scene2_MechanismEN",
+            "Average rate first",
+            "process_flow",
+            "Show two points, output change, input change, and the secant slope formula.",
+            "The easiest starting point is average rate of change. Pick two inputs, measure the change in output, and divide by the change in input. That gives the slope of a secant line. It is useful, but it still describes an interval, so it cannot yet answer what is happening at exactly one point.",
+            [
+                ("two_inputs", 0.12, "Pick two inputs", "Place two input points on a graph."),
+                ("output_change", 0.30, "change in output", "Draw a vertical delta output marker."),
+                ("input_change", 0.48, "change in input", "Draw a horizontal delta input marker."),
+                ("slope", 0.66, "slope of a secant line", "Create the secant line through both points."),
+                ("interval", 0.88, "still describes an interval", "Bracket the interval and dim the rest of the graph."),
+            ],
+        ),
+        (
+            "Scene3_LimitEN",
+            "Shrink the interval",
+            "spatial_model",
+            "Animate the second point approaching the first until the secant becomes tangent.",
+            "To get an instant rate, keep one point fixed and slide the second point closer. The secant line rotates as the interval shrinks. If those slopes settle toward a stable value, that value is the derivative at the fixed point. Visually, the secant has become a tangent.",
+            [
+                ("fixed", 0.10, "keep one point fixed", "Pin the first point on the curve."),
+                ("slide", 0.28, "slide the second point closer", "Move the second point toward the first."),
+                ("rotate", 0.46, "secant line rotates", "Rotate the secant line as the point moves."),
+                ("stable", 0.66, "settle toward a stable value", "Show slope values converging."),
+                ("tangent", 0.88, "secant has become a tangent", "Replace the secant with a tangent line."),
+            ],
+        ),
+        (
+            "Scene4_EquationEN",
+            "The limit formula",
+            "equation_transform",
+            "Transform average rate notation into the derivative limit definition.",
+            "The notation writes that shrinking process as a limit. Start with the difference quotient, f of x plus h minus f of x, divided by h. Then let h approach zero. The formula is not a trick; it is the average rate calculation with the interval pushed as small as the function allows.",
+            [
+                ("difference", 0.10, "difference quotient", "Reveal the difference quotient."),
+                ("fxh", 0.30, "f of x plus h minus f of x", "Highlight the numerator."),
+                ("divide", 0.48, "divided by h", "Highlight the denominator as the input interval."),
+                ("limit", 0.68, "let h approach zero", "Add the limit operator."),
+                ("meaning", 0.88, "average rate calculation", "Connect the equation back to the shrinking interval."),
+            ],
+        ),
+        (
+            "Scene5_GraphEN",
+            "Reading slope on a graph",
+            "graph_plot",
+            "Show tangent slopes at positive, zero, and negative regions of a curve.",
+            "On a graph, the derivative is the slope of the tangent line. A positive slope means the output is increasing near that input. A negative slope means it is decreasing. A slope near zero means the graph is locally flat. The derivative turns the shape of a curve into a precise number.",
+            [
+                ("tangent", 0.10, "slope of the tangent line", "Draw a tangent line on the curve."),
+                ("positive", 0.30, "positive slope", "Move focus to an increasing region."),
+                ("negative", 0.50, "negative slope", "Move focus to a decreasing region."),
+                ("zero", 0.70, "slope near zero", "Show a nearly flat tangent at the top."),
+                ("number", 0.88, "shape of a curve into a precise number", "Reveal slope value labels."),
+            ],
+        ),
+        (
+            "Scene6_UnitsEN",
+            "Units keep the meaning",
+            "comparison_table",
+            "Compare example functions with their derivative units and interpretations.",
+            "A derivative also carries units. If position is measured in meters and time is measured in seconds, the derivative has units of meters per second. If cost is measured in dollars and output in units produced, the derivative is dollars per unit. The units tell you what kind of rate the number represents.",
+            [
+                ("units", 0.10, "carries units", "Reveal a units comparison table."),
+                ("position", 0.30, "meters and seconds", "Highlight the position over time row."),
+                ("velocity", 0.48, "meters per second", "Transform the units into meters per second."),
+                ("cost", 0.68, "dollars per unit", "Highlight the cost example row."),
+                ("meaning", 0.88, "what kind of rate", "Focus the interpretation column."),
+            ],
+        ),
+        (
+            "Scene7_WhenItFailsEN",
+            "When the derivative fails",
+            "cycle_diagram",
+            "Cycle through corner, jump, and vertical tangent failure modes.",
+            "The derivative exists only when the limiting slope settles down. At a sharp corner, the slope from the left and the slope from the right can disagree. At a jump, the graph does not connect smoothly. At a vertical tangent, the slope can grow without bound. These are not exceptions to memorize; they are cases where the tangent idea breaks.",
+            [
+                ("settles", 0.10, "limiting slope settles down", "Show the stable-slope condition."),
+                ("corner", 0.30, "sharp corner", "Reveal a corner case."),
+                ("jump", 0.50, "At a jump", "Move to a discontinuous jump case."),
+                ("vertical", 0.70, "vertical tangent", "Move to a vertical tangent case."),
+                ("breaks", 0.88, "tangent idea breaks", "Summarize why each case fails."),
+            ],
+        ),
+        (
+            "Scene8_RecapEN",
+            "The takeaway",
+            "recap_map",
+            "Summarize average rate, limit, tangent slope, and academic applications.",
+            "The useful mental model is compact: average rate uses two points, the derivative pushes the second point toward the first, and the result is the tangent slope if the limit exists. That single idea connects motion, growth, optimization, and many scientific models. The symbols matter because they preserve the shrinking-interval story.",
+            [
+                ("average", 0.14, "average rate uses two points", "Show the two-point summary."),
+                ("limit", 0.34, "pushes the second point", "Show the limiting process."),
+                ("tangent", 0.56, "tangent slope", "Reveal the tangent slope result."),
+                ("applications", 0.74, "motion, growth, optimization", "Reveal application cards."),
+                ("symbols", 0.88, "shrinking-interval story", "Connect the formula back to the visual story."),
+            ],
+        ),
+    ]
     scenes = [
         SceneSpec(
-            key="Scene1_HookEN",
-            title="The visible command",
+            key=key,
+            title=scene_title,
             duration_seconds=scene_duration,
-            layout="process_pipeline",
-            text=(
-                "A Linux command looks simple from the outside. You type one line, press enter, "
-                "and a result appears. But the interesting part is the controlled path between "
-                "the program, the kernel, and the hardware. The terminal hides that path, so the "
-                "first useful mental model is not the command itself, but the chain of controlled "
-                "steps that Linux follows underneath."
-            ),
-            visual_intent="Show a terminal command, then reveal the kernel path behind it.",
+            layout=layout,
+            visual_intent=visual_intent,
+            text=text,
             beats=[
-                BeatSpec(key="command", at=0.10, text_hint="A Linux command looks simple", visual_action="Show a terminal command."),
-                BeatSpec(key="program", at=0.28, text_hint="from the outside", visual_action="Reveal the user program."),
-                BeatSpec(key="hidden_path", at=0.46, text_hint="controlled path", visual_action="Open a path behind the command."),
-                BeatSpec(key="kernel", at=0.66, text_hint="program, kernel", visual_action="Connect the program to the kernel."),
-                BeatSpec(key="hardware", at=0.86, text_hint="and the hardware", visual_action="Complete the path to hardware."),
+                BeatSpec(key=beat_key, at=at, text_hint=text_hint, visual_action=visual_action)
+                for beat_key, at, text_hint, visual_action in beats
             ],
-        ),
-        SceneSpec(
-            key="Scene2_MechanismEN",
-            title="The kernel boundary",
-            duration_seconds=scene_duration,
-            layout="privilege_boundary",
-            text=(
-                "The kernel is not just another library. It runs with privileges user programs do "
-                "not have. That boundary is what lets Linux share the machine without letting one "
-                "program overwrite everything else. A browser, shell, and editor can all run at "
-                "the same time because each one must cross a guarded boundary before touching "
-                "protected resources."
-            ),
-            visual_intent="Contrast user space with kernel space and show the privilege boundary.",
-            beats=[
-                BeatSpec(key="library", at=0.12, text_hint="not just another library", visual_action="Show a normal library path blocked."),
-                BeatSpec(key="privilege", at=0.32, text_hint="runs with privileges", visual_action="Highlight the kernel zone."),
-                BeatSpec(key="programs", at=0.50, text_hint="browser, shell, editor", visual_action="Place several apps in user mode."),
-                BeatSpec(key="boundary", at=0.68, text_hint="guarded boundary", visual_action="Draw the boundary."),
-                BeatSpec(key="isolation", at=0.86, text_hint="without letting one program", visual_action="Show isolation between programs."),
-            ],
-        ),
-        SceneSpec(
-            key="Scene3_SyscallGateEN",
-            title="The controlled entry",
-            duration_seconds=scene_duration,
-            layout="syscall_gate",
-            text=(
-                "When a program needs protected work, it does not jump into kernel code directly. "
-                "It prepares a request, places arguments where the calling convention expects them, "
-                "and uses a CPU instruction that enters the kernel through a known gate. That gate "
-                "is narrow on purpose: Linux can inspect what is being asked before it acts."
-            ),
-            visual_intent="Show a request token crossing a syscall gate instead of a direct jump.",
-            beats=[
-                BeatSpec(key="need_work", at=0.10, text_hint="needs protected work", visual_action="Show a user request token."),
-                BeatSpec(key="no_jump", at=0.28, text_hint="does not jump", visual_action="Block a direct jump into the kernel."),
-                BeatSpec(key="arguments", at=0.46, text_hint="places arguments", visual_action="Load argument slots beside the request."),
-                BeatSpec(key="cpu_entry", at=0.66, text_hint="CPU instruction", visual_action="Move through the CPU entry gate."),
-                BeatSpec(key="inspect", at=0.86, text_hint="inspect what is being asked", visual_action="Focus the kernel validation step."),
-            ],
-        ),
-        SceneSpec(
-            key="Scene4_MemoryEN",
-            title="Virtual memory translation",
-            duration_seconds=scene_duration,
-            layout="memory_translation",
-            text=(
-                "Memory has the same pattern. A process sees virtual addresses, not raw RAM cells. "
-                "The CPU and MMU consult page tables that the kernel manages, then translate a "
-                "virtual page into a physical frame. That is why two programs can both use an "
-                "address that looks identical, while Linux still keeps their real memory separate."
-            ),
-            visual_intent="Map virtual addresses through page tables into physical RAM frames.",
-            beats=[
-                BeatSpec(key="virtual", at=0.10, text_hint="virtual addresses", visual_action="Show a process virtual address space."),
-                BeatSpec(key="mmu", at=0.30, text_hint="CPU and MMU", visual_action="Route an address through the MMU."),
-                BeatSpec(key="tables", at=0.50, text_hint="page tables", visual_action="Reveal page table entries."),
-                BeatSpec(key="frame", at=0.70, text_hint="physical frame", visual_action="Highlight the selected RAM frame."),
-                BeatSpec(key="separate", at=0.88, text_hint="keeps their real memory separate", visual_action="Compare two isolated processes."),
-            ],
-        ),
-        SceneSpec(
-            key="Scene5_SchedulerEN",
-            title="The scheduler shares time",
-            duration_seconds=scene_duration,
-            layout="scheduler_timeline",
-            text=(
-                "The same kernel also decides who runs next. A computer may feel like many programs "
-                "are running at once, but each CPU core executes one thread at a time. The scheduler "
-                "chooses a runnable task, gives it a slice of time, then switches when the slice ends, "
-                "the task blocks, or a higher priority task needs attention."
-            ),
-            visual_intent="Show runnable tasks moving across a CPU time-slice timeline.",
-            beats=[
-                BeatSpec(key="many_programs", at=0.10, text_hint="many programs", visual_action="Show multiple runnable tasks."),
-                BeatSpec(key="one_core", at=0.30, text_hint="one thread at a time", visual_action="Focus one CPU lane."),
-                BeatSpec(key="choose", at=0.48, text_hint="chooses a runnable task", visual_action="Move a task onto the CPU."),
-                BeatSpec(key="slice", at=0.68, text_hint="slice of time", visual_action="Animate a time slice on the timeline."),
-                BeatSpec(key="switch", at=0.88, text_hint="then switches", visual_action="Switch to the next task."),
-            ],
-        ),
-        SceneSpec(
-            key="Scene6_RegistersEN",
-            title="CPU state makes switching possible",
-            duration_seconds=scene_duration,
-            layout="cpu_registers",
-            text=(
-                "A context switch is not magic. The kernel saves the important CPU state for the "
-                "thread that is leaving: instruction pointer, stack pointer, and registers. Then it "
-                "loads the saved state for another thread. After that, the CPU continues as if the "
-                "new thread had simply been paused and resumed."
-            ),
-            visual_intent="Show register values saved from one task and restored into another.",
-            beats=[
-                BeatSpec(key="switch", at=0.10, text_hint="context switch", visual_action="Show two tasks beside a CPU register panel."),
-                BeatSpec(key="save", at=0.32, text_hint="saves CPU state", visual_action="Copy registers into task A state."),
-                BeatSpec(key="ip_sp", at=0.50, text_hint="instruction pointer, stack pointer", visual_action="Highlight IP and SP rows."),
-                BeatSpec(key="load", at=0.70, text_hint="loads the saved state", visual_action="Load task B state into CPU."),
-                BeatSpec(key="resume", at=0.88, text_hint="paused and resumed", visual_action="Resume task B on the CPU."),
-            ],
-        ),
-        SceneSpec(
-            key="Scene7_HardwareEN",
-            title="Hardware access is mediated",
-            duration_seconds=scene_duration,
-            layout="hardware_path",
-            text=(
-                "Disk and network access follow the same design. User programs ask for work, the "
-                "kernel validates the request, drivers speak to hardware, and completion comes back "
-                "as data or an error. This mediated path is slower than a fantasy direct wire, but "
-                "it is what makes permissions, filesystems, devices, and isolation work together."
-            ),
-            visual_intent="Trace user request, kernel validation, driver, hardware, and return.",
-            beats=[
-                BeatSpec(key="ask", at=0.10, text_hint="programs ask", visual_action="Send a request from user space."),
-                BeatSpec(key="validate", at=0.30, text_hint="kernel validates", visual_action="Focus a validation checkpoint."),
-                BeatSpec(key="driver", at=0.50, text_hint="drivers speak", visual_action="Route through a driver block."),
-                BeatSpec(key="hardware", at=0.70, text_hint="hardware", visual_action="Pulse disk and network devices."),
-                BeatSpec(key="return", at=0.88, text_hint="data or an error", visual_action="Return a result token."),
-            ],
-        ),
-        SceneSpec(
-            key="Scene8_RecapEN",
-            title="The takeaway",
-            duration_seconds=scene_duration,
-            layout="recap_map",
-            text=(
-                "So the useful mental model is this: programs ask, the kernel decides, and the "
-                "hardware is touched through controlled paths. That is why Linux can feel simple "
-                "at the terminal while still protecting the whole system underneath. Once you see "
-                "that pattern, syscalls, virtual memory, scheduling, and drivers stop looking like "
-                "separate mysteries and start looking like one operating system design."
-            ),
-            visual_intent="Summarize the ask-decide-perform model.",
-            beats=[
-                BeatSpec(key="ask", at=0.14, text_hint="programs ask", visual_action="Show user programs asking."),
-                BeatSpec(key="decide", at=0.34, text_hint="kernel decides", visual_action="Move focus to the kernel."),
-                BeatSpec(key="perform", at=0.56, text_hint="hardware is touched", visual_action="Move focus to hardware."),
-                BeatSpec(key="patterns", at=0.74, text_hint="syscalls, virtual memory, scheduling", visual_action="Reveal the mechanism map."),
-                BeatSpec(key="simple", at=0.88, text_hint="terminal while still protecting", visual_action="Show final summary."),
-            ],
-        ),
+        )
+        for key, scene_title, layout, visual_intent, text, beats in academic_scene_data
     ]
     if target < 180:
         short_duration = max(15, round(target / 3))
@@ -349,14 +359,20 @@ def fake_blueprint(
     return VideoBlueprint(
         title=title,
         theme=safe_theme,
-        slug="prompt-to-kernel-video",
+        slug="prompt-to-academic-video",
         target_duration_seconds=target,
-        audience="Developers learning Linux internals from visual explanations.",
-        teaching_goal=f"Answer the user prompt with a concise Linux systems explanation: {prompt[:180]}",
-        style_notes="Dark technical visual style, stable cards, clear arrows, one active concept at a time.",
+        subject_area="math",
+        difficulty="intro",
+        audience="STEM learners who need a visual, step-by-step explanation.",
+        teaching_goal=f"Answer the user prompt with a concise academic explanation: {prompt[:180]}",
+        learning_objectives=[
+            "Explain the core concept through a concrete visual model.",
+            "Connect notation or terminology to the underlying mechanism.",
+            "Summarize when the idea applies and where it can fail.",
+        ],
+        style_notes="Dark academic visual style, stable diagrams, clear arrows, one active concept at a time.",
         scenes=scenes,
     )
-
 
 class LLMClient:
     def __init__(self, settings: Settings):
@@ -394,7 +410,7 @@ class LLMClient:
         )
         user_prompt = {
             "prompt": prompt,
-            "theme": theme or "linux-fondamentaux",
+            "theme": theme or "general-stem",
             "target_duration_seconds": effective_target,
             "generation_guidelines": _load_generation_guidelines(self.settings),
             "duration_policy": {
@@ -403,21 +419,24 @@ class LLMClient:
                 "for_180_to_300_second_targets": "Use 8 to 12 scenes, each around 20 to 40 seconds.",
                 "narration": "Write enough spoken narration to fill the target duration; avoid short summaries.",
             },
-            "approved_layouts": LAYOUTS,
+            "approved_visual_primitives": VISUAL_PRIMITIVES,
             "required_schema": {
                 "title": "string",
                 "theme": "kebab-case string",
                 "slug": "lowercase kebab-case string",
                 "target_duration_seconds": effective_target,
+                "subject_area": "math | physics | cs | biology | chemistry | engineering | general_stem",
+                "difficulty": "intro | intermediate | advanced",
                 "audience": "string",
                 "teaching_goal": "string",
+                "learning_objectives": ["1 to 5 concise learning objectives"],
                 "style_notes": "string",
                 "scenes": [
                     {
                         "key": "Scene1_HookEN",
                         "title": "string",
                         "duration_seconds": "integer planned duration for this scene",
-                        "layout": "one approved layout string",
+                        "layout": "one approved visual primitive string",
                         "text": "English narration for this scene",
                         "visual_intent": "concrete visual plan",
                         "beats": [
@@ -488,10 +507,10 @@ class LLMClient:
                             "previous": previous,
                             "errors": error_report,
                             "generation_guidelines": _load_generation_guidelines(self.settings),
-                            "approved_layouts": LAYOUTS,
+                            "approved_visual_primitives": VISUAL_PRIMITIVES,
                             "repair_rules": (
                                 "Keep target_duration_seconds, use 8-12 scenes for 3-5 minute videos, "
-                                "include duration_seconds and approved layout on every scene, and write "
+                                "include duration_seconds and an approved visual primitive on every scene, and write "
                                 "enough narration to satisfy the duration target."
                             ),
                         },
