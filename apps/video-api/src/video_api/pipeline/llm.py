@@ -8,17 +8,20 @@ from typing import Any
 from pydantic import ValidationError
 
 from video_api.config import Settings
-from video_api.schemas import BeatSpec, SceneSpec, VideoBlueprint
+from video_api.schemas import BeatSpec, SceneSpec, VideoBlueprint, _short_label
 
 
 logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """You produce high-quality STEM educational explainer videos.
-Return only valid JSON. The JSON must describe a complete 3-5 minute video blueprint by default.
+Return ONLY a single valid JSON object. No prose, no markdown, no code fences.
+The JSON must describe a complete 3-5 minute video blueprint by default.
 Every scene must have a key like Scene1_HookEN, Scene2_CoreIdeaEN.
 For a 3-5 minute target, produce 8 to 12 scenes with enough narration to actually fill the duration.
 Each scene must include duration_seconds, one approved visual primitive, narration text, and 5 to 7 concrete beats unless the scene is very short.
+Each beat has: at (a ratio), text_hint (the spoken idea), visual_action (an instruction to the renderer), and label.
+label is the SHORT on-screen text that will literally be drawn on a card (<= 40 chars, no trailing period, e.g. "average rate", "let h approach 0"). Never put an instruction like "Reveal the card" in label.
 Beat at values must be normalized ratios between 0.0 and 1.0 inside that scene, not seconds or global timestamps.
 The voice and image must explain the same idea at the same time.
 Plan the explanation from intuition, to mechanism, to transfer or recap. Use precise academic language, but introduce terms before relying on them.
@@ -63,16 +66,118 @@ DIFFICULTY_ALIASES = {
 }
 
 
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove inline <think>...</think> reasoning some models emit before the answer."""
+    return _THINK_BLOCK_RE.sub("", text).strip()
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
-    cleaned = text.strip()
+    cleaned = _strip_reasoning(text)
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
         cleaned = re.sub(r"```$", "", cleaned).strip()
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start < 0 or end < start:
-        raise ValueError("LLM response did not contain a JSON object")
+        raise ValueError(
+            "LLM response did not contain a JSON object "
+            f"(response had {len(text)} chars). "
+            "If the model is a reasoning model, set VIDEO_API_LLM_ENABLE_THINKING=0."
+        )
     return json.loads(cleaned[start : end + 1])
+
+
+def _few_shot_example() -> dict:
+    """Return a compact 4-scene blueprint dict to use as a one-shot example for the LLM."""
+    example = _few_shot_example_raw()
+    for scene in example["scenes"]:
+        for beat in scene["beats"]:
+            beat["label"] = _short_label(beat["text_hint"])
+    return example
+
+
+def _few_shot_example_raw() -> dict:
+    return {
+        "title": "The Derivative: Instant Rate of Change",
+        "theme": "math",
+        "slug": "derivative-instant-rate",
+        "target_duration_seconds": 240,
+        "subject_area": "math",
+        "difficulty": "intro",
+        "audience": "STEM learners who need a visual, step-by-step explanation.",
+        "teaching_goal": "Explain derivatives through the shrinking-interval intuition.",
+        "learning_objectives": [
+            "Explain average rate of change with two points.",
+            "Show how shrinking the interval produces the derivative.",
+            "Connect the tangent slope to the limit definition.",
+        ],
+        "style_notes": "Dark academic style, stable diagrams, one active idea at a time.",
+        "scenes": [
+            {
+                "key": "Scene1_HookEN",
+                "title": "The changing quantity",
+                "duration_seconds": 30,
+                "layout": "concept_map",
+                "text": "A derivative begins with a simple question: how fast is something changing right now? Not over a whole trip, not across a long experiment, but at one precise input. The idea matters because many academic models are built from changing quantities: position, temperature, concentration, population, and cost.",
+                "visual_intent": "Build a concept map from changing quantities to the question of instant rate.",
+                "beats": [
+                    {"key": "question", "at": 0.10, "text_hint": "how fast is something changing", "visual_action": "Reveal the central question card."},
+                    {"key": "now", "at": 0.30, "text_hint": "right now", "visual_action": "Focus a single input point."},
+                    {"key": "not_average", "at": 0.48, "text_hint": "not over a whole trip", "visual_action": "Dim a long interval, keep the point highlighted."},
+                    {"key": "examples", "at": 0.68, "text_hint": "position, temperature, concentration", "visual_action": "Reveal example quantity cards around the central idea."},
+                    {"key": "purpose", "at": 0.88, "text_hint": "models are built from changing quantities", "visual_action": "Connect examples back to the derivative."},
+                ],
+            },
+            {
+                "key": "Scene2_MechanismEN",
+                "title": "Average rate first",
+                "duration_seconds": 30,
+                "layout": "process_flow",
+                "text": "The easiest starting point is average rate of change. Pick two inputs, measure the change in output, and divide by the change in input. That gives the slope of a secant line. It is useful, but it still describes an interval, so it cannot yet answer what is happening at exactly one point.",
+                "visual_intent": "Show two points, output change, input change, and the secant slope formula.",
+                "beats": [
+                    {"key": "two_inputs", "at": 0.12, "text_hint": "Pick two inputs", "visual_action": "Place two input points on a graph."},
+                    {"key": "output_change", "at": 0.30, "text_hint": "change in output", "visual_action": "Draw a vertical delta-output marker."},
+                    {"key": "input_change", "at": 0.48, "text_hint": "change in input", "visual_action": "Draw a horizontal delta-input marker."},
+                    {"key": "slope", "at": 0.66, "text_hint": "slope of a secant line", "visual_action": "Create the secant line through both points."},
+                    {"key": "interval", "at": 0.88, "text_hint": "still describes an interval", "visual_action": "Bracket the interval and dim the rest of the graph."},
+                ],
+            },
+            {
+                "key": "Scene3_LimitEN",
+                "title": "Shrink the interval",
+                "duration_seconds": 30,
+                "layout": "spatial_model",
+                "text": "To get an instant rate, keep one point fixed and slide the second point closer. The secant line rotates as the interval shrinks. If those slopes settle toward a stable value, that value is the derivative at the fixed point. Visually, the secant has become a tangent.",
+                "visual_intent": "Animate the second point approaching the first until the secant becomes tangent.",
+                "beats": [
+                    {"key": "fixed", "at": 0.10, "text_hint": "keep one point fixed", "visual_action": "Pin the first point on the curve."},
+                    {"key": "slide", "at": 0.28, "text_hint": "slide the second point closer", "visual_action": "Move the second point toward the first."},
+                    {"key": "rotate", "at": 0.46, "text_hint": "secant line rotates", "visual_action": "Rotate the secant line as the point moves."},
+                    {"key": "stable", "at": 0.66, "text_hint": "settle toward a stable value", "visual_action": "Show slope values converging to a number."},
+                    {"key": "tangent", "at": 0.88, "text_hint": "secant has become a tangent", "visual_action": "Replace the secant with a tangent line."},
+                ],
+            },
+            {
+                "key": "Scene4_EquationEN",
+                "title": "The limit formula",
+                "duration_seconds": 30,
+                "layout": "equation_transform",
+                "text": "The notation writes that shrinking process as a limit. Start with the difference quotient, f of x plus h minus f of x, divided by h. Then let h approach zero. The formula is not a trick; it is the average rate calculation with the interval pushed as small as the function allows.",
+                "visual_intent": "Transform average rate notation into the derivative limit definition.",
+                "beats": [
+                    {"key": "difference", "at": 0.10, "text_hint": "difference quotient", "visual_action": "Reveal the difference quotient card."},
+                    {"key": "fxh", "at": 0.30, "text_hint": "f of x plus h minus f of x", "visual_action": "Highlight the numerator."},
+                    {"key": "divide", "at": 0.48, "text_hint": "divided by h", "visual_action": "Highlight the denominator as the input interval."},
+                    {"key": "limit", "at": 0.68, "text_hint": "let h approach zero", "visual_action": "Add the limit operator to the expression."},
+                    {"key": "meaning", "at": 0.88, "text_hint": "average rate calculation", "visual_action": "Connect the equation back to the shrinking interval."},
+                ],
+            },
+        ],
+    }
 
 
 def _load_generation_guidelines(settings: Settings) -> str:
@@ -205,6 +310,13 @@ def _coerce_blueprint_shape(data: Any) -> Any:
                     or beat_item.get("action")
                     or beat_item.get("animation")
                     or beat_item.get("screen")
+                )
+                beat_item["label"] = (
+                    beat_item.get("label")
+                    or beat_item.get("caption")
+                    or beat_item.get("on_screen")
+                    or beat_item.get("on_screen_text")
+                    or ""
                 )
                 normalized_beats.append(beat_item)
         item["beats"] = _normalize_absolute_beat_times(normalized_beats)
@@ -378,6 +490,47 @@ class LLMClient:
     def __init__(self, settings: Settings):
         self.settings = settings
 
+    def _build_client(self) -> Any:
+        from openai import OpenAI
+
+        return OpenAI(
+            api_key=self.settings.openai_api_key,
+            base_url=self.settings.openai_base_url,
+            timeout=self.settings.llm_timeout_seconds,
+            max_retries=self.settings.llm_max_retries,
+        )
+
+    def _extra_body(self) -> dict[str, Any]:
+        """Vendor-specific knobs. Disable hidden reasoning for vLLM/Qwen-style endpoints
+        so the whole token/time budget goes to the JSON answer, not to a <think> block."""
+        if self.settings.llm_enable_thinking:
+            return {}
+        return {"chat_template_kwargs": {"enable_thinking": False}}
+
+    def _complete(self, client: Any, messages: list[dict], *, temperature: float, json_mode: bool) -> str:
+        kwargs: dict[str, Any] = {}
+        if json_mode and self.settings.llm_response_format == "json_object":
+            kwargs["response_format"] = {"type": "json_object"}
+        extra_body = self._extra_body()
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        response = client.chat.completions.create(
+            model=self.settings.openai_model,
+            temperature=temperature,
+            max_tokens=self.settings.llm_max_tokens,
+            messages=messages,
+            **kwargs,
+        )
+        content = response.choices[0].message.content or ""
+        if not content.strip():
+            finish = response.choices[0].finish_reason
+            raise ValueError(
+                f"LLM returned empty content (finish_reason={finish}). "
+                "This usually means a reasoning model exhausted its budget thinking; "
+                "set VIDEO_API_LLM_ENABLE_THINKING=0 or raise VIDEO_API_LLM_MAX_TOKENS."
+            )
+        return content
+
     def generate_blueprint(
         self,
         prompt: str,
@@ -392,21 +545,17 @@ class LLMClient:
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required unless VIDEO_API_FAKE_LLM=1")
         try:
-            from openai import OpenAI
+            client = self._build_client()
         except ImportError as exc:
             raise RuntimeError("The openai package is required for LLM generation") from exc
 
-        client = OpenAI(
-            api_key=self.settings.openai_api_key,
-            base_url=self.settings.openai_base_url,
-            timeout=self.settings.llm_timeout_seconds,
-        )
         logger.info(
-            "llm.request.start model=%s base_url=%s prompt_chars=%d theme=%s",
+            "llm.request.start model=%s base_url=%s prompt_chars=%d theme=%s thinking=%s",
             self.settings.openai_model,
             self.settings.openai_base_url,
             len(prompt),
             theme,
+            self.settings.llm_enable_thinking,
         )
         user_prompt = {
             "prompt": prompt,
@@ -444,26 +593,30 @@ class LLMClient:
                                 "key": "short_identifier",
                                 "at": 0.1,
                                 "text_hint": "spoken idea around this moment",
-                                "visual_action": "exact visual action",
+                                "label": "short on-screen text (<= 40 chars)",
+                                "visual_action": "exact visual action / instruction",
                             }
                         ],
                     }
                 ],
             },
         }
-        kwargs: dict[str, Any] = {}
-        if self.settings.llm_response_format == "json_object":
-            kwargs["response_format"] = {"type": "json_object"}
-        response = client.chat.completions.create(
-            model=self.settings.openai_model,
-            temperature=self.settings.llm_temperature,
-            messages=[
+        few_shot_request = {
+            "prompt": "Explain the derivative in calculus",
+            "theme": "math",
+            "target_duration_seconds": 240,
+        }
+        content = self._complete(
+            client,
+            [
                 {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(few_shot_request, ensure_ascii=True)},
+                {"role": "assistant", "content": json.dumps(_few_shot_example(), ensure_ascii=True)},
                 {"role": "user", "content": json.dumps(user_prompt, ensure_ascii=True)},
             ],
-            **kwargs,
+            temperature=self.settings.llm_temperature,
+            json_mode=True,
         )
-        content = response.choices[0].message.content or ""
         logger.info("llm.request.done model=%s response_chars=%d", self.settings.openai_model, len(content))
         data = _coerce_blueprint_shape(_extract_json_object(content))
         try:
@@ -480,23 +633,16 @@ class LLMClient:
             return fake_blueprint(prompt, target_duration_seconds=target)
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required for LLM repair")
-        from openai import OpenAI
-
-        client = OpenAI(
-            api_key=self.settings.openai_api_key,
-            base_url=self.settings.openai_base_url,
-            timeout=self.settings.llm_timeout_seconds,
-        )
+        client = self._build_client()
         logger.info(
             "llm.repair.start model=%s base_url=%s error_chars=%d",
             self.settings.openai_model,
             self.settings.openai_base_url,
             len(error_report),
         )
-        response = client.chat.completions.create(
-            model=self.settings.openai_model,
-            temperature=0.15,
-            messages=[
+        content = self._complete(
+            client,
+            [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
@@ -518,7 +664,8 @@ class LLMClient:
                     ),
                 },
             ],
+            temperature=0.15,
+            json_mode=True,
         )
-        content = response.choices[0].message.content or ""
         logger.info("llm.repair.done model=%s response_chars=%d", self.settings.openai_model, len(content))
         return VideoBlueprint.model_validate(_coerce_blueprint_shape(_extract_json_object(content)))

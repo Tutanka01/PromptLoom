@@ -13,6 +13,48 @@ from video_api.schemas import CLASS_KEY_RE
 logger = logging.getLogger(__name__)
 
 
+_FORBIDDEN_CALLS = frozenset({"eval", "exec", "__import__", "compile", "open", "breakpoint", "input"})
+_FORBIDDEN_ATTRS = frozenset({"system", "popen", "run", "call", "Popen", "check_output", "check_call"})
+_FORBIDDEN_MODULES = frozenset({"os", "sys", "subprocess", "socket", "urllib", "requests", "httpx", "importlib", "ctypes", "shutil", "pickle", "shelve"})
+
+
+def validate_scene_ast_security(source: str, scene_key: str) -> None:
+    """Raise ValueError if generated scene code contains unsafe patterns.
+
+    Checks: forbidden function calls (eval/exec/open), forbidden module attributes
+    (os.system, subprocess.run), and unexpected import statements.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        raise ValueError(f"Syntax error in generated scene {scene_key}: {exc}") from exc
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            else:
+                names = [(node.module or "").split(".")[0]]
+            for name in names:
+                if name in _FORBIDDEN_MODULES:
+                    raise ValueError(
+                        f"Forbidden import '{name}' in generated scene {scene_key}"
+                    )
+                if name and name not in {"manim", "numpy", "json", "pathlib", "math", "collections", "itertools", "functools", ""}:
+                    raise ValueError(
+                        f"Unexpected import '{name}' in generated scene {scene_key} — helpers are already imported"
+                    )
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_CALLS:
+                raise ValueError(
+                    f"Forbidden call '{node.func.id}()' in generated scene {scene_key}"
+                )
+            if isinstance(node.func, ast.Attribute) and node.func.attr in _FORBIDDEN_ATTRS:
+                raise ValueError(
+                    f"Forbidden attribute call '.{node.func.attr}()' in generated scene {scene_key}"
+                )
+
+
 APPROVED_VISUAL_PRIMITIVES = {
     "concept_map",
     "process_flow",

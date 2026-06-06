@@ -39,7 +39,22 @@ class Settings:
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4.1")
     llm_temperature: float = float(os.getenv("VIDEO_API_LLM_TEMPERATURE", "0.35"))
     llm_timeout_seconds: float = float(os.getenv("VIDEO_API_LLM_TIMEOUT_SECONDS", "180"))
-    llm_response_format: str = os.getenv("VIDEO_API_LLM_RESPONSE_FORMAT", "none")
+    llm_response_format: str = os.getenv("VIDEO_API_LLM_RESPONSE_FORMAT", "json_object")
+    llm_max_tokens: int = int(os.getenv("VIDEO_API_LLM_MAX_TOKENS", "8000"))
+    # Reasoning ("thinking") models (e.g. Qwen3) burn the whole token/time budget on
+    # hidden reasoning and return empty/truncated JSON. Keep this OFF for structured
+    # blueprint generation unless the endpoint genuinely needs it.
+    llm_enable_thinking: bool = _bool_env("VIDEO_API_LLM_ENABLE_THINKING", False)
+    # The OpenAI SDK retries timeouts twice by default, turning one slow call into a
+    # 3x hang. Keep retries low so a stuck request fails fast and surfaces clearly.
+    llm_max_retries: int = int(os.getenv("VIDEO_API_LLM_MAX_RETRIES", "1"))
+
+    # v1 default: the LLM only produces a JSON blueprint and the worker renders it from
+    # tested deterministic templates. Free-form per-scene Python (scene_coder) is fragile
+    # with open-source models, so it is opt-in.
+    scene_coder_enabled: bool = _bool_env("VIDEO_API_SCENE_CODER_ENABLED", False)
+    scene_coder_model: str = os.getenv("VIDEO_API_SCENE_CODER_MODEL", "")
+    scene_coder_attempts: int = int(os.getenv("VIDEO_API_SCENE_CODER_ATTEMPTS", "3"))
 
     voice_command: str = os.getenv(
         "VIDEO_API_VOICE_COMMAND",

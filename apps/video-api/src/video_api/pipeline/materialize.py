@@ -102,10 +102,12 @@ def _beats_json(blueprint: VideoBlueprint) -> dict:
 
 
 def _scene_code(scene: SceneSpec) -> str:
-    beat_cards = [_short(beat.visual_action, 30) for beat in scene.beats[:5]]
-    while len(beat_cards) < 5:
-        beat_cards.append(_short(scene.visual_intent, 30))
-    summary = _short(scene.visual_intent, 58)
+    # On-screen cards must show readable phrases tied to the narration (beat.label),
+    # never the renderer instruction (visual_action). Cycle the available labels so
+    # short scenes still fill all five card slots with on-topic text.
+    labels = [beat.label for beat in scene.beats if beat.label] or [scene.title]
+    beat_cards = [labels[index % len(labels)] for index in range(5)]
+    summary = _short(scene.beats[-1].text_hint, 58)
     return f'''
 
 class {scene.key}(EnglishGeneratedScene):
@@ -130,8 +132,18 @@ class {scene.key}(EnglishGeneratedScene):
 '''
 
 
-def _manim_code(blueprint: VideoBlueprint, slug_module: str) -> str:
-    scenes = "\n".join(_scene_code(scene) for scene in blueprint.scenes)
+def _manim_code(
+    blueprint: VideoBlueprint,
+    slug_module: str,
+    custom_scene_codes: dict[str, str] | None = None,
+) -> str:
+    parts = []
+    for scene in blueprint.scenes:
+        if custom_scene_codes and scene.key in custom_scene_codes:
+            parts.append(custom_scene_codes[scene.key])
+        else:
+            parts.append(_scene_code(scene))
+    scenes = "\n".join(parts)
     return f'''import json
 from pathlib import Path
 
@@ -139,13 +151,19 @@ from manim import *
 
 from {slug_module}_style import (
     BG,
+    BODY,
+    CAP,
+    CODE,
     DANGER,
     EDGE,
+    H1,
+    H2,
     HARDWARE,
-    PURPLE,
     KERNEL,
     MUTED,
+    PANEL,
     PANEL_2,
+    PURPLE,
     SUCCESS,
     TEXT,
     USER,
@@ -154,6 +172,7 @@ from {slug_module}_style import (
     connect,
     dim,
     flow_dot,
+    glow,
     make_background,
     mono,
     t,
@@ -456,11 +475,16 @@ VIDEO="${{VIDEO:-final/{blueprint.slug}-en-silent.mp4}}"
 AUDIO="${{AUDIO:-audio/en/voiceover_en.mp3}}"
 OUTPUT="${{OUTPUT:-final/{blueprint.slug}-en-final.mp4}}"
 
+# apad extends the audio stream with silence to cover the full video duration.
+# -shortest then trims any remaining audio tail beyond the video end.
+# This prevents the audio track from ending before the video (which caused
+# freezedetect false-positives on the silent last seconds).
 ffmpeg -y \\
   -i "${{VIDEO}}" \\
   -i "${{AUDIO}}" \\
+  -filter_complex "[1:a]apad[a_padded]" \\
   -map 0:v:0 \\
-  -map 1:a:0 \\
+  -map "[a_padded]" \\
   -c:v copy \\
   -c:a aac \\
   -b:a 192k \\
@@ -544,3 +568,28 @@ class Materializer:
             assemble_path,
         )
         return video_dir
+
+    def write_scene_codes(
+        self,
+        video_dir: Path,
+        blueprint: VideoBlueprint,
+        scene_codes: dict[str, str],
+    ) -> None:
+        """Rewrite the Manim file with LLM-generated scene code.
+
+        Scenes not present in scene_codes keep the deterministic fallback template.
+        """
+        slug_module = blueprint.slug.replace("-", "_")
+        manim_path = video_dir / f"{slug_module}_en.py"
+        manim_path.write_text(
+            _manim_code(blueprint, slug_module, scene_codes),
+            encoding="utf-8",
+        )
+        llm_count = len(scene_codes)
+        fallback_count = len(blueprint.scenes) - llm_count
+        logger.info(
+            "materialize.scene_codes_written video_dir=%s llm_scenes=%d fallback_scenes=%d",
+            video_dir,
+            llm_count,
+            fallback_count,
+        )

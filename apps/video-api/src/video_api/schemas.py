@@ -40,12 +40,24 @@ class BeatSpec(BaseModel):
     at: float = Field(ge=0.0, le=1.0)
     text_hint: str = Field(min_length=2, max_length=240)
     visual_action: str = Field(min_length=2, max_length=280)
+    # Short on-screen text actually rendered on a card. Distinct from visual_action,
+    # which is an instruction to the renderer ("Reveal the central question card").
+    # When the LLM omits it, we derive it from the spoken idea (text_hint).
+    label: str = Field(default="", max_length=42)
 
     @field_validator("key")
     @classmethod
     def normalize_key(cls, value: str) -> str:
         value = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip()).strip("_").lower()
         return value or "beat"
+
+    @model_validator(mode="after")
+    def fill_label(self) -> "BeatSpec":
+        if not self.label.strip():
+            self.label = _short_label(self.text_hint)
+        else:
+            self.label = _short_label(self.label)
+        return self
 
 
 SubjectArea = Literal[
@@ -167,6 +179,19 @@ class VideoBlueprint(BaseModel):
                     f"{self.target_duration_seconds}s"
                 )
         return self
+
+
+def _short_label(text: str, limit: int = 40) -> str:
+    """Turn a spoken-idea hint into a compact, on-screen card label.
+
+    Drops trailing punctuation and clips at a word boundary so cards never show
+    a phrase cut mid-word.
+    """
+    compact = " ".join(text.replace("\n", " ").split()).strip(" .,:;—-")
+    if len(compact) <= limit:
+        return compact
+    clipped = compact[:limit].rsplit(" ", 1)[0].rstrip(" .,:;—-")
+    return (clipped or compact[:limit]).rstrip() + "…"
 
 
 def _estimated_spoken_seconds(text: str) -> int:

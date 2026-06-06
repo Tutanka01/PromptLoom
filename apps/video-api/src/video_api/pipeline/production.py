@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import shlex
@@ -13,8 +14,10 @@ from video_api.db import SessionLocal
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.llm import LLMClient
+from video_api.schemas import VideoBlueprint
 from video_api.pipeline.materialize import Materializer
-from video_api.pipeline.validate import validate_static_video_source
+from video_api.pipeline.scene_coder import SceneCoder
+from video_api.pipeline.validate import validate_scene_ast_security, validate_static_video_source
 from video_api.pipeline.verify import verify_mp4
 from video_api.storage import job_root
 
@@ -27,6 +30,7 @@ class VideoPipeline:
         self.settings = settings or get_settings()
         self.llm = LLMClient(self.settings)
         self.materializer = Materializer(self.settings)
+        self.scene_coder = SceneCoder(self.settings)
 
     def _update(
         self,
@@ -162,6 +166,11 @@ class VideoPipeline:
                 video_dir = self.materializer.materialize(blueprint, workspace)
                 logger.info("job.sources.materialized job_id=%s video_dir=%s", job.id, video_dir)
 
+                self._update(session, job, "manim_generation", 26, "scene_codegen")
+                scene_codes = self._generate_scene_codes(blueprint)
+                if scene_codes:
+                    self.materializer.write_scene_codes(video_dir, blueprint, scene_codes)
+
                 self._update(session, job, "static_validation", 30, "static_validation")
                 validate_static_video_source(video_dir)
                 logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
@@ -241,6 +250,69 @@ class VideoPipeline:
                     attempt + 1,
                     type(exc).__name__,
                 )
+
+
+    def _generate_scene_codes(self, blueprint: VideoBlueprint) -> dict[str, str]:
+        """Generate LLM Manim code for each scene with a repair loop + deterministic fallback.
+
+        Returns a dict mapping scene_key → full class code string.
+        Scenes that fail after all attempts are omitted (materializer uses the fallback template).
+        """
+        if not self.settings.scene_coder_enabled:
+            logger.info("scene_codegen.skip reason=deterministic_only (VIDEO_API_SCENE_CODER_ENABLED=0)")
+            return {}
+        if self.settings.fake_llm or not self.settings.openai_api_key:
+            logger.info("scene_codegen.skip fake_llm=%s has_key=%s", self.settings.fake_llm, bool(self.settings.openai_api_key))
+            return {}
+
+        scene_codes: dict[str, str] = {}
+        for scene in blueprint.scenes:
+            prev_code: str = ""
+            prev_error: str = ""
+            succeeded = False
+            for attempt in range(self.settings.scene_coder_attempts):
+                code: str = ""
+                try:
+                    if attempt == 0:
+                        code = self.scene_coder.generate(scene, blueprint)
+                    else:
+                        code = self.scene_coder.repair(scene, blueprint, prev_code, prev_error)
+
+                    validate_scene_ast_security(code, scene.key)
+                    ast.parse(code)
+
+                    scene_codes[scene.key] = code
+                    succeeded = True
+                    logger.info(
+                        "scene_codegen.success scene=%s attempt=%d",
+                        scene.key,
+                        attempt,
+                    )
+                    break
+                except Exception as exc:
+                    prev_error = str(exc)
+                    prev_code = code
+                    logger.warning(
+                        "scene_codegen.attempt_failed scene=%s attempt=%d error=%s",
+                        scene.key,
+                        attempt,
+                        exc,
+                    )
+
+            if not succeeded:
+                logger.warning(
+                    "scene_codegen.fallback scene=%s using deterministic template after %d attempts",
+                    scene.key,
+                    self.settings.scene_coder_attempts,
+                )
+
+        logger.info(
+            "scene_codegen.done total=%d llm=%d fallback=%d",
+            len(blueprint.scenes),
+            len(scene_codes),
+            len(blueprint.scenes) - len(scene_codes),
+        )
+        return scene_codes
 
 
 def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:

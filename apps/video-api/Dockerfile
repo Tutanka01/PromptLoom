@@ -15,7 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango1.0-dev \
     pkg-config \
     python3-dev \
+    # Manim MathTex/Tex needs a LaTeX toolchain + dvisvgm (not just latex-base).
+    dvisvgm \
     texlive-latex-base \
+    texlive-latex-extra \
+    texlive-latex-recommended \
+    texlive-fonts-recommended \
+    texlive-science \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
