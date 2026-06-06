@@ -72,6 +72,7 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
         prompt=request.prompt,
         theme=request.theme,
         language=request.language,
+        target_duration_seconds=request.target_duration_seconds,
         status="queued",
         progress=0,
         current_step="queued",

@@ -329,6 +329,192 @@ Lire `PROCEDURE.md` pour le detail, mais retenir surtout :
 - ne pas faire confiance a une scene dont la duree est correcte mais dont l'image reste figee ;
 - ne pas utiliser une commande ffmpeg multi-input pour extraire plusieurs timestamps, elle peut sortir plusieurs fois la meme frame.
 
+## Application video-api
+
+Le depot contient maintenant une application separee :
+
+```text
+apps/video-api/
+```
+
+Objectif : exposer une API Dockerisee qui recoit un prompt utilisateur, cree un job asynchrone, genere les sources de production video, lance la voix, rend Manim, assemble avec ffmpeg, verifie le resultat, puis expose un MP4 telechargeable.
+
+Cette application ne remplace pas le pipeline manuel de `videos/...`. Elle l'encapsule dans une file de jobs.
+
+Documentation a lire avant de modifier cette partie :
+
+```text
+apps/video-api/README.md
+apps/video-api/docs/README.md
+apps/video-api/docs/architecture.md
+apps/video-api/docs/developer-guide.md
+apps/video-api/docs/operations.md
+apps/video-api/docs/llm-contract.md
+```
+
+### Architecture video-api
+
+Services Docker principaux :
+
+- `api` : FastAPI, creation de jobs, status, download, report.
+- `worker` : Celery, generation LLM, materialisation des fichiers, TTS, Manim, ffmpeg, verification.
+- `redis` : broker Celery.
+- `postgres` : metadonnees de jobs.
+- `test` : service Docker pour lancer `pytest`.
+
+Le code est dans :
+
+```text
+apps/video-api/src/video_api/
+```
+
+Modules importants :
+
+- `main.py` : endpoints HTTP.
+- `tasks.py` : entree Celery.
+- `schemas.py` : contrats Pydantic.
+- `pipeline/llm.py` : client OpenAI-compatible et normalisation des sorties LLM.
+- `pipeline/materialize.py` : generation des fichiers video et scripts Manim.
+- `pipeline/production.py` : orchestration du job.
+- `pipeline/verify.py` : `ffprobe`, `freezedetect`, snapshots.
+
+Les artefacts de jobs API vivent dans le volume Docker :
+
+```text
+/data/jobs/<job_id>/
+```
+
+Ne pas ecrire les jobs API directement dans le dossier source `videos/`.
+
+### Commandes video-api
+
+Depuis la racine du depot :
+
+```bash
+docker compose -f apps/video-api/compose.yaml config --quiet
+docker compose -f apps/video-api/compose.yaml run --rm test
+```
+
+Depuis `apps/video-api/` :
+
+```bash
+docker compose config --quiet
+docker compose run --rm test
+docker compose up --build
+```
+
+Smoke test API :
+
+```bash
+docker compose up -d redis postgres api
+curl http://localhost:8080/healthz
+docker compose down
+```
+
+Pour lancer toute la stack :
+
+```bash
+docker compose up --build
+```
+
+Si le code de `api` ou `worker` change, rebuild l'image avant de relancer un vrai job :
+
+```bash
+docker compose build api worker
+docker compose up -d
+```
+
+### Logs video-api
+
+Les logs applicatifs doivent rester suffisamment verbeux pour suivre un job avec :
+
+```bash
+docker compose logs -f worker api
+```
+
+Le worker logge notamment :
+
+- `worker.task.received` ;
+- `job.state` ;
+- `job.attempt.start` ;
+- `llm.request.start` / `llm.request.done` ;
+- `materialize.start` / `materialize.done` ;
+- `command.start` / `command.done` ;
+- `verify.probe.done` ;
+- `verify.freezedetect.done` ;
+- `job.completed` ;
+- `job.failed`.
+
+Le niveau est controle par :
+
+```text
+VIDEO_API_LOG_LEVEL=INFO
+```
+
+### LLM video-api
+
+L'API vise n'importe quel endpoint compatible OpenAI :
+
+```text
+OPENAI_BASE_URL=http://serveur/v1
+OPENAI_API_KEY=...
+OPENAI_MODEL=...
+```
+
+Le LLM ne doit pas produire directement du Python Manim arbitraire en v1. Il produit un blueprint JSON valide, puis le worker genere le code Manim depuis des templates deterministes.
+
+Le fichier cle du contrat est :
+
+```text
+apps/video-api/src/video_api/schemas.py
+```
+
+`pipeline/llm.py` normalise aussi certaines variantes courantes de sortie LLM, par exemple :
+
+- `narration`, `voiceover`, `script` -> `text` ;
+- `visual_description`, `visual_plan` -> `visual_intent` ;
+- `spoken_idea` -> `text_hint` ;
+- `visual`, `action`, `animation` -> `visual_action`.
+
+### Pieges video-api deja corriges
+
+- Manim Docker `0.18.1` n'a pas `Scene.time` au debut du `construct()`. Les templates generes doivent utiliser `self.renderer.time` via un helper, pas `self.time`.
+- Manim ecrit les videos dans `media/videos/<module_python>/...`. Pour un fichier `<slug>_en.py`, le dossier est donc `<slug>_en`, pas `<slug>`.
+- Les polices macOS `Helvetica Neue` et `Menlo` ne sont pas disponibles dans l'image Linux. Les styles generes par video-api remplacent par `DejaVu Sans` et `DejaVu Sans Mono`.
+- Une erreur `render-low.log` doit etre diagnostiquee en lisant le fichier complet dans `/data/jobs/<job_id>/logs/render-low.log`, pas seulement `error.json`.
+- Une tentative de reparation LLM peut echouer si le modele change les noms de champs. Ajouter une normalisation Pydantic/LLM avant de rendre la validation plus stricte.
+
+### Validation video-api
+
+Avant de dire que la partie API est correcte, lancer au minimum :
+
+```bash
+python3 -m py_compile $(find apps/video-api/src apps/video-api/tests -name '*.py' -print)
+docker compose -f apps/video-api/compose.yaml config --quiet
+docker compose -f apps/video-api/compose.yaml run --rm test
+```
+
+Quand un bug touche Manim, faire aussi un rendu smoke dans Docker, pas seulement un test unitaire. Exemple deja utilise :
+
+```bash
+docker compose -f apps/video-api/compose.yaml run --rm test bash -lc 'rm -rf /tmp/manim-smoke && python - <<'"'"'PY'"'"'
+from pathlib import Path
+from video_api.config import Settings
+from video_api.pipeline.llm import fake_blueprint
+from video_api.pipeline.materialize import Materializer
+
+settings = Settings(repo_root=Path("/workspace"))
+video_dir = Materializer(settings).materialize(
+    fake_blueprint("Explain page tables", "linux-fondamentaux"),
+    Path("/tmp/manim-smoke"),
+)
+print(video_dir)
+PY
+cd /tmp/manim-smoke/videos/linux-fondamentaux/prompt-to-kernel-video
+QUALITY=ql ./render_en.sh
+ls -lh final/prompt-to-kernel-video-en-silent.mp4'
+```
+
 ## Travail dans le depot
 
 Le projet peut contenir des fichiers non suivis ou des changements utilisateur.

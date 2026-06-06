@@ -132,7 +132,11 @@ class VideoPipeline:
                 )
                 if attempt == 0:
                     self._update(session, job, "planning", 5, "planning")
-                    blueprint = self.llm.generate_blueprint(job.prompt, job.theme, None)
+                    blueprint = self.llm.generate_blueprint(
+                        job.prompt,
+                        job.theme,
+                        job.target_duration_seconds,
+                    )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
                     blueprint = self.llm.repair_blueprint(
@@ -174,9 +178,20 @@ class VideoPipeline:
                 runner.run(["./assemble_en.sh"], cwd=video_dir, log_name="assemble-low.log")
                 logger.info("job.assemble_low_quality.done job_id=%s", job.id)
 
+                requested_target = job.target_duration_seconds or self.settings.default_target_duration_seconds
+                minimum_duration = _minimum_final_duration(
+                    requested_target,
+                    self.settings.default_min_duration_seconds,
+                )
                 final_low = video_dir / "final" / f"{blueprint.slug}-en-final.mp4"
                 self._update(session, job, "verify_low_quality", 68, "verify_low_quality")
-                verify_mp4(final_low, runner, final_quality=False, report_dir=reports_dir / "low")
+                verify_mp4(
+                    final_low,
+                    runner,
+                    final_quality=False,
+                    report_dir=reports_dir / "low",
+                    min_duration_seconds=minimum_duration,
+                )
                 logger.info("job.verify_low_quality.done job_id=%s video=%s", job.id, final_low)
 
                 self._update(session, job, "render_final", 78, "render_final")
@@ -189,7 +204,13 @@ class VideoPipeline:
 
                 final_video = video_dir / "final" / f"{blueprint.slug}-en-final.mp4"
                 self._update(session, job, "verify_final", 94, "verify_final")
-                final_report = verify_mp4(final_video, runner, final_quality=True, report_dir=reports_dir / "final")
+                final_report = verify_mp4(
+                    final_video,
+                    runner,
+                    final_quality=True,
+                    report_dir=reports_dir / "final",
+                    min_duration_seconds=minimum_duration,
+                )
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")
                 job.final_video_path = str(final_video)
@@ -220,3 +241,9 @@ class VideoPipeline:
                     attempt + 1,
                     type(exc).__name__,
                 )
+
+
+def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:
+    if 180 <= target_duration_seconds <= 300:
+        return max(default_min_duration_seconds, int(target_duration_seconds * 0.75))
+    return max(45, int(target_duration_seconds * 0.75))

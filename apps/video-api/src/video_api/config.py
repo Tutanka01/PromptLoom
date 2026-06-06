@@ -31,6 +31,8 @@ class Settings:
     repo_root: Path = Path(os.getenv("VIDEO_API_REPO_ROOT", str(_default_repo_root())))
     max_repair_attempts: int = int(os.getenv("VIDEO_API_MAX_REPAIR_ATTEMPTS", "2"))
     fake_llm: bool = _bool_env("VIDEO_API_FAKE_LLM", False)
+    default_target_duration_seconds: int = int(os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", "240"))
+    default_min_duration_seconds: int = int(os.getenv("VIDEO_API_DEFAULT_MIN_DURATION_SECONDS", "180"))
 
     openai_base_url: str | None = os.getenv("OPENAI_BASE_URL")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")

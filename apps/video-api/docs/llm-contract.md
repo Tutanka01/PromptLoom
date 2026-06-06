@@ -18,7 +18,9 @@ Il doit produire un blueprint structure qui decrit :
 
 - quoi enseigner ;
 - quelles scenes creer ;
+- quelle duree cible respecter ;
 - quelle narration lire ;
+- quel layout visuel utiliser par scene ;
 - quels beats visuels synchroniser avec la narration.
 
 Le code Manim est ensuite genere par le worker a partir de templates.
@@ -32,6 +34,7 @@ Le LLM doit retourner un objet JSON :
   "title": "What Is A Linux Syscall?",
   "theme": "linux-fondamentaux",
   "slug": "what-is-a-linux-syscall",
+  "target_duration_seconds": 240,
   "audience": "Developers learning Linux internals.",
   "teaching_goal": "Explain why user programs use syscalls to ask the kernel for privileged work.",
   "style_notes": "Dark technical style, stable cards, clear arrows, one active concept at a time.",
@@ -39,6 +42,8 @@ Le LLM doit retourner un objet JSON :
     {
       "key": "Scene1_HookEN",
       "title": "A command is not direct",
+      "duration_seconds": 30,
+      "layout": "syscall_gate",
       "text": "A command looks simple, but the program does not talk directly to hardware...",
       "visual_intent": "Show terminal, program, blocked direct hardware path, then kernel path.",
       "beats": [
@@ -62,6 +67,10 @@ Regles principales :
 
 - `slug` en kebab-case minuscule.
 - 3 a 14 scenes.
+- par defaut, une video vise 240 secondes.
+- pour une cible 180-300 secondes, le blueprint doit utiliser 8 a 12 scenes.
+- chaque scene a un `duration_seconds` coherent avec la duree cible.
+- chaque scene choisit un layout approuve : `process_pipeline`, `privilege_boundary`, `memory_translation`, `scheduler_timeline`, `syscall_gate`, `cpu_registers`, `hardware_path`, `recap_map`.
 - chaque scene a une cle du type `Scene1_HookEN`.
 - les numeros de scenes doivent etre ordonnes.
 - chaque scene a 3 a 8 beats.

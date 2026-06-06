@@ -23,6 +23,7 @@ def verify_mp4(
     runner: CommandRunner,
     final_quality: bool,
     report_dir: Path,
+    min_duration_seconds: int | None = None,
 ) -> dict:
     report_dir.mkdir(parents=True, exist_ok=True)
     logger.info("verify.start video=%s final_quality=%s report_dir=%s", video_path, final_quality, report_dir)
@@ -51,8 +52,9 @@ def verify_mp4(
         raise RuntimeError("ffprobe found no audio stream")
     video = video_streams[0]
     duration = float(probe.get("format", {}).get("duration", 0))
-    if duration < 20:
-        raise RuntimeError("video is abnormally short")
+    minimum_duration = min_duration_seconds if min_duration_seconds is not None else 20
+    if duration < minimum_duration:
+        raise RuntimeError(f"video is too short: {duration:.1f}s below minimum {minimum_duration}s")
     if final_quality:
         if video.get("width") != 1920 or video.get("height") != 1080:
             raise RuntimeError("final video must be 1920x1080")
@@ -92,7 +94,17 @@ def verify_mp4(
 
     snapshot_dir = report_dir / "snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
-    timestamps = sorted(set([10.0, max(1.0, duration * 0.5), max(1.0, duration * 0.9)]))
+    timestamps = sorted(
+        set(
+            [
+                10.0,
+                max(1.0, duration * 0.25),
+                max(1.0, duration * 0.5),
+                max(1.0, duration * 0.75),
+                max(1.0, duration * 0.9),
+            ]
+        )
+    )
     snapshots: list[str] = []
     for index, timestamp in enumerate(timestamps, start=1):
         if timestamp >= duration:
@@ -123,6 +135,7 @@ def verify_mp4(
     report = {
         "video": str(video_path),
         "duration": duration,
+        "minimum_duration": minimum_duration,
         "format": probe.get("format", {}),
         "video_stream": video_streams[0],
         "audio_stream": audio_streams[0],

@@ -39,7 +39,7 @@ curl -X POST http://localhost:8080/v1/videos \
   "prompt": "Make a short video explaining Linux syscalls",
   "theme": "linux-fondamentaux",
   "language": "en",
-  "target_duration_seconds": 180,
+  "target_duration_seconds": 240,
   "quality_profile": "final",
   "callback_url": null
 }
@@ -50,7 +50,7 @@ Champs :
 - `prompt` obligatoire, entre 10 et 4000 caracteres.
 - `theme` optionnel, aide a classer le job.
 - `language` vaut actuellement `en`.
-- `target_duration_seconds` optionnel, entre 45 et 900 secondes.
+- `target_duration_seconds` optionnel, entre 45 et 900 secondes. S'il est absent, l'API vise 240 secondes et verifie que le rendu final n'est pas une video courte.
 - `quality_profile` vaut actuellement `final`.
 - `callback_url` est reserve pour une evolution future.
 

@@ -124,10 +124,12 @@ Le blueprint contient :
 - titre ;
 - theme ;
 - slug ;
+- duree cible ;
 - audience ;
 - objectif pedagogique ;
 - style visuel ;
 - scenes ;
+- duree et layout par scene ;
 - narration par scene ;
 - beats visuels par scene.
 
@@ -162,7 +164,7 @@ data/jobs/<job_id>/
     assemble_en.sh
 ```
 
-La v1 genere le code Manim depuis un template deterministe. Le LLM ne fournit pas directement du Python executable arbitraire.
+La v1 genere le code Manim depuis une grammaire visuelle deterministe. Le LLM choisit des layouts approuves et ne fournit pas directement du Python executable arbitraire.
 
 ### 5. Voix
 

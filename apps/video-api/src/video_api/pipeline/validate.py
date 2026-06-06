@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -34,8 +35,29 @@ def validate_static_video_source(video_dir: Path) -> None:
             raise ValueError(f"invalid segment key: {segment['key']}")
         if segment["key"] not in beats:
             raise ValueError(f"missing beats for {segment['key']}")
+        scene_beats = beats[segment["key"]]
+        if len(scene_beats) < 3:
+            raise ValueError(f"too few beats for {segment['key']}")
+        ats = [float(beat["at"]) for beat in scene_beats]
+        if ats != sorted(ats):
+            raise ValueError(f"beats are not sorted for {segment['key']}")
+        if ats[-1] < 0.75:
+            raise ValueError(f"last beat too early for {segment['key']}")
+        for beat in scene_beats:
+            action = str(beat.get("visual_action", "")).strip().lower()
+            if action in {"make it nice", "show something", "more explanation", "animate"}:
+                raise ValueError(f"vague visual action for {segment['key']}: {action}")
 
     py_files = list(video_dir.glob("*_en.py")) + list(video_dir.glob("*_style.py")) + [video_dir / "generate_voice_en.py"]
+    manim_files = [path for path in video_dir.glob("*_en.py") if path.name != "generate_voice_en.py"]
+    for manim_path in manim_files:
+        source = manim_path.read_text(encoding="utf-8")
+        layouts = re.findall(r'build_layout\("([a-z_]+)"', source)
+        if len(layouts) >= 4 and len(set(layouts)) < 3:
+            raise ValueError("generated scenes use too little layout variety")
+        if 'build_layout("process_pipeline"' in source and source.count('build_layout("process_pipeline"') == len(segments):
+            raise ValueError("generated scenes use one generic process layout only")
+
     for path in py_files:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
