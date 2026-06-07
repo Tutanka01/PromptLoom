@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from video_api.pipeline.llm import _coerce_blueprint_shape
+from video_api.pipeline.llm import _coerce_blueprint_shape, _coerce_repaired_blueprint_shape
 from video_api.schemas import VideoBlueprint
 
 
@@ -9,7 +9,7 @@ def test_coerce_common_llm_schema_variants() -> None:
         "title": "Photosynthesis Basics",
         "theme": "biology",
         "slug": "photosynthesis-basics",
-        "target_duration_seconds": 90,
+        "target_duration_seconds": 75,
         "discipline": "biology",
         "level": "intro",
         "objectives": ["Explain how light energy becomes chemical energy."],
@@ -71,7 +71,7 @@ def test_coerce_legacy_kernel_layouts_to_generic_primitives() -> None:
         "title": "Legacy Layouts",
         "theme": "cs",
         "slug": "legacy-layouts",
-        "target_duration_seconds": 90,
+        "target_duration_seconds": 75,
         "audience": "Students.",
         "teaching_goal": "Explain compatibility mapping from older visual layouts.",
         "style_notes": "Use neutral visual primitives.",
@@ -125,7 +125,7 @@ def test_coerce_absolute_beat_timestamps_to_scene_ratios() -> None:
         "title": "Newton Second Law",
         "theme": "physics",
         "slug": "newton-second-law",
-        "target_duration_seconds": 90,
+        "target_duration_seconds": 75,
         "subject_area": "physics",
         "audience": "Students learning introductory mechanics.",
         "teaching_goal": "Explain how net force, mass, and acceleration connect.",
@@ -176,3 +176,123 @@ def test_coerce_absolute_beat_timestamps_to_scene_ratios() -> None:
     assert [beat.at for beat in blueprint.scenes[0].beats] == [0.12, 0.5, 0.88]
     assert [beat.at for beat in blueprint.scenes[1].beats] == [0.12, 0.373, 0.627, 0.88]
     assert all(0 <= beat.at <= 1 for scene in blueprint.scenes for beat in scene.beats)
+
+
+def test_coerce_redistributes_valid_but_too_early_beat_ratios() -> None:
+    data = {
+        "title": "State Vectors",
+        "theme": "math",
+        "slug": "state-vectors",
+        "target_duration_seconds": 75,
+        "subject_area": "math",
+        "audience": "Students learning Markov chains.",
+        "teaching_goal": "Explain state vectors in a Markov chain.",
+        "style_notes": "Dark background with vectors and transition arrows.",
+        "scenes": [
+            {
+                "key": "Scene1_HookEN",
+                "title": "Hook",
+                "layout": "concept_map",
+                "text": "A Markov chain stores the current situation as a state vector, where each entry says how much probability sits in one possible state. The vector is a compact snapshot of the present. Once we know that snapshot, the transition rule can move probability into the next moment without needing the older history.",
+                "visual_intent": "Show probability distributed across a few states.",
+                "beats": [
+                    {"key": "state", "at": 0.1, "text_hint": "state vector", "visual_action": "Show a vector."},
+                    {"key": "prob", "at": 0.3, "text_hint": "probability", "visual_action": "Fill entries."},
+                    {"key": "present", "at": 0.6, "text_hint": "snapshot", "visual_action": "Label the present."},
+                ],
+            },
+            {
+                "key": "Scene2_CoreEN",
+                "title": "Core",
+                "layout": "equation_transform",
+                "text": "Multiplying by the transition matrix updates the state vector one step at a time. Each column or row, depending on convention, describes how probability moves from one state to the others. Repeating the multiplication creates a forecast path, and every step still depends only on the current vector.",
+                "visual_intent": "Show matrix vector multiplication as a one-step update.",
+                "beats": [
+                    {"key": "matrix", "at": 0.1, "text_hint": "transition matrix", "visual_action": "Show matrix."},
+                    {"key": "update", "at": 0.4, "text_hint": "updates", "visual_action": "Animate multiply."},
+                    {"key": "forecast", "at": 0.88, "text_hint": "forecast path", "visual_action": "Show next vector."},
+                ],
+            },
+            {
+                "key": "Scene3_RecapEN",
+                "title": "Recap",
+                "layout": "recap_map",
+                "text": "The core idea is simple: the state vector holds the present, the transition matrix describes one step of motion, and repeated updates describe the future distribution. That is why Markov chains are useful when history can be summarized by the current state alone, even across many repeated prediction steps.",
+                "visual_intent": "Summarize vector, matrix, and future distribution.",
+                "beats": [
+                    {"key": "vector", "at": 0.1, "text_hint": "state vector", "visual_action": "Show vector."},
+                    {"key": "matrix", "at": 0.5, "text_hint": "transition matrix", "visual_action": "Show matrix."},
+                    {"key": "future", "at": 0.88, "text_hint": "future distribution", "visual_action": "Show future."},
+                ],
+            },
+        ],
+    }
+
+    blueprint = VideoBlueprint.model_validate(_coerce_blueprint_shape(data))
+
+    assert [beat.at for beat in blueprint.scenes[0].beats] == [0.12, 0.5, 0.88]
+
+
+def test_repair_coerces_scene_keyed_map_into_blueprint() -> None:
+    previous = {
+        "title": "Kernel Paths",
+        "theme": "cs",
+        "slug": "kernel-paths",
+        "target_duration_seconds": 75,
+        "subject_area": "cs",
+        "difficulty": "intro",
+        "audience": "Linux learners.",
+        "teaching_goal": "Explain how kernel requests move through controlled paths.",
+        "learning_objectives": ["Explain the controlled path into the kernel."],
+        "style_notes": "Dark academic visual style with concrete system diagrams.",
+    }
+    scene_text = (
+        "A user program cannot simply jump into protected kernel code whenever it wants. "
+        "It must use a controlled entry path where the CPU checks the transition, switches "
+        "privilege level, and lands at a known handler. That path keeps ordinary code from "
+        "rewriting kernel memory while still letting useful requests reach the operating system."
+    )
+    data = {
+        "Scene1_Hook": {
+            "title": "Hook",
+            "duration_seconds": 30,
+            "layout": "process_flow",
+            "text": scene_text,
+            "visual_intent": "Show a user program entering the kernel through a controlled gate.",
+            "beats": [
+                {"key": "user", "at": 0.1, "text_hint": "user program", "visual_action": "Show user process."},
+                {"key": "gate", "at": 0.5, "text_hint": "controlled entry", "visual_action": "Show syscall gate."},
+                {"key": "kernel", "at": 0.86, "text_hint": "known handler", "visual_action": "Show kernel handler."},
+            ],
+        },
+        "Scene2_Core": {
+            "title": "Core",
+            "duration_seconds": 30,
+            "layout": "layered_system",
+            "text": scene_text,
+            "visual_intent": "Show privilege levels and the checked transition between them.",
+            "beats": [
+                {"key": "user", "at": 0.1, "text_hint": "ordinary code", "visual_action": "Show user mode."},
+                {"key": "check", "at": 0.5, "text_hint": "CPU checks", "visual_action": "Show CPU check."},
+                {"key": "kernel", "at": 0.86, "text_hint": "kernel memory", "visual_action": "Show protected memory."},
+            ],
+        },
+        "Scene3_Recap": {
+            "title": "Recap",
+            "duration_seconds": 30,
+            "layout": "recap_map",
+            "text": scene_text,
+            "visual_intent": "Summarize the protected request path from program to kernel and back.",
+            "beats": [
+                {"key": "request", "at": 0.1, "text_hint": "useful requests", "visual_action": "Show request."},
+                {"key": "protected", "at": 0.5, "text_hint": "protected kernel", "visual_action": "Show protection."},
+                {"key": "return", "at": 0.86, "text_hint": "operating system", "visual_action": "Show return path."},
+            ],
+        },
+    }
+
+    coerced = _coerce_blueprint_shape(_coerce_repaired_blueprint_shape(data, previous, "Explain syscalls", 75))
+    blueprint = VideoBlueprint.model_validate(coerced)
+
+    assert blueprint.title == "Kernel Paths"
+    assert [scene.key for scene in blueprint.scenes] == ["Scene1_HookEN", "Scene2_CoreEN", "Scene3_RecapEN"]

@@ -148,17 +148,33 @@ class SceneCoder:
         extra_body = self._extra_body()
         if extra_body:
             kwargs["extra_body"] = extra_body
-        response = client.chat.completions.create(
-            model=self._model(),
+        request = {
+            "model": self._model(),
             # A little headroom over the blueprint temperature: we want varied,
             # topic-specific composition, not one memorised card layout.
-            temperature=0.4,
+            "temperature": 0.4,
             # Rich scenes (LaTeX, plotted axes, code blocks) run longer than the old
             # card grammar, so give the body enough room to finish.
-            max_tokens=self.settings.scene_coder_max_tokens,
-            messages=messages,
+            "max_tokens": self.settings.scene_coder_max_tokens,
+            "messages": messages,
             **kwargs,
-        )
+        }
+        try:
+            response = client.chat.completions.create(**request)
+        except Exception as exc:
+            extra_body = request.get("extra_body")
+            if (
+                isinstance(extra_body, dict)
+                and "reasoning" in extra_body
+                and "Reasoning is mandatory for this endpoint and cannot be disabled" in str(exc)
+            ):
+                retry_extra_body = dict(extra_body)
+                retry_extra_body.pop("reasoning", None)
+                request["extra_body"] = retry_extra_body
+                logger.warning("scene_coder.retry_without_reasoning_disable model=%s", self._model())
+                response = client.chat.completions.create(**request)
+            else:
+                raise
         choice = response.choices[0]
         message = choice.message
         content = message.content or ""

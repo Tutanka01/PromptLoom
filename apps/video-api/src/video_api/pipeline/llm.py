@@ -68,6 +68,7 @@ DIFFICULTY_ALIASES = {
 
 
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_SCENE_MAP_KEY_RE = re.compile(r"^Scene(\d+)_([A-Za-z0-9]+)(?:EN)?$")
 
 
 def _strip_reasoning(text: str) -> str:
@@ -122,6 +123,86 @@ def _beat_ratio(index: int, count: int) -> float:
     return round(0.12 + (0.76 * index / max(1, count - 1)), 3)
 
 
+def _fallback_slug(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.lower()).strip("-")
+    return re.sub(r"-+", "-", slug)[:60].strip("-") or "generated-video"
+
+
+def _normalize_scene_key(value: Any, scene_index: int) -> str:
+    raw = str(value or f"Scene{scene_index}_GeneratedEN").strip()
+    match = _SCENE_MAP_KEY_RE.match(raw)
+    if match:
+        suffix = match.group(2)
+        return f"Scene{match.group(1)}_{suffix if suffix.endswith('EN') else suffix + 'EN'}"
+    return raw
+
+
+def _scene_sort_key(key: str) -> tuple[int, str]:
+    match = _SCENE_MAP_KEY_RE.match(key)
+    if match:
+        return int(match.group(1)), key
+    return 10_000, key
+
+
+def _scene_map_entries(data: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    entries = [
+        (key, value)
+        for key, value in data.items()
+        if _SCENE_MAP_KEY_RE.match(str(key)) and isinstance(value, dict)
+    ]
+    return sorted(entries, key=lambda item: _scene_sort_key(item[0]))
+
+
+def _coerce_repaired_blueprint_shape(
+    data: Any,
+    previous: Any,
+    prompt: str,
+    target_duration_seconds: int,
+) -> Any:
+    if not isinstance(data, dict) or "scenes" in data:
+        return data
+    scene_entries = _scene_map_entries(data)
+    if not scene_entries:
+        return data
+
+    previous_data = previous if isinstance(previous, dict) else {}
+    repaired: dict[str, Any] = {
+        "title": data.get("title") or previous_data.get("title") or "Generated Video",
+        "theme": data.get("theme") or previous_data.get("theme") or "general_stem",
+        "slug": data.get("slug") or previous_data.get("slug") or _fallback_slug(prompt),
+        "target_duration_seconds": (
+            data.get("target_duration_seconds")
+            or previous_data.get("target_duration_seconds")
+            or target_duration_seconds
+        ),
+        "subject_area": data.get("subject_area") or previous_data.get("subject_area") or data.get("theme") or "general_stem",
+        "difficulty": data.get("difficulty") or previous_data.get("difficulty") or "intro",
+        "audience": data.get("audience") or previous_data.get("audience") or "STEM learners.",
+        "teaching_goal": data.get("teaching_goal") or previous_data.get("teaching_goal") or prompt,
+        "learning_objectives": (
+            data.get("learning_objectives")
+            or previous_data.get("learning_objectives")
+            or ["Explain the core idea clearly."]
+        ),
+        "style_notes": (
+            data.get("style_notes")
+            or previous_data.get("style_notes")
+            or "Dark academic style, stable diagrams, clear arrows, one active concept at a time."
+        ),
+        "scenes": [],
+    }
+    for index, (key, scene_data) in enumerate(scene_entries, start=1):
+        scene = dict(scene_data)
+        scene["key"] = _normalize_scene_key(scene.get("key") or key, index)
+        repaired["scenes"].append(scene)
+    logger.warning(
+        "llm.repair.coerced_scene_map scenes=%d had_previous_metadata=%s",
+        len(repaired["scenes"]),
+        bool(previous_data),
+    )
+    return repaired
+
+
 def _float_or_none(value: Any) -> float | None:
     try:
         return float(value)
@@ -152,6 +233,38 @@ def _normalize_absolute_beat_times(beats: list[Any]) -> list[Any]:
         else:
             beat_item["at"] = round(0.12 + (0.76 * (value - start) / (end - start)), 3)
         normalized.append(beat_item)
+    return normalized
+
+
+def _normalize_beat_ratios(beats: list[Any]) -> list[Any]:
+    """Keep beat timings valid enough for Pydantic without another LLM repair.
+
+    Models often return useful beat text/actions but put the last ratio around
+    0.6. That is not worth a full blueprint repair call: redistribute the beat
+    timings across the scene while preserving the beat order and content.
+    """
+    if not beats:
+        return beats
+    numeric_times = [_float_or_none(beat.get("at")) if isinstance(beat, dict) else None for beat in beats]
+    known_times = [value for value in numeric_times if value is not None]
+    needs_redistribution = (
+        len(known_times) != len(beats)
+        or any(value < 0.0 or value > 1.0 for value in known_times)
+        or known_times != sorted(known_times)
+        or (known_times and known_times[-1] < 0.75)
+    )
+    if not needs_redistribution:
+        return beats
+
+    normalized = []
+    for beat_index, beat in enumerate(beats):
+        if not isinstance(beat, dict):
+            normalized.append(beat)
+            continue
+        beat_item = dict(beat)
+        beat_item["at"] = _beat_ratio(beat_index, len(beats))
+        normalized.append(beat_item)
+    logger.warning("llm.coerce.redistributed_beats count=%d", len(beats))
     return normalized
 
 
@@ -190,7 +303,7 @@ def _coerce_blueprint_shape(data: Any) -> Any:
             normalized_scenes.append(scene)
             continue
         item = dict(scene)
-        item["key"] = item.get("key") or item.get("class") or f"Scene{scene_index}_GeneratedEN"
+        item["key"] = _normalize_scene_key(item.get("key") or item.get("class"), scene_index)
         item["title"] = item.get("title") or item.get("name") or f"Scene {scene_index}"
         item["text"] = (
             item.get("text")
@@ -250,7 +363,7 @@ def _coerce_blueprint_shape(data: Any) -> Any:
                     or ""
                 )
                 normalized_beats.append(beat_item)
-        item["beats"] = _normalize_absolute_beat_times(normalized_beats)
+        item["beats"] = _normalize_beat_ratios(_normalize_absolute_beat_times(normalized_beats))
         normalized_scenes.append(item)
     coerced["scenes"] = normalized_scenes
     return coerced
@@ -636,6 +749,9 @@ class LLMClient:
                             "approved_visual_primitives": VISUAL_PRIMITIVES,
                             "duration_policy": self._duration_policy(target),
                             "repair_rules": (
+                                "Return the COMPLETE top-level VideoBlueprint object, not a dictionary keyed by scene names. "
+                                "Required top-level fields are title, theme, slug, target_duration_seconds, subject_area, "
+                                "difficulty, audience, teaching_goal, learning_objectives, style_notes, and scenes. "
                                 "Keep target_duration_seconds, use 8-12 scenes for 3-5 minute videos, "
                                 "include duration_seconds and an approved visual primitive on every scene. "
                                 "If the error mentions narration being too short, LENGTHEN the spoken 'text' of "
@@ -651,4 +767,6 @@ class LLMClient:
             json_mode=True,
         )
         logger.info("llm.repair.done model=%s response_chars=%d", self.settings.openai_model, len(content))
-        return VideoBlueprint.model_validate(_coerce_blueprint_shape(_extract_json_object(content)))
+        data = _extract_json_object(content)
+        data = _coerce_repaired_blueprint_shape(data, previous, prompt, target)
+        return VideoBlueprint.model_validate(_coerce_blueprint_shape(data))

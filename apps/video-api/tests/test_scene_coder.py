@@ -181,3 +181,30 @@ def test_scene_coder_disables_openrouter_reasoning_by_default() -> None:
     coder = SceneCoder(Settings(openai_base_url="https://openrouter.ai/api/v1"))
 
     assert coder._extra_body()["reasoning"] == {"effort": "none", "exclude": True}
+
+
+def test_scene_coder_retries_when_reasoning_cannot_be_disabled() -> None:
+    coder = SceneCoder(Settings(openai_base_url="https://openrouter.ai/api/v1"))
+    calls = []
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(content="def construct(self):\n    self.begin_sync()\n"),
+            )
+        ]
+    )
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("Reasoning is mandatory for this endpoint and cannot be disabled.")
+        return response
+
+    coder._get_client = lambda: SimpleNamespace(  # type: ignore[method-assign]
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+    )
+
+    assert coder._call_llm([{"role": "user", "content": "write code"}]).startswith("def construct")
+    assert "reasoning" in calls[0]["extra_body"]
+    assert "reasoning" not in calls[1]["extra_body"]

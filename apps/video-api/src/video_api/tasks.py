@@ -19,6 +19,6 @@ def run_video_job(self, job_id: str) -> dict[str, str]:
     logger.info("worker.task.received task_id=%s job_id=%s", self.request.id, job_id)
     init_db()
     pipeline = VideoPipeline()
-    pipeline.run(job_id)
-    logger.info("worker.task.completed task_id=%s job_id=%s", self.request.id, job_id)
-    return {"job_id": job_id, "status": "done"}
+    status = pipeline.run(job_id)
+    logger.info("worker.task.completed task_id=%s job_id=%s status=%s", self.request.id, job_id, status)
+    return {"job_id": job_id, "status": status}

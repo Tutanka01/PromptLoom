@@ -106,7 +106,7 @@ class VideoPipeline:
                 step,
             )
 
-    def run(self, job_id: str) -> None:
+    def run(self, job_id: str) -> str:
         with SessionLocal() as session:
             job = session.get(VideoJob, job_id)
             if job is None:
@@ -126,13 +126,14 @@ class VideoPipeline:
 
             try:
                 self._run_with_repairs(session, job, workspace, runner, reports_dir)
+                return job.status
             except Exception as exc:
                 current_step = job.current_step or ""
                 if current_step == "visual_review":
                     failure_status = "failed_visual_review"
                 elif "verify" in current_step:
                     failure_status = "failed_quality"
-                elif current_step in {"planning", "materializing_sources", "static_validation"}:
+                elif current_step in {"planning", "materializing_sources", "static_validation"} or current_step.startswith("repairing"):
                     failure_status = "failed_generation"
                 else:
                     failure_status = "failed_render"
@@ -158,6 +159,7 @@ class VideoPipeline:
                     error_report,
                 )
                 self._update(session, job, failure_status, job.progress, job.current_step or "failed", str(exc))
+                return failure_status
 
     def _run_with_repairs(
         self,
