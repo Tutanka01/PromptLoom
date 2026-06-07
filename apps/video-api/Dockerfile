@@ -34,6 +34,9 @@ WORKDIR /workspace
 COPY apps/video-api/pyproject.toml apps/video-api/README.md /workspace/apps/video-api/
 COPY apps/video-api/src /workspace/apps/video-api/src
 COPY apps/video-api/tests /workspace/apps/video-api/tests
+# docs/ holds manim-skill.md and manim-generation-guidelines.md, read at runtime by the
+# scene_coder and blueprint LLM. Without this the worker silently loses all Manim guidance.
+COPY apps/video-api/docs /workspace/apps/video-api/docs
 COPY docs/boilerplate /workspace/docs/boilerplate
 COPY videos/linux-fondamentaux/002-c-est-quoi-un-syscall/generate_voice_en.py \
     /workspace/videos/linux-fondamentaux/002-c-est-quoi-un-syscall/generate_voice_en.py
