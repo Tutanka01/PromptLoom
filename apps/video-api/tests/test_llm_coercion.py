@@ -233,6 +233,71 @@ def test_coerce_redistributes_valid_but_too_early_beat_ratios() -> None:
     assert [beat.at for beat in blueprint.scenes[0].beats] == [0.12, 0.5, 0.88]
 
 
+def test_coerce_scene_dict_and_structured_style_notes() -> None:
+    scene_text = (
+        "A Markov chain is a rule for moving between states when the next step depends only "
+        "on the current state. Instead of remembering the full path, the model keeps the "
+        "present distribution and applies the same transition rule again. That makes the "
+        "system simple enough to compute while still capturing useful long term behavior."
+    )
+    data = {
+        "title": "Markov Chains",
+        "theme": "general-stem",
+        "slug": "markov-chains",
+        "target_duration_seconds": 75,
+        "subject_area": "math",
+        "difficulty": "intro",
+        "audience": "STEM learners meeting stochastic models.",
+        "teaching_goal": "Explain how Markov chains update a probability distribution.",
+        "learning_objectives": ["Explain states, transitions, and repeated updates."],
+        "style_notes": {
+            "visual_style": "Clean academic diagrams",
+            "color_palette": ["dark background", "cyan states", "amber highlights"],
+            "font_family": "Helvetica Neue",
+        },
+        "scenes": {
+            "Scene1_Hook": {
+                "title": "Hook",
+                "layout": "concept_map",
+                "text": scene_text,
+                "visual_intent": "Show a few states connected by transition arrows.",
+                "beats": [
+                    {"key": "state", "at": 0.1, "text_hint": "states", "visual_action": "Show states."},
+                    {"key": "current", "at": 0.5, "text_hint": "current state", "visual_action": "Highlight current state."},
+                    {"key": "next", "at": 0.86, "text_hint": "next step", "visual_action": "Move to next state."},
+                ],
+            },
+            "Scene2_Core": {
+                "title": "Core",
+                "layout": "process_flow",
+                "text": scene_text,
+                "visual_intent": "Show one transition update from one distribution to the next.",
+                "beats": [
+                    {"key": "distribution", "at": 0.1, "text_hint": "distribution", "visual_action": "Show distribution."},
+                    {"key": "rule", "at": 0.5, "text_hint": "transition rule", "visual_action": "Show rule."},
+                    {"key": "update", "at": 0.86, "text_hint": "applies", "visual_action": "Animate update."},
+                ],
+            },
+            "Scene3_Recap": {
+                "title": "Recap",
+                "layout": "recap_map",
+                "text": scene_text,
+                "visual_intent": "Summarize state, transition rule, and repeated updates.",
+                "beats": [
+                    {"key": "present", "at": 0.1, "text_hint": "present", "visual_action": "Show present."},
+                    {"key": "repeat", "at": 0.5, "text_hint": "again", "visual_action": "Show repetition."},
+                    {"key": "behavior", "at": 0.86, "text_hint": "long term", "visual_action": "Show long term behavior."},
+                ],
+            },
+        },
+    }
+
+    blueprint = VideoBlueprint.model_validate(_coerce_blueprint_shape(data))
+
+    assert "visual_style: Clean academic diagrams" in blueprint.style_notes
+    assert [scene.key for scene in blueprint.scenes] == ["Scene1_HookEN", "Scene2_CoreEN", "Scene3_RecapEN"]
+
+
 def test_repair_coerces_scene_keyed_map_into_blueprint() -> None:
     previous = {
         "title": "Kernel Paths",

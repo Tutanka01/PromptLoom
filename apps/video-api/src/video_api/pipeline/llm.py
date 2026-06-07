@@ -153,6 +153,41 @@ def _scene_map_entries(data: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]
     return sorted(entries, key=lambda item: _scene_sort_key(item[0]))
 
 
+def _stringify_style_notes(value: Any) -> Any:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            if isinstance(item, dict):
+                rendered = ", ".join(f"{sub_key}={sub_value}" for sub_key, sub_value in item.items())
+            elif isinstance(item, list):
+                rendered = ", ".join(str(entry) for entry in item)
+            else:
+                rendered = str(item)
+            if rendered.strip():
+                parts.append(f"{key}: {rendered}")
+        return "; ".join(parts)
+    if isinstance(value, list):
+        return "; ".join(str(item) for item in value if str(item).strip())
+    return value
+
+
+def _coerce_scene_collection(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    entries = _scene_map_entries(value)
+    if not entries:
+        return value
+    scenes = []
+    for index, (key, scene_data) in enumerate(entries, start=1):
+        scene = dict(scene_data)
+        scene["key"] = _normalize_scene_key(scene.get("key") or key, index)
+        scenes.append(scene)
+    logger.warning("llm.coerce.scene_dict_to_list scenes=%d", len(scenes))
+    return scenes
+
+
 def _coerce_repaired_blueprint_shape(
     data: Any,
     previous: Any,
@@ -291,7 +326,14 @@ def _coerce_blueprint_shape(data: Any) -> Any:
         or coerced.get("learning_goals")
         or [coerced.get("teaching_goal") or "Explain the core idea clearly."]
     )
-    scenes = coerced.get("scenes")
+    coerced["style_notes"] = _stringify_style_notes(
+        coerced.get("style_notes")
+        or coerced.get("visual_style")
+        or coerced.get("style")
+        or "Dark academic style, stable diagrams, clear arrows, one active concept at a time."
+    )
+    scenes = _coerce_scene_collection(coerced.get("scenes"))
+    coerced["scenes"] = scenes
     if not isinstance(scenes, list):
         return coerced
 

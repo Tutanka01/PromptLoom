@@ -124,7 +124,7 @@ not the mandatory look.
 | `code_card(label, ...)` | VGroup | Monospace card |
 | `t(label, size=25, color=TEXT, weight=None)` | Text | Regular text (`weight=BOLD`) |
 | `mono(label, size=22, color=TEXT)` | Text | Monospace text |
-| `connect(a, b, color=KERNEL)` | Arrow | Arrow between two Mobjects |
+| `connect(a, b, color=KERNEL)` | Arrow | Arrow between two Mobjects or two points |
 | `glow(mob, color=KERNEL)` | VGroup | Highlight glow |
 | `dim(mob)` / `undim(mob)` | animation | Fade to ~30% / restore (use inside `play_until`) |
 | `flow_dot(path, color=KERNEL)` | Dot | Dot for `MoveAlongPath` |

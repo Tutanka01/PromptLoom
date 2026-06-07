@@ -80,9 +80,15 @@ def title_bar(label):
     return VGroup(title, line)
 
 
+def _anchor_point(value, direction):
+    if hasattr(value, "get_boundary_point"):
+        return value.get_boundary_point(direction)
+    return value
+
+
 def connect(a, b, color=KERNEL, start_dir=RIGHT, end_dir=LEFT, stroke_width=3.5, buff=0.14):
-    start = a.get_boundary_point(start_dir)
-    end = b.get_boundary_point(end_dir)
+    start = _anchor_point(a, start_dir)
+    end = _anchor_point(b, end_dir)
     return Arrow(start, end, buff=buff, color=color, stroke_width=stroke_width, max_tip_length_to_length_ratio=0.14)
 
 
