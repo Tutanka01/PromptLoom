@@ -40,6 +40,10 @@ def test_generated_manim_uses_renderer_time_compatibility(tmp_path: Path) -> Non
     assert "apad" in assemble_script, "assemble script must pad audio to prevent truncation"
     assert "-shortest" in assemble_script
 
+    voice_script = (video_dir / "generate_voice_en.py").read_text(encoding="utf-8")
+    assert '"openai"' in voice_script
+    assert "client.audio.speech.create" in voice_script
+
     plan = next(tmp_path.glob("docs/videos/math/prompt-to-academic-video/plan.md")).read_text(encoding="utf-8")
     assert "Area: math" in plan
     assert "## Learning Objectives" in plan

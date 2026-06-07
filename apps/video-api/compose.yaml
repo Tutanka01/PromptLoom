@@ -34,7 +34,8 @@ services:
       VIDEO_API_REDIS_URL: redis://redis:6379/0
       VIDEO_API_JOBS_ROOT: /data/jobs
       VIDEO_API_REPO_ROOT: /workspace
-      VIDEO_API_VOICE_COMMAND: python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45
+      VIDEO_API_VOICE_ENGINE: ${VIDEO_API_VOICE_ENGINE:-chatterbox}
+      VIDEO_API_VOICE_COMMAND: ${VIDEO_API_VOICE_COMMAND:-python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45}
       MANIM_USE_UV: "0"
     command: celery -A video_api.celery_app worker --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
     volumes:

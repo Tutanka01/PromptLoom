@@ -113,6 +113,9 @@ class Settings:
     scene_coder_attempts: int = field(
         default_factory=lambda: int(os.getenv("VIDEO_API_SCENE_CODER_ATTEMPTS", "3"))
     )
+    scene_coder_max_tokens: int = field(
+        default_factory=lambda: int(os.getenv("VIDEO_API_SCENE_CODER_MAX_TOKENS", "4096"))
+    )
 
     visual_review_enabled: bool = field(default_factory=lambda: _bool_env("VIDEO_API_VISION_ENABLED", False))
     visual_review_model: str = field(default_factory=lambda: os.getenv("VIDEO_API_VISION_MODEL", ""))
@@ -123,6 +126,7 @@ class Settings:
         default_factory=lambda: int(os.getenv("VIDEO_API_VISION_MAX_TOKENS", "1500"))
     )
 
+    voice_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_VOICE_ENGINE", "chatterbox"))
     voice_command: str = field(
         default_factory=lambda: os.getenv(
             "VIDEO_API_VOICE_COMMAND",
@@ -131,6 +135,15 @@ class Settings:
             "--temperature 0.55 --tail-padding 0.45",
         )
     )
+    voice_tail_padding: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_VOICE_TAIL_PADDING", "0.45")))
+    openai_tts_model: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_MODEL") or os.getenv("OPENAI_TTS_MODEL", "tts-1")
+    )
+    openai_tts_voice: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_VOICE") or os.getenv("OPENAI_TTS_VOICE", "alloy")
+    )
+    openai_tts_format: str = field(default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_FORMAT", "wav"))
+    openai_tts_speed: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_OPENAI_TTS_SPEED", "1.0")))
     command_timeout_seconds: int = field(
         default_factory=lambda: int(os.getenv("VIDEO_API_COMMAND_TIMEOUT_SECONDS", "14400"))
     )

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -132,6 +133,72 @@ def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: f
         write_mp3_from_wav(wav_path, mp3_path)
 
 
+def write_openai_response(response, path: Path) -> None:
+    if hasattr(response, "write_to_file"):
+        response.write_to_file(path)
+        return
+    content = getattr(response, "content", None)
+    if content is None and hasattr(response, "read"):
+        content = response.read()
+    if content is None:
+        raise RuntimeError("OpenAI-compatible speech response did not expose bytes.")
+    path.write_bytes(content)
+
+
+def generate_openai(
+    segments: list[dict],
+    base_url: str | None,
+    api_key: str | None,
+    model: str,
+    voice: str,
+    response_format: str,
+    speed: float,
+    force: bool,
+) -> None:
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url=base_url or None,
+        api_key=api_key or "not-needed",
+    )
+    for segment in segments:
+        key = segment["key"]
+        text = segment["text"]
+        if should_skip_existing(key, force):
+            continue
+        wav_path = OUT_DIR / f"{key}.wav"
+        mp3_path = OUT_DIR / f"{key}.mp3"
+        source_path = wav_path if response_format == "wav" else OUT_DIR / f"{key}.openai.{response_format}"
+        print(f"Generating OpenAI-compatible TTS segment {key} with model {model}")
+        response = client.audio.speech.create(
+            model=model,
+            voice=voice,
+            input=text,
+            response_format=response_format,
+            speed=speed,
+        )
+        write_openai_response(response, source_path)
+        if response_format != "wav":
+            if not shutil.which("ffmpeg"):
+                raise SystemExit("ffmpeg is required to convert OpenAI-compatible TTS audio to WAV.")
+            run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(source_path),
+                    "-ar",
+                    "24000",
+                    "-ac",
+                    "1",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(wav_path),
+                ]
+            )
+        write_mp3_from_wav(wav_path, mp3_path)
+
+
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
     durations = {}
     concat_lines = []
@@ -189,13 +256,33 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", choices=["kokoro", "chatterbox", "chatterbox-turbo"], default="chatterbox")
+    parser.add_argument("--engine", choices=["kokoro", "chatterbox", "chatterbox-turbo", "openai"], default="chatterbox")
     parser.add_argument("--kokoro-voice", default="af_bella")
     parser.add_argument("--kokoro-speed", type=float, default=0.92)
     parser.add_argument("--exaggeration", type=float, default=0.45)
     parser.add_argument("--cfg-weight", type=float, default=0.55)
     parser.add_argument("--temperature", type=float, default=0.55)
     parser.add_argument("--tail-padding", type=float, default=0.45)
+    parser.add_argument("--openai-base-url", default=os.getenv("OPENAI_BASE_URL", ""))
+    parser.add_argument("--openai-api-key", default=os.getenv("OPENAI_API_KEY", ""))
+    parser.add_argument(
+        "--openai-tts-model",
+        default=os.getenv("VIDEO_API_OPENAI_TTS_MODEL") or os.getenv("OPENAI_TTS_MODEL") or "tts-1",
+    )
+    parser.add_argument(
+        "--openai-tts-voice",
+        default=os.getenv("VIDEO_API_OPENAI_TTS_VOICE") or os.getenv("OPENAI_TTS_VOICE") or "alloy",
+    )
+    parser.add_argument(
+        "--openai-tts-format",
+        choices=["wav", "mp3", "opus", "aac", "flac", "pcm"],
+        default=os.getenv("VIDEO_API_OPENAI_TTS_FORMAT", "wav"),
+    )
+    parser.add_argument(
+        "--openai-tts-speed",
+        type=float,
+        default=float(os.getenv("VIDEO_API_OPENAI_TTS_SPEED", "1.0")),
+    )
     parser.add_argument("--force", action="store_true", help="Regenerate audio even when a segment WAV already exists.")
     args = parser.parse_args()
 
@@ -206,8 +293,19 @@ def main() -> None:
         generate_kokoro(segments, args.kokoro_voice, args.kokoro_speed, args.force)
     elif args.engine == "chatterbox":
         generate_chatterbox(segments, args.exaggeration, args.cfg_weight, args.temperature, args.force)
-    else:
+    elif args.engine == "chatterbox-turbo":
         generate_chatterbox_turbo(segments, args.exaggeration, args.cfg_weight, args.temperature, args.force)
+    else:
+        generate_openai(
+            segments,
+            args.openai_base_url,
+            args.openai_api_key,
+            args.openai_tts_model,
+            args.openai_tts_voice,
+            args.openai_tts_format,
+            args.openai_tts_speed,
+            args.force,
+        )
 
     write_duration_files(segments, args.tail_padding)
     print(f"Wrote {OUT_DIR / 'voiceover_en.mp3'}")

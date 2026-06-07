@@ -28,6 +28,35 @@ from video_api.storage import job_root
 logger = logging.getLogger(__name__)
 
 
+def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str, str] | None]:
+    engine = settings.voice_engine.strip().lower()
+    if engine in {"chatterbox", "local", "command"}:
+        return shlex.split(settings.voice_command), None
+    if engine in {"openai", "openai-compatible", "openai_compatible"}:
+        return (
+            [
+                "python",
+                "generate_voice_en.py",
+                "--engine",
+                "openai",
+                "--tail-padding",
+                f"{settings.voice_tail_padding:.3f}",
+            ],
+            {
+                "OPENAI_BASE_URL": settings.openai_base_url or "",
+                "OPENAI_API_KEY": settings.openai_api_key or "",
+                "VIDEO_API_OPENAI_TTS_MODEL": settings.openai_tts_model,
+                "VIDEO_API_OPENAI_TTS_VOICE": settings.openai_tts_voice,
+                "VIDEO_API_OPENAI_TTS_FORMAT": settings.openai_tts_format,
+                "VIDEO_API_OPENAI_TTS_SPEED": str(settings.openai_tts_speed),
+            },
+        )
+    raise ValueError(
+        "Unsupported VIDEO_API_VOICE_ENGINE="
+        f"{settings.voice_engine!r}; expected 'chatterbox' or 'openai'."
+    )
+
+
 class VisualReviewError(Exception):
     """Raised when the visual review score is below the required threshold."""
 
@@ -194,8 +223,15 @@ class VideoPipeline:
                 logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
 
                 self._update(session, job, "voice_generation", 40, "voice_generation")
-                runner.run(shlex.split(self.settings.voice_command), cwd=video_dir, log_name="voice.log")
-                logger.info("job.voice.done job_id=%s", job.id)
+                voice_args, voice_env = voice_command_for_settings(self.settings)
+                logger.info(
+                    "job.voice.start job_id=%s engine=%s model=%s",
+                    job.id,
+                    self.settings.voice_engine,
+                    self.settings.openai_tts_model if self.settings.voice_engine.strip().lower() == "openai" else "",
+                )
+                runner.run(voice_args, cwd=video_dir, log_name="voice.log", env=voice_env)
+                logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
 
                 self._update(session, job, "render_low_quality", 52, "render_low_quality")
                 runner.run(["./render_en.sh"], cwd=video_dir, log_name="render-low.log", env={"QUALITY": "ql"})

@@ -183,6 +183,11 @@ Par defaut :
 Chatterbox principal non-turbo
 ```
 
+Le moteur de voix est configurable avec `VIDEO_API_VOICE_ENGINE` :
+
+- `chatterbox` : lance la commande locale `VIDEO_API_VOICE_COMMAND` ;
+- `openai` : appelle le endpoint OpenAI-compatible `OPENAI_BASE_URL` via `/audio/speech`.
+
 Le resultat attendu :
 
 ```text

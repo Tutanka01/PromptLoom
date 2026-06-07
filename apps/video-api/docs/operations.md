@@ -119,10 +119,25 @@ VIDEO_API_WORKER_CONCURRENCY=1
 ### Voix
 
 ```text
+VIDEO_API_VOICE_ENGINE=chatterbox
 VIDEO_API_VOICE_COMMAND=python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45
 ```
 
-Par defaut Docker utilise Chatterbox principal non-turbo.
+Par defaut Docker utilise Chatterbox principal non-turbo. Pour utiliser un modele de
+synthese vocale expose par le meme endpoint OpenAI-compatible que le LLM :
+
+```text
+VIDEO_API_VOICE_ENGINE=openai
+VIDEO_API_OPENAI_TTS_MODEL=<modele-tts-expose-par-ton-serveur>
+VIDEO_API_OPENAI_TTS_VOICE=<voix-supportee>
+VIDEO_API_OPENAI_TTS_FORMAT=wav
+VIDEO_API_OPENAI_TTS_SPEED=1.0
+VIDEO_API_VOICE_TAIL_PADDING=0.45
+```
+
+Le worker reutilise `OPENAI_BASE_URL` et `OPENAI_API_KEY`. La cle est transmise en
+variable d'environnement au script de voix, pas dans la commande loggee. Pour revenir
+a Chatterbox, remettre `VIDEO_API_VOICE_ENGINE=chatterbox`.
 
 ### Manim
 

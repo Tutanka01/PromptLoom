@@ -124,11 +124,20 @@ class SceneCoder:
                 api_key=self.settings.openai_api_key,
                 base_url=self.settings.openai_base_url,
                 timeout=self.settings.llm_timeout_seconds,
+                max_retries=self.settings.llm_max_retries,
             )
         return self._client
 
     def _model(self) -> str:
         return self.settings.scene_coder_model or self.settings.openai_model
+
+    def _extra_body(self) -> dict[str, Any]:
+        if self.settings.llm_enable_thinking:
+            return {}
+        body: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": False}}
+        if "openrouter.ai" in (self.settings.openai_base_url or ""):
+            body["reasoning"] = {"effort": "none", "exclude": True}
+        return body
 
     def _call_llm(self, messages: list[dict]) -> str:
         client = self._get_client()
@@ -136,6 +145,9 @@ class SceneCoder:
         if self.settings.llm_response_format == "json_object":
             # Scene coder does NOT need JSON mode — it returns Python code
             pass
+        extra_body = self._extra_body()
+        if extra_body:
+            kwargs["extra_body"] = extra_body
         response = client.chat.completions.create(
             model=self._model(),
             # A little headroom over the blueprint temperature: we want varied,
@@ -143,10 +155,22 @@ class SceneCoder:
             temperature=0.4,
             # Rich scenes (LaTeX, plotted axes, code blocks) run longer than the old
             # card grammar, so give the body enough room to finish.
-            max_tokens=4096,
+            max_tokens=self.settings.scene_coder_max_tokens,
             messages=messages,
+            **kwargs,
         )
-        return response.choices[0].message.content or ""
+        choice = response.choices[0]
+        message = choice.message
+        content = message.content or ""
+        if not content.strip():
+            reasoning = getattr(message, "reasoning", None) or getattr(message, "reasoning_content", None) or ""
+            raise ValueError(
+                "Scene coder LLM returned empty content "
+                f"(finish_reason={choice.finish_reason}, reasoning_chars={len(str(reasoning))}). "
+                "For OpenRouter/reasoning models, keep VIDEO_API_LLM_ENABLE_THINKING=0 "
+                "or raise VIDEO_API_SCENE_CODER_MAX_TOKENS."
+            )
+        return content
 
     def _build_scene_context(self, scene: SceneSpec, blueprint: VideoBlueprint) -> dict:
         return {

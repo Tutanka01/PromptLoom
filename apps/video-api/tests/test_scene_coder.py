@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import ast
+from types import SimpleNamespace
 
 import pytest
 
+from video_api.config import Settings
 from video_api.pipeline.scene_coder import (
+    SceneCoder,
     _extract_construct_body,
     _validate_body_contract,
     _wrap_in_scaffold,
@@ -150,3 +153,31 @@ def construct(self):
     body = _extract_construct_body(raw_method)
     code = _wrap_in_scaffold(scene, body)
     ast.parse(code)  # must produce valid Python AST
+
+
+def test_scene_coder_empty_content_raises_actionable_error() -> None:
+    coder = SceneCoder(Settings(openai_base_url="https://openrouter.ai/api/v1"))
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="length",
+                message=SimpleNamespace(content="", reasoning="internal thinking"),
+            )
+        ]
+    )
+    coder._get_client = lambda: SimpleNamespace(  # type: ignore[method-assign]
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **kwargs: response,
+            )
+        )
+    )
+
+    with pytest.raises(ValueError, match="empty content.*finish_reason=length.*reasoning_chars=17"):
+        coder._call_llm([{"role": "user", "content": "write code"}])
+
+
+def test_scene_coder_disables_openrouter_reasoning_by_default() -> None:
+    coder = SceneCoder(Settings(openai_base_url="https://openrouter.ai/api/v1"))
+
+    assert coder._extra_body()["reasoning"] == {"effort": "none", "exclude": True}
