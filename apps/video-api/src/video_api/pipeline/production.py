@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from video_api import timing
 from video_api.config import Settings, get_settings
 from video_api.db import SessionLocal
 from video_api.models import VideoJob
@@ -19,10 +20,20 @@ from video_api.pipeline.materialize import Materializer
 from video_api.pipeline.scene_coder import SceneCoder
 from video_api.pipeline.validate import validate_scene_ast_security, validate_static_video_source
 from video_api.pipeline.verify import verify_mp4
+from video_api.pipeline.visual_review import VisualReviewer
+from video_api.schemas import VisualReviewResult
 from video_api.storage import job_root
 
 
 logger = logging.getLogger(__name__)
+
+
+class VisualReviewError(Exception):
+    """Raised when the visual review score is below the required threshold."""
+
+    def __init__(self, result: VisualReviewResult) -> None:
+        self.result = result
+        super().__init__(result.repair_hint())
 
 
 class VideoPipeline:
@@ -31,6 +42,7 @@ class VideoPipeline:
         self.llm = LLMClient(self.settings)
         self.materializer = Materializer(self.settings)
         self.scene_coder = SceneCoder(self.settings)
+        self.visual_reviewer = VisualReviewer(self.settings)
 
     def _update(
         self,
@@ -87,7 +99,9 @@ class VideoPipeline:
                 self._run_with_repairs(session, job, workspace, runner, reports_dir)
             except Exception as exc:
                 current_step = job.current_step or ""
-                if "verify" in current_step:
+                if current_step == "visual_review":
+                    failure_status = "failed_visual_review"
+                elif "verify" in current_step:
                     failure_status = "failed_quality"
                 elif current_step in {"planning", "materializing_sources", "static_validation"}:
                     failure_status = "failed_generation"
@@ -143,10 +157,14 @@ class VideoPipeline:
                     )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
+                    if isinstance(last_error, VisualReviewError):
+                        repair_hint = last_error.result.repair_hint()
+                    else:
+                        repair_hint = f"{type(last_error).__name__}: {last_error}"
                     blueprint = self.llm.repair_blueprint(
                         job.prompt,
                         blueprint_data or {},
-                        f"{type(last_error).__name__}: {last_error}",
+                        repair_hint,
                     )
                 blueprint_data = blueprint.model_dump()
                 (workspace / "blueprint.json").write_text(
@@ -203,6 +221,28 @@ class VideoPipeline:
                 )
                 logger.info("job.verify_low_quality.done job_id=%s video=%s", job.id, final_low)
 
+                visual_review_result: VisualReviewResult | None = None
+                if self.settings.visual_review_enabled and not self.settings.fake_llm:
+                    self._update(session, job, "visual_review", 72, "visual_review")
+                    vr = self.visual_reviewer.review(
+                        blueprint,
+                        final_low,
+                        runner,
+                        reports_dir / "low",
+                    )
+                    visual_review_result = vr
+                    vr_path = reports_dir / "visual_review.json"
+                    vr_path.write_text(vr.model_dump_json(indent=2) + "\n", encoding="utf-8")
+                    logger.info(
+                        "job.visual_review.done job_id=%s score=%.1f passed=%s blockers=%d",
+                        job.id,
+                        vr.score,
+                        vr.passed,
+                        sum(1 for i in vr.issues if i.severity == "blocker"),
+                    )
+                    if not vr.passed:
+                        raise VisualReviewError(vr)
+
                 self._update(session, job, "render_final", 78, "render_final")
                 runner.run(["./render_en.sh"], cwd=video_dir, log_name="render-final.log", env={"QUALITY": "qh"})
                 logger.info("job.render_final.done job_id=%s", job.id)
@@ -220,6 +260,8 @@ class VideoPipeline:
                     report_dir=reports_dir / "final",
                     min_duration_seconds=minimum_duration,
                 )
+                if visual_review_result is not None:
+                    final_report["visual_review"] = json.loads(visual_review_result.model_dump_json())
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")
                 job.final_video_path = str(final_video)
@@ -316,6 +358,4 @@ class VideoPipeline:
 
 
 def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:
-    if 180 <= target_duration_seconds <= 300:
-        return max(default_min_duration_seconds, int(target_duration_seconds * 0.75))
-    return max(45, int(target_duration_seconds * 0.75))
+    return timing.minimum_final_duration(target_duration_seconds, default_min_duration_seconds)

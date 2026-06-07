@@ -5,6 +5,58 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from video_api import timing
+
+# ---------------------------------------------------------------------------
+# Visual review
+# ---------------------------------------------------------------------------
+
+_DIMENSION_WEIGHTS: dict[str, float] = {
+    "narration_match": 0.35,
+    "readability": 0.20,
+    "framing": 0.20,
+    "density": 0.15,
+    "not_blank": 0.10,
+}
+
+
+class VisualIssue(BaseModel):
+    scene_key: str
+    dimension: str
+    severity: Literal["blocker", "major", "minor"]
+    message: str
+    suggestion: str = ""
+
+
+class SceneVisualScore(BaseModel):
+    scene_key: str
+    timestamp: float
+    dimensions: dict[str, float]
+    score: float
+
+
+class VisualReviewResult(BaseModel):
+    score: float
+    passed: bool
+    scene_scores: list[SceneVisualScore]
+    issues: list[VisualIssue]
+    summary: str
+
+    def repair_hint(self) -> str:
+        """One-paragraph summary of blocker+major issues for the LLM repair prompt."""
+        critical = [i for i in self.issues if i.severity in ("blocker", "major")]
+        if not critical:
+            return f"Visual review failed with score {self.score:.1f}/100 but no major issues were identified."
+        by_scene: dict[str, list[VisualIssue]] = {}
+        for issue in critical:
+            by_scene.setdefault(issue.scene_key, []).append(issue)
+        lines = [f"Visual review failed (score={self.score:.1f}/100). Issues requiring fixes:"]
+        for scene_key, issues in by_scene.items():
+            for issue in issues:
+                suggestion = f" Suggestion: {issue.suggestion}" if issue.suggestion else ""
+                lines.append(f"  [{issue.severity.upper()}] {scene_key} / {issue.dimension}: {issue.message}.{suggestion}")
+        return "\n".join(lines)
+
 
 CLASS_KEY_RE = re.compile(r"^Scene\d+_[A-Za-z0-9]+EN$")
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -170,14 +222,19 @@ class VideoBlueprint(BaseModel):
                 f"planned scene duration {planned_duration}s is outside target window {lower}-{upper}s"
             )
 
-        if self.target_duration_seconds >= 180:
-            estimated_narration = sum(_estimated_spoken_seconds(scene.text) for scene in self.scenes)
-            min_narration = max(45, int(self.target_duration_seconds * 0.55))
-            if estimated_narration < min_narration:
-                raise ValueError(
-                    f"estimated narration duration {estimated_narration}s is too short for target "
-                    f"{self.target_duration_seconds}s"
-                )
+        # Pre-flight narration gate. Aligned with the final render gate
+        # (timing.minimum_final_duration) so a blueprint that validates here is
+        # guaranteed enough spoken content to clear verify_mp4 after rendering.
+        estimated_narration = sum(_estimated_spoken_seconds(scene.text) for scene in self.scenes)
+        min_narration = timing.required_narration_seconds(self.target_duration_seconds)
+        if estimated_narration < min_narration:
+            needed_words = timing.required_total_words(self.target_duration_seconds)
+            have_words = sum(timing.word_count(scene.text) for scene in self.scenes)
+            raise ValueError(
+                f"estimated narration {estimated_narration}s is too short for target "
+                f"{self.target_duration_seconds}s (need >= {min_narration}s of narration, "
+                f"about {needed_words} words across all scenes; blueprint has {have_words})"
+            )
         return self
 
 
@@ -195,5 +252,4 @@ def _short_label(text: str, limit: int = 40) -> str:
 
 
 def _estimated_spoken_seconds(text: str) -> int:
-    words = re.findall(r"\b[\w'-]+\b", text)
-    return max(1, round(len(words) / 155 * 60))
+    return timing.estimated_spoken_seconds(text)

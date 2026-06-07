@@ -7,8 +7,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from video_api import timing
 from video_api.config import Settings
-from video_api.schemas import BeatSpec, SceneSpec, VideoBlueprint, _short_label
+from video_api.schemas import BeatSpec, SceneSpec, VideoBlueprint
 
 
 logger = logging.getLogger(__name__)
@@ -91,93 +92,23 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 def _few_shot_example() -> dict:
-    """Return a compact 4-scene blueprint dict to use as a one-shot example for the LLM."""
-    example = _few_shot_example_raw()
-    for scene in example["scenes"]:
-        for beat in scene["beats"]:
-            beat["label"] = _short_label(beat["text_hint"])
+    """One-shot example for the LLM: a full, rule-compliant 240s blueprint.
+
+    Derived from `fake_blueprint` so the example always satisfies the same
+    constraints we ask the model to meet (8 scenes, enough narration to clear the
+    duration gate). A short, contradictory example would teach the model to write
+    too little narration, which is exactly the failure we are fixing.
+    """
+    example = fake_blueprint("Explain the derivative in calculus", "math").model_dump()
+    example["title"] = "The Derivative: Instant Rate of Change"
+    example["slug"] = "derivative-instant-rate"
+    example["teaching_goal"] = "Explain derivatives through the shrinking-interval intuition."
+    example["learning_objectives"] = [
+        "Explain average rate of change with two points.",
+        "Show how shrinking the interval produces the derivative.",
+        "Connect the tangent slope to the limit definition.",
+    ]
     return example
-
-
-def _few_shot_example_raw() -> dict:
-    return {
-        "title": "The Derivative: Instant Rate of Change",
-        "theme": "math",
-        "slug": "derivative-instant-rate",
-        "target_duration_seconds": 240,
-        "subject_area": "math",
-        "difficulty": "intro",
-        "audience": "STEM learners who need a visual, step-by-step explanation.",
-        "teaching_goal": "Explain derivatives through the shrinking-interval intuition.",
-        "learning_objectives": [
-            "Explain average rate of change with two points.",
-            "Show how shrinking the interval produces the derivative.",
-            "Connect the tangent slope to the limit definition.",
-        ],
-        "style_notes": "Dark academic style, stable diagrams, one active idea at a time.",
-        "scenes": [
-            {
-                "key": "Scene1_HookEN",
-                "title": "The changing quantity",
-                "duration_seconds": 30,
-                "layout": "concept_map",
-                "text": "A derivative begins with a simple question: how fast is something changing right now? Not over a whole trip, not across a long experiment, but at one precise input. The idea matters because many academic models are built from changing quantities: position, temperature, concentration, population, and cost.",
-                "visual_intent": "Build a concept map from changing quantities to the question of instant rate.",
-                "beats": [
-                    {"key": "question", "at": 0.10, "text_hint": "how fast is something changing", "visual_action": "Reveal the central question card."},
-                    {"key": "now", "at": 0.30, "text_hint": "right now", "visual_action": "Focus a single input point."},
-                    {"key": "not_average", "at": 0.48, "text_hint": "not over a whole trip", "visual_action": "Dim a long interval, keep the point highlighted."},
-                    {"key": "examples", "at": 0.68, "text_hint": "position, temperature, concentration", "visual_action": "Reveal example quantity cards around the central idea."},
-                    {"key": "purpose", "at": 0.88, "text_hint": "models are built from changing quantities", "visual_action": "Connect examples back to the derivative."},
-                ],
-            },
-            {
-                "key": "Scene2_MechanismEN",
-                "title": "Average rate first",
-                "duration_seconds": 30,
-                "layout": "process_flow",
-                "text": "The easiest starting point is average rate of change. Pick two inputs, measure the change in output, and divide by the change in input. That gives the slope of a secant line. It is useful, but it still describes an interval, so it cannot yet answer what is happening at exactly one point.",
-                "visual_intent": "Show two points, output change, input change, and the secant slope formula.",
-                "beats": [
-                    {"key": "two_inputs", "at": 0.12, "text_hint": "Pick two inputs", "visual_action": "Place two input points on a graph."},
-                    {"key": "output_change", "at": 0.30, "text_hint": "change in output", "visual_action": "Draw a vertical delta-output marker."},
-                    {"key": "input_change", "at": 0.48, "text_hint": "change in input", "visual_action": "Draw a horizontal delta-input marker."},
-                    {"key": "slope", "at": 0.66, "text_hint": "slope of a secant line", "visual_action": "Create the secant line through both points."},
-                    {"key": "interval", "at": 0.88, "text_hint": "still describes an interval", "visual_action": "Bracket the interval and dim the rest of the graph."},
-                ],
-            },
-            {
-                "key": "Scene3_LimitEN",
-                "title": "Shrink the interval",
-                "duration_seconds": 30,
-                "layout": "spatial_model",
-                "text": "To get an instant rate, keep one point fixed and slide the second point closer. The secant line rotates as the interval shrinks. If those slopes settle toward a stable value, that value is the derivative at the fixed point. Visually, the secant has become a tangent.",
-                "visual_intent": "Animate the second point approaching the first until the secant becomes tangent.",
-                "beats": [
-                    {"key": "fixed", "at": 0.10, "text_hint": "keep one point fixed", "visual_action": "Pin the first point on the curve."},
-                    {"key": "slide", "at": 0.28, "text_hint": "slide the second point closer", "visual_action": "Move the second point toward the first."},
-                    {"key": "rotate", "at": 0.46, "text_hint": "secant line rotates", "visual_action": "Rotate the secant line as the point moves."},
-                    {"key": "stable", "at": 0.66, "text_hint": "settle toward a stable value", "visual_action": "Show slope values converging to a number."},
-                    {"key": "tangent", "at": 0.88, "text_hint": "secant has become a tangent", "visual_action": "Replace the secant with a tangent line."},
-                ],
-            },
-            {
-                "key": "Scene4_EquationEN",
-                "title": "The limit formula",
-                "duration_seconds": 30,
-                "layout": "equation_transform",
-                "text": "The notation writes that shrinking process as a limit. Start with the difference quotient, f of x plus h minus f of x, divided by h. Then let h approach zero. The formula is not a trick; it is the average rate calculation with the interval pushed as small as the function allows.",
-                "visual_intent": "Transform average rate notation into the derivative limit definition.",
-                "beats": [
-                    {"key": "difference", "at": 0.10, "text_hint": "difference quotient", "visual_action": "Reveal the difference quotient card."},
-                    {"key": "fxh", "at": 0.30, "text_hint": "f of x plus h minus f of x", "visual_action": "Highlight the numerator."},
-                    {"key": "divide", "at": 0.48, "text_hint": "divided by h", "visual_action": "Highlight the denominator as the input interval."},
-                    {"key": "limit", "at": 0.68, "text_hint": "let h approach zero", "visual_action": "Add the limit operator to the expression."},
-                    {"key": "meaning", "at": 0.88, "text_hint": "average rate calculation", "visual_action": "Connect the equation back to the shrinking interval."},
-                ],
-            },
-        ],
-    }
 
 
 def _load_generation_guidelines(settings: Settings) -> str:
@@ -325,6 +256,22 @@ def _coerce_blueprint_shape(data: Any) -> Any:
     return coerced
 
 
+def _ensure_fake_narration_budget(scenes: list[SceneSpec], required_words: int) -> None:
+    """Safety net: append topical sentences round-robin until the canned
+    narration clears the duration gate for the chosen target. The curated text
+    is normally already long enough; this only kicks in for unusual targets."""
+    total = sum(timing.word_count(scene.text) for scene in scenes)
+    guard = 0
+    while total < required_words and guard < len(scenes) * 50:
+        scene = scenes[guard % len(scenes)]
+        scene.text = (
+            f"{scene.text} Keep this in mind: {scene.title.lower()} stays the focus "
+            "while the visual updates one step at a time."
+        )
+        total = sum(timing.word_count(s.text) for s in scenes)
+        guard += 1
+
+
 def fake_blueprint(
     prompt: str,
     theme: str | None = None,
@@ -340,7 +287,7 @@ def fake_blueprint(
             "The changing quantity",
             "concept_map",
             "Build a concept map from changing quantities to the question of instant rate.",
-            "A derivative begins with a simple question: how fast is something changing right now? Not over a whole trip, not across a long experiment, but at one precise input. The idea matters because many academic models are built from changing quantities: position, temperature, concentration, population, and cost.",
+            "A derivative begins with a simple question: how fast is something changing right now? Not over a whole trip, not across a long experiment, but at one precise input. The idea matters because many academic models are built from changing quantities: position, temperature, concentration, population, and cost. Each of those quantities can speed up or slow down, and a derivative is the tool that measures that local pace precisely.",
             [
                 ("question", 0.10, "how fast is something changing", "Reveal the central question."),
                 ("now", 0.30, "right now", "Focus a single input point."),
@@ -354,7 +301,7 @@ def fake_blueprint(
             "Average rate first",
             "process_flow",
             "Show two points, output change, input change, and the secant slope formula.",
-            "The easiest starting point is average rate of change. Pick two inputs, measure the change in output, and divide by the change in input. That gives the slope of a secant line. It is useful, but it still describes an interval, so it cannot yet answer what is happening at exactly one point.",
+            "The easiest starting point is average rate of change. Pick two inputs, measure the change in output, and divide by the change in input. That gives the slope of a secant line. It is useful, but it still describes an interval, so it cannot yet answer what is happening at exactly one point. Still, the average rate is the honest first step, because the instant rate is defined as its limit.",
             [
                 ("two_inputs", 0.12, "Pick two inputs", "Place two input points on a graph."),
                 ("output_change", 0.30, "change in output", "Draw a vertical delta output marker."),
@@ -368,7 +315,7 @@ def fake_blueprint(
             "Shrink the interval",
             "spatial_model",
             "Animate the second point approaching the first until the secant becomes tangent.",
-            "To get an instant rate, keep one point fixed and slide the second point closer. The secant line rotates as the interval shrinks. If those slopes settle toward a stable value, that value is the derivative at the fixed point. Visually, the secant has become a tangent.",
+            "To get an instant rate, keep one point fixed and slide the second point closer. The secant line rotates as the interval shrinks. If those slopes settle toward a stable value, that value is the derivative at the fixed point. Visually, the secant has become a tangent. The key intuition is that a smooth curve looks more and more like a straight line as you keep zooming in.",
             [
                 ("fixed", 0.10, "keep one point fixed", "Pin the first point on the curve."),
                 ("slide", 0.28, "slide the second point closer", "Move the second point toward the first."),
@@ -382,7 +329,7 @@ def fake_blueprint(
             "The limit formula",
             "equation_transform",
             "Transform average rate notation into the derivative limit definition.",
-            "The notation writes that shrinking process as a limit. Start with the difference quotient, f of x plus h minus f of x, divided by h. Then let h approach zero. The formula is not a trick; it is the average rate calculation with the interval pushed as small as the function allows.",
+            "The notation writes that shrinking process as a limit. Start with the difference quotient, f of x plus h minus f of x, divided by h. Then let h approach zero. The formula is not a trick; it is the average rate calculation with the interval pushed as small as the function allows. Read aloud, it simply says: take the average slope, then squeeze the interval toward zero width.",
             [
                 ("difference", 0.10, "difference quotient", "Reveal the difference quotient."),
                 ("fxh", 0.30, "f of x plus h minus f of x", "Highlight the numerator."),
@@ -396,7 +343,7 @@ def fake_blueprint(
             "Reading slope on a graph",
             "graph_plot",
             "Show tangent slopes at positive, zero, and negative regions of a curve.",
-            "On a graph, the derivative is the slope of the tangent line. A positive slope means the output is increasing near that input. A negative slope means it is decreasing. A slope near zero means the graph is locally flat. The derivative turns the shape of a curve into a precise number.",
+            "On a graph, the derivative is the slope of the tangent line. A positive slope means the output is increasing near that input. A negative slope means it is decreasing. A slope near zero means the graph is locally flat. The derivative turns the shape of a curve into a precise number. The same curve can be rising here and falling there, and the derivative records each of those local behaviours.",
             [
                 ("tangent", 0.10, "slope of the tangent line", "Draw a tangent line on the curve."),
                 ("positive", 0.30, "positive slope", "Move focus to an increasing region."),
@@ -410,7 +357,7 @@ def fake_blueprint(
             "Units keep the meaning",
             "comparison_table",
             "Compare example functions with their derivative units and interpretations.",
-            "A derivative also carries units. If position is measured in meters and time is measured in seconds, the derivative has units of meters per second. If cost is measured in dollars and output in units produced, the derivative is dollars per unit. The units tell you what kind of rate the number represents.",
+            "A derivative also carries units. If position is measured in meters and time is measured in seconds, the derivative has units of meters per second. If cost is measured in dollars and output in units produced, the derivative is dollars per unit. The units tell you what kind of rate the number represents. Carrying units along is what turns an abstract slope into a physically meaningful rate you can reason about.",
             [
                 ("units", 0.10, "carries units", "Reveal a units comparison table."),
                 ("position", 0.30, "meters and seconds", "Highlight the position over time row."),
@@ -424,7 +371,7 @@ def fake_blueprint(
             "When the derivative fails",
             "cycle_diagram",
             "Cycle through corner, jump, and vertical tangent failure modes.",
-            "The derivative exists only when the limiting slope settles down. At a sharp corner, the slope from the left and the slope from the right can disagree. At a jump, the graph does not connect smoothly. At a vertical tangent, the slope can grow without bound. These are not exceptions to memorize; they are cases where the tangent idea breaks.",
+            "The derivative exists only when the limiting slope settles down. At a sharp corner, the slope from the left and the slope from the right can disagree. At a jump, the graph does not connect smoothly. At a vertical tangent, the slope can grow without bound. These are not exceptions to memorize; they are cases where the tangent idea breaks. Recognising them early tells you when a smooth-rate model is simply the wrong tool for the data.",
             [
                 ("settles", 0.10, "limiting slope settles down", "Show the stable-slope condition."),
                 ("corner", 0.30, "sharp corner", "Reveal a corner case."),
@@ -438,7 +385,7 @@ def fake_blueprint(
             "The takeaway",
             "recap_map",
             "Summarize average rate, limit, tangent slope, and academic applications.",
-            "The useful mental model is compact: average rate uses two points, the derivative pushes the second point toward the first, and the result is the tangent slope if the limit exists. That single idea connects motion, growth, optimization, and many scientific models. The symbols matter because they preserve the shrinking-interval story.",
+            "The useful mental model is compact: average rate uses two points, the derivative pushes the second point toward the first, and the result is the tangent slope if the limit exists. That single idea connects motion, growth, optimization, and many scientific models. The symbols matter because they preserve the shrinking-interval story. Hold onto that picture, and every later rule of differentiation becomes a shortcut for the same limit.",
             [
                 ("average", 0.14, "average rate uses two points", "Show the two-point summary."),
                 ("limit", 0.34, "pushes the second point", "Show the limiting process."),
@@ -463,11 +410,22 @@ def fake_blueprint(
         )
         for key, scene_title, layout, visual_intent, text, beats in academic_scene_data
     ]
+    required_words = timing.required_total_words(target)
     if target < 180:
-        short_duration = max(15, round(target / 3))
-        scenes = scenes[:3]
+        # Short video: keep just enough scenes (>= 3) to cover the narration
+        # budget, then size each scene's planned duration to the target window.
+        kept: list[SceneSpec] = []
+        words = 0
+        for scene in scenes:
+            kept.append(scene)
+            words += timing.word_count(scene.text)
+            if len(kept) >= 3 and words >= required_words:
+                break
+        scenes = kept
+        short_duration = min(75, max(15, round(target / len(scenes))))
         for scene in scenes:
             scene.duration_seconds = short_duration
+    _ensure_fake_narration_budget(scenes, required_words)
     return VideoBlueprint(
         title=title,
         theme=safe_theme,
@@ -531,6 +489,29 @@ class LLMClient:
             )
         return content
 
+    def _duration_policy(self, target: int) -> dict[str, Any]:
+        """Concrete, numeric narration budget so the model writes enough spoken
+        text to clear the final duration gate (verify_mp4) instead of a vague
+        'fill the duration' instruction. Mirrors video_api.timing."""
+        min_seconds = timing.minimum_final_duration(target, self.settings.default_min_duration_seconds)
+        min_total_words = timing.required_total_words(target, self.settings.default_min_duration_seconds)
+        scene_count = 8 if target >= 180 else max(3, round(target / 30))
+        words_per_scene = max(40, round(min_total_words / scene_count))
+        return {
+            "target_seconds": target,
+            "minimum_rendered_seconds": min_seconds,
+            "speaking_rate_wpm": timing.ESTIMATION_WPM,
+            "min_total_narration_words": min_total_words,
+            "min_words_per_scene": words_per_scene,
+            "for_180_to_300_second_targets": "Use 8 to 12 scenes, each around 20 to 40 seconds.",
+            "narration": (
+                f"The rendered video is rejected below {min_seconds}s. The spoken narration "
+                f"alone must total at least {min_total_words} words (counted across every "
+                f"scene's 'text'), roughly {words_per_scene}+ words per scene. Write full "
+                "explanatory sentences, not short summaries or bullet labels."
+            ),
+        }
+
     def generate_blueprint(
         self,
         prompt: str,
@@ -562,12 +543,7 @@ class LLMClient:
             "theme": theme or "general-stem",
             "target_duration_seconds": effective_target,
             "generation_guidelines": _load_generation_guidelines(self.settings),
-            "duration_policy": {
-                "default_target_seconds": self.settings.default_target_duration_seconds,
-                "default_min_seconds": self.settings.default_min_duration_seconds,
-                "for_180_to_300_second_targets": "Use 8 to 12 scenes, each around 20 to 40 seconds.",
-                "narration": "Write enough spoken narration to fill the target duration; avoid short summaries.",
-            },
+            "duration_policy": self._duration_policy(effective_target),
             "approved_visual_primitives": VISUAL_PRIMITIVES,
             "required_schema": {
                 "title": "string",
@@ -634,6 +610,10 @@ class LLMClient:
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required for LLM repair")
         client = self._build_client()
+        target = None
+        if isinstance(previous, dict):
+            target = previous.get("target_duration_seconds")
+        target = int(target or self.settings.default_target_duration_seconds)
         logger.info(
             "llm.repair.start model=%s base_url=%s error_chars=%d",
             self.settings.openai_model,
@@ -654,10 +634,13 @@ class LLMClient:
                             "errors": error_report,
                             "generation_guidelines": _load_generation_guidelines(self.settings),
                             "approved_visual_primitives": VISUAL_PRIMITIVES,
+                            "duration_policy": self._duration_policy(target),
                             "repair_rules": (
                                 "Keep target_duration_seconds, use 8-12 scenes for 3-5 minute videos, "
-                                "include duration_seconds and an approved visual primitive on every scene, and write "
-                                "enough narration to satisfy the duration target."
+                                "include duration_seconds and an approved visual primitive on every scene. "
+                                "If the error mentions narration being too short, LENGTHEN the spoken 'text' of "
+                                "scenes until the total word count satisfies duration_policy.min_total_narration_words; "
+                                "do not just change field names."
                             ),
                         },
                         ensure_ascii=True,

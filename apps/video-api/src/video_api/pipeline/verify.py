@@ -18,6 +18,39 @@ def _frame_rate(value: str) -> float:
     return float(value)
 
 
+def extract_frame(
+    runner: CommandRunner,
+    video_path: Path,
+    timestamp: float,
+    out_path: Path,
+) -> Path:
+    """Extract a single frame from *video_path* at *timestamp* seconds into *out_path*.
+
+    Raises RuntimeError if the output file is missing or empty after extraction.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    runner.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{timestamp:.3f}",
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-update",
+            "1",
+            str(out_path),
+        ],
+        cwd=video_path.parent,
+        log_name=f"snapshot-{video_path.stem}-{out_path.stem}.log",
+    )
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        raise RuntimeError(f"snapshot extraction failed: {out_path}")
+    return out_path
+
+
 def verify_mp4(
     video_path: Path,
     runner: CommandRunner,
@@ -110,25 +143,7 @@ def verify_mp4(
         if timestamp >= duration:
             continue
         out = snapshot_dir / f"check_{index:02d}_{int(timestamp):04d}.png"
-        runner.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-ss",
-                f"{timestamp:.3f}",
-                "-i",
-                str(video_path),
-                "-frames:v",
-                "1",
-                "-update",
-                "1",
-                str(out),
-            ],
-            cwd=video_path.parent,
-            log_name=f"snapshot-{video_path.stem}-{index}.log",
-        )
-        if not out.exists() or out.stat().st_size == 0:
-            raise RuntimeError(f"snapshot extraction failed: {out}")
+        extract_frame(runner, video_path, timestamp, out)
         snapshots.append(str(out))
         logger.info("verify.snapshot.done video=%s timestamp=%.3fs path=%s", video_path, timestamp, out)
 

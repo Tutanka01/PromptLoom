@@ -148,3 +148,61 @@ VIDEO_API_FAKE_LLM=1
 ```
 
 Le worker utilise alors un blueprint local deterministe.
+
+## Contrat vision (revue visuelle)
+
+Quand `VIDEO_API_VISION_ENABLED=1`, le worker appelle un second modele (vision) via le meme endpoint OpenAI-compatible.
+
+### Entree
+
+Un seul message utilisateur multimodal contenant :
+
+1. Un bloc texte :
+   - contexte JSON avec la liste des scenes : `scene_key`, `narration`, `visual_intent`, `active_beat`, `timestamp_seconds`.
+   - instruction de notation (5 dimensions).
+2. N blocs `image_url` (base64 PNG), un par scene, dans le meme ordre que la liste.
+
+### Sortie attendue
+
+Un objet JSON strict :
+
+```json
+{
+  "scene_scores": [
+    {
+      "scene_key": "Scene1_HookEN",
+      "dimensions": {
+        "narration_match": 8,
+        "readability": 9,
+        "framing": 10,
+        "density": 7,
+        "not_blank": 10
+      }
+    }
+  ],
+  "issues": [
+    {
+      "scene_key": "Scene1_HookEN",
+      "dimension": "readability",
+      "severity": "blocker",
+      "message": "Label clipped at right edge",
+      "suggestion": "Shorten label to under 35 characters"
+    }
+  ],
+  "summary": "Synthese courte en une phrase."
+}
+```
+
+Chaque dimension est notee de 0 a 10. Les severites valides sont `blocker`, `major`, `minor`.
+
+### Decision pass/fail (cote Python, pas LLM)
+
+Le worker calcule :
+
+```
+score_scene = 10 * (narration_match*0.35 + readability*0.20 + framing*0.20 + density*0.15 + not_blank*0.10)
+score_global = moyenne des scores de scene
+passed = (score_global >= VIDEO_API_VISION_MIN_SCORE) ET (aucune issue severity=blocker)
+```
+
+Si `passed=False` : le `repair_hint()` (liste des issues blocker/major par scene) est injecte comme message d'erreur dans le prompt de reparation `repair_blueprint`.

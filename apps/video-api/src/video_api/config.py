@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from video_api import timing
+
 
 def _bool_env(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -31,8 +33,12 @@ class Settings:
     repo_root: Path = Path(os.getenv("VIDEO_API_REPO_ROOT", str(_default_repo_root())))
     max_repair_attempts: int = int(os.getenv("VIDEO_API_MAX_REPAIR_ATTEMPTS", "2"))
     fake_llm: bool = _bool_env("VIDEO_API_FAKE_LLM", False)
-    default_target_duration_seconds: int = int(os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", "240"))
-    default_min_duration_seconds: int = int(os.getenv("VIDEO_API_DEFAULT_MIN_DURATION_SECONDS", "180"))
+    default_target_duration_seconds: int = int(
+        os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", str(timing.DEFAULT_TARGET_DURATION_SECONDS))
+    )
+    default_min_duration_seconds: int = int(
+        os.getenv("VIDEO_API_DEFAULT_MIN_DURATION_SECONDS", str(timing.DEFAULT_MIN_DURATION_SECONDS))
+    )
 
     openai_base_url: str | None = os.getenv("OPENAI_BASE_URL")
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
@@ -55,6 +61,11 @@ class Settings:
     scene_coder_enabled: bool = _bool_env("VIDEO_API_SCENE_CODER_ENABLED", False)
     scene_coder_model: str = os.getenv("VIDEO_API_SCENE_CODER_MODEL", "")
     scene_coder_attempts: int = int(os.getenv("VIDEO_API_SCENE_CODER_ATTEMPTS", "3"))
+
+    visual_review_enabled: bool = _bool_env("VIDEO_API_VISION_ENABLED", False)
+    visual_review_model: str = os.getenv("VIDEO_API_VISION_MODEL", "")
+    visual_review_min_score: float = float(os.getenv("VIDEO_API_VISION_MIN_SCORE", "75"))
+    visual_review_max_tokens: int = int(os.getenv("VIDEO_API_VISION_MAX_TOKENS", "1500"))
 
     voice_command: str = os.getenv(
         "VIDEO_API_VOICE_COMMAND",

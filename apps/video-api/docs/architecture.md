@@ -93,6 +93,7 @@ voice_generation
 render_low_quality
 assemble_low_quality
 verify_low_quality
+visual_review
 repairing
 render_final
 assemble_final
@@ -101,6 +102,7 @@ completed
 failed_generation
 failed_render
 failed_quality
+failed_visual_review
 ```
 
 Le worker fait avancer le job et persiste chaque transition dans Postgres.
@@ -219,6 +221,35 @@ Le worker execute :
 - extraction de snapshots une par une.
 
 Si les controles echouent, le job passe dans une boucle d'auto-reparation.
+
+### 8b. Revue visuelle (optionnelle)
+
+Activee par `VIDEO_API_VISION_ENABLED=1`. Apres la verification basse qualite et avant le rendu 1080p60, le worker :
+
+1. Extrait une frame par scene au milieu narratif (via `audio/en/durations.json`).
+2. Envoie toutes les frames + le contexte narration/beats a un modele vision (`VIDEO_API_VISION_MODEL`).
+3. Le modele note chaque scene sur 5 dimensions (poids entre parentheses) :
+   - `narration_match` (0.35) : l'image correspond a ce qui est dit.
+   - `readability` (0.20) : texte lisible, non coupe.
+   - `framing` (0.20) : rien hors cadre, pas de chevauchement.
+   - `density` (0.15) : une idee active a la fois.
+   - `not_blank` (0.10) : ecran non vide.
+4. Le worker calcule le score pondere 0-100 et applique la regle blocker :
+   - `passed = score >= VIDEO_API_VISION_MIN_SCORE (defaut 75) ET aucun defaut "blocker"`.
+5. Si `passed=False`, le job repart en reparation avec un `repair_hint` listant les problemes par scene.
+   Apres epuisement des tentatives : `failed_visual_review`.
+6. Si `passed=True`, le rendu 1080p60 demarre.
+
+Variables d'environnement :
+
+```text
+VIDEO_API_VISION_ENABLED=1
+VIDEO_API_VISION_MODEL=<nom-du-modele-vision>   # meme endpoint que OPENAI_BASE_URL
+VIDEO_API_VISION_MIN_SCORE=75
+VIDEO_API_VISION_MAX_TOKENS=1500
+```
+
+Le rapport est ecrit dans `reports/low/visual_review.json` et attache sous la cle `visual_review` dans `report.json` final.
 
 ### 9. Auto-reparation
 
