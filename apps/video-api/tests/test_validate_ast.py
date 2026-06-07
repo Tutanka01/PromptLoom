@@ -101,3 +101,22 @@ def test_numpy_import_is_allowed() -> None:
 def test_math_import_is_allowed() -> None:
     code = "import math\n" + _VALID_SCENE
     validate_scene_ast_security(code, "Scene1_HookEN")
+
+
+def test_tex_with_unicode_is_rejected() -> None:
+    code = _VALID_SCENE.replace(
+        'title = title_bar("Introduction")',
+        'title = Tex(r"\\\\textbf{☀ Today}", font_size=36)',
+    )
+
+    with pytest.raises(ValueError, match=r"Tex\(\).*non-ASCII"):
+        validate_scene_ast_security(code, "Scene1_HookEN")
+
+
+def test_text_helper_with_unicode_is_allowed() -> None:
+    code = _VALID_SCENE.replace(
+        'title = title_bar("Introduction")',
+        'title = t("☀ Today", 36, TEXT)',
+    )
+
+    validate_scene_ast_security(code, "Scene1_HookEN")

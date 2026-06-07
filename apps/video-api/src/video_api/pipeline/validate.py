@@ -16,6 +16,26 @@ logger = logging.getLogger(__name__)
 _FORBIDDEN_CALLS = frozenset({"eval", "exec", "__import__", "compile", "open", "breakpoint", "input"})
 _FORBIDDEN_ATTRS = frozenset({"system", "popen", "run", "call", "Popen", "check_output", "check_call"})
 _FORBIDDEN_MODULES = frozenset({"os", "sys", "subprocess", "socket", "urllib", "requests", "httpx", "importlib", "ctypes", "shutil", "pickle", "shelve"})
+_TEX_CALLS = frozenset({"Tex", "MathTex"})
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _literal_strings(node: ast.Call) -> list[str]:
+    strings = []
+    for arg in node.args:
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            strings.append(arg.value)
+    for keyword in node.keywords:
+        if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+            strings.append(keyword.value.value)
+    return strings
 
 
 def validate_scene_ast_security(source: str, scene_key: str) -> None:
@@ -53,6 +73,15 @@ def validate_scene_ast_security(source: str, scene_key: str) -> None:
                 raise ValueError(
                     f"Forbidden attribute call '.{node.func.attr}()' in generated scene {scene_key}"
                 )
+            call_name = _call_name(node.func)
+            if call_name in _TEX_CALLS:
+                for value in _literal_strings(node):
+                    if not value.isascii():
+                        raise ValueError(
+                            f"{call_name}() in generated scene {scene_key} contains non-ASCII text; "
+                            "use Text()/t()/mono() for labels, words, icons, and Unicode, "
+                            "and reserve Tex/MathTex for ASCII LaTeX math."
+                        )
 
 
 APPROVED_VISUAL_PRIMITIVES = {

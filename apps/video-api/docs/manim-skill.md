@@ -63,10 +63,13 @@ Plain text for `x^2`, fractions or limits looks amateur. Use LaTeX:
 ```python
 eq  = MathTex(r"f'(x) = \lim_{h \to 0} \frac{f(x+h) - f(x)}{h}", font_size=46)
 eq2 = MathTex(r"\frac{d}{dx} x^2 = 2x", font_size=46)
-Tex(r"The \emph{instantaneous} rate of change", font_size=38)      # prose with LaTeX
+t("instantaneous rate of change", 32, TEXT)                        # prose label
 ```
 
-- `MathTex(r"...")` for math; `Tex(r"...")` for text+math. Always use raw strings (`r"..."`).
+- `MathTex(r"...")` for math. Always use raw strings (`r"..."`).
+- `Tex(...)` and `MathTex(...)` must contain ASCII LaTeX only. Never put emoji,
+  weather symbols, bullets, accented prose, or ordinary UI labels inside them.
+  Use `Text`, `t`, `mono`, simple shapes, or Manim geometry for non-math labels and symbols.
 - Animate math meaningfully: `Write(eq)`, then `TransformMatchingTex(eq, eq2)` to morph one
   expression into another (this is far better than fading text in and out).
 - Color or box parts of a formula:
