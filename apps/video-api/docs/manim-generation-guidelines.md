@@ -1,8 +1,13 @@
 # Manim Generation Guidelines
 
-This API does not ask the LLM to write raw Manim Python.
+This step produces a structured **blueprint** (what to teach, scene by scene, with narration
+and synced beats). A separate authoring step then writes real, bespoke Manim code for each
+scene from that blueprint, following `manim-skill.md`. If a generated scene fails, the worker
+falls back to a deterministic template for that scene only.
 
-The LLM produces a structured blueprint. The worker turns that blueprint into deterministic Manim scenes from an approved visual grammar.
+So plan for variety: each scene should look designed for its own idea (a LaTeX equation that
+transforms, a function plotted on axes, a labelled diagram, a code block, a data table) — not
+the same row of cards every time.
 
 ## Duration
 
@@ -11,9 +16,10 @@ The LLM produces a structured blueprint. The worker turns that blueprint into de
 - For a 180-300 second target, use 8-12 scenes.
 - Each scene should carry enough narration for roughly 20-40 seconds.
 
-## Visual Grammar
+## Composition hint (`layout`)
 
-Approved visual primitives:
+Each scene picks one `layout` value as a *suggested* composition family — it guides the
+authoring step but does not lock the visuals:
 
 - `concept_map`
 - `process_flow`
@@ -26,7 +32,8 @@ Approved visual primitives:
 - `spatial_model`
 - `recap_map`
 
-The LLM must choose one visual primitive per scene and describe concrete visual actions for the beats. The worker owns the Python implementation.
+Pick the closest fit, then describe concrete visual actions for the beats. The authoring step
+turns the scene into real Manim (LaTeX, axes, code, diagrams) guided by these hints.
 
 ## Beat Quality
 

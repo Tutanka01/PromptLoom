@@ -138,8 +138,12 @@ class SceneCoder:
             pass
         response = client.chat.completions.create(
             model=self._model(),
-            temperature=0.25,
-            max_tokens=2048,
+            # A little headroom over the blueprint temperature: we want varied,
+            # topic-specific composition, not one memorised card layout.
+            temperature=0.4,
+            # Rich scenes (LaTeX, plotted axes, code blocks) run longer than the old
+            # card grammar, so give the body enough room to finish.
+            max_tokens=4096,
             messages=messages,
         )
         return response.choices[0].message.content or ""

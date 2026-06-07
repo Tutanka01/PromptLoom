@@ -55,10 +55,11 @@ class Settings:
     # 3x hang. Keep retries low so a stuck request fails fast and surfaces clearly.
     llm_max_retries: int = int(os.getenv("VIDEO_API_LLM_MAX_RETRIES", "1"))
 
-    # v1 default: the LLM only produces a JSON blueprint and the worker renders it from
-    # tested deterministic templates. Free-form per-scene Python (scene_coder) is fragile
-    # with open-source models, so it is opt-in.
-    scene_coder_enabled: bool = _bool_env("VIDEO_API_SCENE_CODER_ENABLED", False)
+    # v2 default: the LLM authors real, free-form Manim per scene (scene_coder) so videos
+    # are visually varied and can use LaTeX, plotted axes and code blocks instead of one
+    # fixed card grammar. The deterministic template stays as a per-scene fallback when a
+    # generated scene fails validation or compilation. Set =0 to force deterministic-only.
+    scene_coder_enabled: bool = _bool_env("VIDEO_API_SCENE_CODER_ENABLED", True)
     scene_coder_model: str = os.getenv("VIDEO_API_SCENE_CODER_MODEL", "")
     scene_coder_attempts: int = int(os.getenv("VIDEO_API_SCENE_CODER_ATTEMPTS", "3"))
 

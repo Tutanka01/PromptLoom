@@ -168,7 +168,10 @@ data/jobs/<job_id>/
     assemble_en.sh
 ```
 
-La v1 genere le code Manim depuis une grammaire visuelle deterministe. Le LLM choisit des primitives visuelles approuvees et ne fournit pas directement du Python executable arbitraire.
+Le code Manim est ensuite ecrit par scene par l'etape `scene_coder` (LLM guide par
+`manim-skill.md`), qui produit du vrai Manim (LaTeX, axes, code, diagrammes). Chaque scene
+passe la securite AST, le contrat de synchro et `py_compile` ; une scene qui echoue retombe
+sur un template deterministe. Pour forcer le mode 100% deterministe : `VIDEO_API_SCENE_CODER_ENABLED=0`.
 
 ### 5. Voix
 

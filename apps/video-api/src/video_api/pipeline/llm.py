@@ -26,11 +26,11 @@ label is the SHORT on-screen text that will literally be drawn on a card (<= 40 
 Beat at values must be normalized ratios between 0.0 and 1.0 inside that scene, not seconds or global timestamps.
 The voice and image must explain the same idea at the same time.
 Plan the explanation from intuition, to mechanism, to transfer or recap. Use precise academic language, but introduce terms before relying on them.
-Do not request raw Python Manim. Plan with this deterministic visual grammar only:
+You are planning a blueprint; a separate expert step then authors real, bespoke Manim code for each scene (it can use LaTeX equations, plotted axes/graphs, code blocks, labelled diagrams). So describe CONCRETE, topic-specific visuals, and make scenes look different from one another — avoid making every scene a row of generic cards.
+The `layout` field is a SUGGESTED composition family, not a hard constraint: pick the closest of
 concept_map, process_flow, layered_system, timeline, equation_transform,
 graph_plot, comparison_table, cycle_diagram, spatial_model, recap_map.
-Good Manim scenes use explicit Mobjects, stable positioning, transforms, movement, focus/dim,
-and one active idea at a time. Avoid generic "make it nice" visual actions."""
+In `visual_intent` and each beat's `visual_action`, name the actual objects to draw and how they change (e.g. "write the limit definition in LaTeX, then morph the difference quotient into f'(x)", "plot f(x)=x^2 on axes and draw the tangent at x=2", "highlight line 3 of the loop as the counter increments"). One active idea at a time. Never write vague actions like "make it nice"."""
 
 
 VISUAL_PRIMITIVES = [

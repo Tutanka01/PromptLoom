@@ -20,10 +20,13 @@ Il doit produire un blueprint structure qui decrit :
 - quelles scenes creer ;
 - quelle duree cible respecter ;
 - quelle narration lire ;
-- quelle primitive visuelle utiliser par scene ;
+- quelle composition visuelle suggerer par scene (`layout`, indicatif) ;
 - quels beats visuels synchroniser avec la narration.
 
-Le code Manim est ensuite genere par le worker a partir de templates.
+Le code Manim est ensuite ecrit, scene par scene, par une seconde etape d'authoring LLM
+(`scene_coder`, guidee par `manim-skill.md`) qui produit du vrai Manim (LaTeX, axes, code,
+diagrammes). Si une scene generee echoue (securite AST, syntaxe, compilation), le worker
+retombe sur un template deterministe pour cette scene uniquement.
 
 ## Format attendu
 
@@ -87,22 +90,23 @@ Regles principales :
 - `at` est un ratio entre `0.0` et `1.0`.
 - le dernier beat utile doit etre au moins vers `0.75`.
 
-## Pourquoi ne pas demander du Python brut au LLM
+## Python Manim genere, mais sous garde-fous
 
-Le LLM peut produire du code fragile ou dangereux :
+Le LLM ecrit maintenant du vrai Manim par scene (pour la variete et le LaTeX), mais on
+encadre le risque (code fragile ou dangereux : imports invalides, acces fichier/reseau,
+scenes qui ne compilent pas) :
 
-- imports invalides ;
-- chemins absolus ;
-- scenes qui ne compilent pas ;
-- visuels sans lien avec la narration ;
-- commandes arbitraires.
+- LLM -> blueprint JSON structure ; Pydantic valide le JSON.
+- `scene_coder` -> corps de `construct()` par scene, guide par `manim-skill.md`.
+- `validate_scene_ast_security` : rejette imports interdits (`os`, `subprocess`, ...),
+  `eval`/`exec`/`open`, et tout import hors liste blanche.
+- `_validate_body_contract` : impose le contrat de synchro (`begin_sync` / `play_until` /
+  `finish_sync`, pas de `self.wait`/`self.time`).
+- boucle de reparation par scene (`VIDEO_API_SCENE_CODER_ATTEMPTS`), puis fallback template
+  deterministe si la scene ne passe toujours pas.
+- `validate_static_video_source` + `py_compile` avant tout rendu.
 
-La v1 limite ce risque :
-
-- LLM -> JSON structure.
-- Pydantic valide le JSON.
-- Worker -> Python Manim depuis templates.
-- Validation statique avant execution.
+Pour forcer l'ancien comportement 100% deterministe : `VIDEO_API_SCENE_CODER_ENABLED=0`.
 
 ## Reparation
 

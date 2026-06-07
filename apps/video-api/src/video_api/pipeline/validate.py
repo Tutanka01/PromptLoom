@@ -108,16 +108,18 @@ def validate_static_video_source(video_dir: Path) -> None:
 
     py_files = list(video_dir.glob("*_en.py")) + list(video_dir.glob("*_style.py")) + [video_dir / "generate_voice_en.py"]
     manim_files = [path for path in video_dir.glob("*_en.py") if path.name != "generate_voice_en.py"]
+    # Scenes are now authored as free-form Manim (scene_coder); the `layout_name`
+    # attribute only appears on scenes that fell back to the deterministic template.
+    # We still reject an unknown primitive on those fallback scenes as a safety check,
+    # but we no longer enforce "visual variety" here — variety is the job of the
+    # generated scenes, and penalising a job because its safety-net fallbacks share a
+    # layout would reject otherwise valid output.
     for manim_path in manim_files:
         source = manim_path.read_text(encoding="utf-8")
         layouts = re.findall(r'layout_name = "([a-z_]+)"', source)
         unknown = sorted(set(layouts) - APPROVED_VISUAL_PRIMITIVES)
         if unknown:
             raise ValueError(f"generated scenes use unknown visual primitives: {unknown}")
-        if len(layouts) >= 4 and len(set(layouts)) < 3:
-            raise ValueError("generated scenes use too little visual primitive variety")
-        if layouts and layouts.count("process_flow") == len(segments):
-            raise ValueError("generated scenes use one generic process flow only")
 
     for path in py_files:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
