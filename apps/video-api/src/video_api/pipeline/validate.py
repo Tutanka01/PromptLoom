@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import json
 import logging
 import re
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from video_api.schemas import CLASS_KEY_RE
@@ -161,3 +164,158 @@ def validate_static_video_source(video_dir: Path) -> None:
         text=True,
     )
     logger.info("validate.done video_dir=%s python_files=%d", video_dir, len(py_files))
+
+
+# ---------------------------------------------------------------------------
+# Per-scene runtime validation
+#
+# Syntax + security checks let a syntactically-valid but undefined symbol (e.g.
+# a hallucinated `GlowDots(...)`) slip through to the global render, where it
+# raises NameError and kills the whole job instead of falling back to the
+# deterministic template for that one scene. These two checks catch such errors
+# at the per-scene stage so the scene-coder repair loop (and ultimately the
+# fallback template) can do its job and a video still ships.
+# ---------------------------------------------------------------------------
+
+_BUILTIN_NAMES = frozenset(dir(builtins))
+
+_manim_namespace_cache: set[str] | None = None
+_manim_namespace_checked = False
+
+
+def manim_namespace() -> set[str] | None:
+    """Return the names exported by the installed manim package, or None if manim
+    cannot be imported in this environment (dev/test boxes without manim)."""
+    global _manim_namespace_cache, _manim_namespace_checked
+    if not _manim_namespace_checked:
+        _manim_namespace_checked = True
+        try:
+            import manim  # type: ignore
+
+            _manim_namespace_cache = set(dir(manim))
+        except Exception:  # pragma: no cover - depends on environment
+            _manim_namespace_cache = None
+    return _manim_namespace_cache
+
+
+def _has_star_import(tree: ast.AST) -> bool:
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+
+
+def _collect_bound_names(tree: ast.AST) -> set[str]:
+    """Over-approximate every name bound anywhere in the module.
+
+    Over-approximation is the safe direction: it only ever allows *more* names,
+    so it cannot turn valid code into a false positive.
+    """
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound.add(node.id)
+        elif isinstance(node, ast.arg):
+            bound.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                bound.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    bound.add(alias.asname or alias.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            bound.update(node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+    return bound
+
+
+def validate_scene_names(module_source: str, scene_key: str) -> None:
+    """Raise ValueError if the module references a name that is not a manim symbol,
+    a documented helper/import, a local binding, or a builtin.
+
+    Catches the most common scene-coder hallucination — inventing a Manim class or
+    helper that does not exist (`GlowDots`, `FlashArrow`, ...). No-op when manim is
+    not importable and the module relies on `from manim import *`, to avoid false
+    positives in environments where the manim namespace is unknown.
+    """
+    try:
+        tree = ast.parse(module_source)
+    except SyntaxError:
+        return  # syntax errors are reported by ast.parse() in the caller
+
+    manim_ns = manim_namespace()
+    if _has_star_import(tree) and manim_ns is None:
+        return
+
+    allowed = set(_BUILTIN_NAMES) | _collect_bound_names(tree)
+    if manim_ns:
+        allowed |= manim_ns
+
+    undefined: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id not in allowed:
+                undefined.append(node.id)
+
+    if undefined:
+        uniq = list(dict.fromkeys(undefined))
+        raise ValueError(
+            f"Scene {scene_key} references undefined name(s): {', '.join(uniq[:5])}. "
+            "These are not Manim Community symbols, documented helpers, imports, or "
+            "local variables. Use only real Manim classes and the documented helpers."
+        )
+
+
+def _error_tail(text: str, max_lines: int = 25) -> str:
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(lines[-max_lines:])
+
+
+def smoke_render_scene(
+    video_dir: Path,
+    scene_key: str,
+    module_source: str,
+    timeout_seconds: int,
+) -> None:
+    """Render a single scene's last frame to prove its construct() actually executes.
+
+    Raises ValueError (with the error tail) if the scene fails to render. No-op when
+    manim is not importable in this environment, so dev/test boxes are unaffected.
+    """
+    if manim_namespace() is None:
+        logger.info("smoke_render.skip scene=%s reason=manim_unavailable", scene_key)
+        return
+
+    smoke_path = video_dir / f"_smoke_{scene_key}.py"
+    smoke_path.write_text(module_source, encoding="utf-8")
+    cmd = [sys.executable, "-m", "manim", "-ql", "-s", smoke_path.name, scene_key]
+    logger.info("smoke_render.start scene=%s file=%s", scene_key, smoke_path.name)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=video_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(
+            f"Scene {scene_key} smoke render timed out after {timeout_seconds}s"
+        ) from exc
+    finally:
+        smoke_path.unlink(missing_ok=True)
+        for artifact_root in ("videos", "images"):
+            artifact_dir = video_dir / "media" / artifact_root / smoke_path.stem
+            if artifact_dir.exists():
+                shutil.rmtree(artifact_dir, ignore_errors=True)
+
+    if proc.returncode != 0:
+        tail = _error_tail(proc.stderr) or _error_tail(proc.stdout)
+        logger.warning("smoke_render.failed scene=%s rc=%d", scene_key, proc.returncode)
+        raise ValueError(f"Scene {scene_key} failed to render:\n{tail}")
+    logger.info("smoke_render.ok scene=%s", scene_key)

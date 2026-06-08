@@ -16,9 +16,14 @@ from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.llm import LLMClient
 from video_api.schemas import VideoBlueprint
-from video_api.pipeline.materialize import Materializer
+from video_api.pipeline.materialize import Materializer, build_single_scene_module
 from video_api.pipeline.scene_coder import SceneCoder
-from video_api.pipeline.validate import validate_scene_ast_security, validate_static_video_source
+from video_api.pipeline.validate import (
+    smoke_render_scene,
+    validate_scene_ast_security,
+    validate_scene_names,
+    validate_static_video_source,
+)
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
 from video_api.schemas import VisualReviewResult
@@ -216,7 +221,7 @@ class VideoPipeline:
                 logger.info("job.sources.materialized job_id=%s video_dir=%s", job.id, video_dir)
 
                 self._update(session, job, "manim_generation", 26, "scene_codegen")
-                scene_codes = self._generate_scene_codes(blueprint)
+                scene_codes = self._generate_scene_codes(blueprint, video_dir)
                 if scene_codes:
                     self.materializer.write_scene_codes(video_dir, blueprint, scene_codes)
 
@@ -332,11 +337,15 @@ class VideoPipeline:
                 )
 
 
-    def _generate_scene_codes(self, blueprint: VideoBlueprint) -> dict[str, str]:
+    def _generate_scene_codes(self, blueprint: VideoBlueprint, video_dir: Path) -> dict[str, str]:
         """Generate LLM Manim code for each scene with a repair loop + deterministic fallback.
 
+        Each candidate is checked for security, syntax, undefined names, and — unless
+        disabled — proven to render via a single-scene smoke render. A scene that fails
+        every attempt is omitted so the materializer uses its deterministic fallback
+        template, guaranteeing the global render still succeeds.
+
         Returns a dict mapping scene_key → full class code string.
-        Scenes that fail after all attempts are omitted (materializer uses the fallback template).
         """
         if not self.settings.scene_coder_enabled:
             logger.info("scene_codegen.skip reason=deterministic_only (VIDEO_API_SCENE_CODER_ENABLED=0)")
@@ -345,6 +354,7 @@ class VideoPipeline:
             logger.info("scene_codegen.skip fake_llm=%s has_key=%s", self.settings.fake_llm, bool(self.settings.openai_api_key))
             return {}
 
+        slug_module = blueprint.slug.replace("-", "_")
         scene_codes: dict[str, str] = {}
         for scene in blueprint.scenes:
             prev_code: str = ""
@@ -360,6 +370,16 @@ class VideoPipeline:
 
                     validate_scene_ast_security(code, scene.key)
                     ast.parse(code)
+
+                    if self.settings.scene_coder_smoke_render:
+                        module_source = build_single_scene_module(slug_module, code)
+                        validate_scene_names(module_source, scene.key)
+                        smoke_render_scene(
+                            video_dir,
+                            scene.key,
+                            module_source,
+                            self.settings.scene_coder_smoke_timeout_seconds,
+                        )
 
                     scene_codes[scene.key] = code
                     succeeded = True

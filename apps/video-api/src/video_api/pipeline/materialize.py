@@ -482,6 +482,17 @@ def _manim_code(
     return header + scenes + "\n"
 
 
+def build_single_scene_module(slug_module: str, scene_class_code: str) -> str:
+    """Build a complete, importable Manim module containing only one scene class.
+
+    Used to validate / smoke-render a single candidate scene in isolation before it
+    is trusted and written into the full module. The header carries the same imports,
+    helpers and base class as the real module, so the scene renders identically.
+    """
+    header = _MODULE_TEMPLATE.replace("__SLUG_MODULE__", slug_module)
+    return header + scene_class_code + "\n"
+
+
 def _render_script(blueprint: VideoBlueprint, slug_module: str) -> str:
     scene_lines = "\n".join(f"  {scene.key}" for scene in blueprint.scenes)
     concat_lines = "\n".join(

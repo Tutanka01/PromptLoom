@@ -116,6 +116,15 @@ class Settings:
     scene_coder_max_tokens: int = field(
         default_factory=lambda: int(os.getenv("VIDEO_API_SCENE_CODER_MAX_TOKENS", "4096"))
     )
+    # Prove each generated scene actually renders (undefined-name check + single-scene
+    # smoke render) before trusting it, so a runtime error in one scene triggers repair /
+    # fallback instead of killing the whole job at the global render. Set =0 to disable.
+    scene_coder_smoke_render: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_SCENE_CODER_SMOKE_RENDER", True)
+    )
+    scene_coder_smoke_timeout_seconds: int = field(
+        default_factory=lambda: int(os.getenv("VIDEO_API_SCENE_CODER_SMOKE_TIMEOUT", "150"))
+    )
 
     visual_review_enabled: bool = field(default_factory=lambda: _bool_env("VIDEO_API_VISION_ENABLED", False))
     visual_review_model: str = field(default_factory=lambda: os.getenv("VIDEO_API_VISION_MODEL", ""))
