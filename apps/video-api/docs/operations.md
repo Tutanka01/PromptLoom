@@ -289,6 +289,14 @@ Consulter :
 
 Le job peut finir en `failed_quality` si `ffprobe`, `freezedetect` ou les snapshots echouent.
 
+Pour `freezedetect` : une formule maths tenue immobile compte comme "gelee". La garde
+echoue si le total gele depasse `max(VIDEO_API_FREEZE_FLOOR_SECONDS, duree * VIDEO_API_MAX_FREEZE_RATIO)`
+OU si un seul gel depasse `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`. Le detail (nombre, total,
+plus long gel, et son timestamp) est dans le message d'erreur et dans
+`reports/<low|final>/freeze.json`. Si tes videos sont legitimement statiques (beaucoup de
+formules tenues), augmente `VIDEO_API_MAX_FREEZE_RATIO` et/ou `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`.
+Un gel unique tres long reste le signal d'une scene reellement morte (a refaire).
+
 ## Notes de performance
 
 L'image Docker actuelle est lourde parce que le worker embarque :

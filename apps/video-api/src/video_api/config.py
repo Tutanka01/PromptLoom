@@ -84,6 +84,20 @@ class Settings:
             os.getenv("VIDEO_API_DEFAULT_MIN_DURATION_SECONDS", str(timing.DEFAULT_MIN_DURATION_SECONDS))
         )
     )
+    # Freeze gate (final render). Held formulas in math videos read as "frozen", so the
+    # gate uses two signals: cumulative frozen time (tolerant — a video may legitimately
+    # hold visuals) and the single longest frozen stretch (strict — catches a dead scene).
+    # The video fails if EITHER the total exceeds max(floor, duration*ratio) or any single
+    # stretch exceeds the single-freeze cap.
+    verify_max_freeze_ratio: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_MAX_FREEZE_RATIO", "0.5"))
+    )
+    verify_freeze_floor_seconds: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_FREEZE_FLOOR_SECONDS", "30"))
+    )
+    verify_max_single_freeze_seconds: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_MAX_FREEZE_SINGLE_SECONDS", "12"))
+    )
 
     openai_base_url: str | None = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL"))
     openai_api_key: str | None = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))

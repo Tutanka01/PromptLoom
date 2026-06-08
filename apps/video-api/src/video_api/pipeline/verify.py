@@ -57,6 +57,9 @@ def verify_mp4(
     final_quality: bool,
     report_dir: Path,
     min_duration_seconds: int | None = None,
+    max_freeze_ratio: float = 0.5,
+    freeze_floor_seconds: float = 30.0,
+    max_single_freeze_seconds: float = 12.0,
 ) -> dict:
     report_dir.mkdir(parents=True, exist_ok=True)
     logger.info("verify.start video=%s final_quality=%s report_dir=%s", video_path, final_quality, report_dir)
@@ -109,21 +112,52 @@ def verify_mp4(
         cwd=video_path.parent,
         log_name=f"freezedetect-{video_path.stem}.log",
     )
+    freeze_starts = [float(match) for match in re.findall(r"freeze_start: ([0-9.]+)", freeze.stderr)]
     freeze_durations = [float(match) for match in re.findall(r"freeze_duration: ([0-9.]+)", freeze.stderr)]
+    segments = [
+        {"start": round(start, 3), "duration": round(dur, 3)}
+        for start, dur in zip(freeze_starts, freeze_durations)
+    ]
+    longest = max(freeze_durations) if freeze_durations else 0.0
     freeze_summary = {
         "count": len(freeze_durations),
         "total": round(sum(freeze_durations), 3),
         "average": round(sum(freeze_durations) / len(freeze_durations), 3) if freeze_durations else 0,
+        "longest": round(longest, 3),
+        "segments": segments,
     }
-    if final_quality and freeze_summary["total"] > max(30.0, duration * 0.25):
-        raise RuntimeError("too much frozen video detected")
+    # Persist the breakdown before the gate so a failed job still exposes *why*.
+    (report_dir / "freeze.json").write_text(json.dumps(freeze_summary, indent=2) + "\n", encoding="utf-8")
     logger.info(
-        "verify.freezedetect.done video=%s freezes=%d freeze_total=%.3fs freeze_avg=%.3fs",
+        "verify.freezedetect.done video=%s freezes=%d freeze_total=%.3fs freeze_avg=%.3fs freeze_longest=%.3fs",
         video_path,
         freeze_summary["count"],
         freeze_summary["total"],
         freeze_summary["average"],
+        freeze_summary["longest"],
     )
+    if final_quality:
+        total_allowed = max(freeze_floor_seconds, duration * max_freeze_ratio)
+        reasons: list[str] = []
+        if freeze_summary["total"] > total_allowed:
+            reasons.append(
+                f"cumulative frozen time {freeze_summary['total']:.1f}s exceeds "
+                f"{total_allowed:.1f}s allowed (ratio={max_freeze_ratio}, floor={freeze_floor_seconds:.0f}s)"
+            )
+        if longest > max_single_freeze_seconds:
+            where = next((s["start"] for s in segments if s["duration"] == round(longest, 3)), None)
+            at = f" starting near {where:.1f}s" if where is not None else ""
+            reasons.append(
+                f"a single static stretch lasts {longest:.1f}s{at}, over the "
+                f"{max_single_freeze_seconds:.0f}s cap — likely a dead scene, not a held formula"
+            )
+        if reasons:
+            raise RuntimeError(
+                "too much frozen video detected: "
+                + "; ".join(reasons)
+                + f" [freezes={freeze_summary['count']}, total={freeze_summary['total']:.1f}s, "
+                f"longest={longest:.1f}s, duration={duration:.1f}s; see freeze.json]"
+            )
 
     snapshot_dir = report_dir / "snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
