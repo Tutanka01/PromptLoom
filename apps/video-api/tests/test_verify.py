@@ -102,9 +102,26 @@ def test_held_formulas_pass_under_cumulative_tolerance(tmp_path: Path) -> None:
     assert (tmp_path / "report" / "freeze.json").exists()
 
 
-def test_single_dead_scene_is_rejected_with_details(tmp_path: Path) -> None:
-    # One 25s dead stretch: under cumulative tolerance but a clear dead scene -> reject,
-    # and the error must name the longest freeze so the failure is diagnosable.
+def test_freeze_is_warning_not_failure_by_default(tmp_path: Path) -> None:
+    # Default policy: a freeze does not fail the job. The MP4 is delivered and the
+    # problem is surfaced in quality_warnings so the user can watch and judge.
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"mp4")
+
+    report = verify_mp4(
+        video,
+        FakeRunner(duration=120, freeze_segments=[(40.0, 25.0)]),
+        final_quality=True,
+        report_dir=tmp_path / "report",
+        min_duration_seconds=30,
+    )
+
+    assert len(report["quality_warnings"]) == 1
+    assert "single static stretch lasts 25" in report["quality_warnings"][0]
+
+
+def test_single_dead_scene_is_rejected_when_fatal(tmp_path: Path) -> None:
+    # With freeze_fatal=True the longest-stretch rule fails the job, naming the freeze.
     video = tmp_path / "video.mp4"
     video.write_bytes(b"mp4")
 
@@ -115,10 +132,11 @@ def test_single_dead_scene_is_rejected_with_details(tmp_path: Path) -> None:
             final_quality=True,
             report_dir=tmp_path / "report",
             min_duration_seconds=30,
+            freeze_fatal=True,
         )
 
 
-def test_cumulative_freeze_over_ratio_is_rejected(tmp_path: Path) -> None:
+def test_cumulative_freeze_over_ratio_is_rejected_when_fatal(tmp_path: Path) -> None:
     # Many short holds (each under the single cap) that together exceed the ratio.
     video = tmp_path / "video.mp4"
     video.write_bytes(b"mp4")
@@ -132,4 +150,5 @@ def test_cumulative_freeze_over_ratio_is_rejected(tmp_path: Path) -> None:
             report_dir=tmp_path / "report",
             min_duration_seconds=30,
             max_single_freeze_seconds=12.0,
+            freeze_fatal=True,
         )

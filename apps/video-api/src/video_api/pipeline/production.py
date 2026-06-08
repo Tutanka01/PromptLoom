@@ -305,6 +305,7 @@ class VideoPipeline:
                     max_freeze_ratio=self.settings.verify_max_freeze_ratio,
                     freeze_floor_seconds=self.settings.verify_freeze_floor_seconds,
                     max_single_freeze_seconds=self.settings.verify_max_single_freeze_seconds,
+                    freeze_fatal=self.settings.verify_freeze_fatal,
                 )
                 if visual_review_result is not None:
                     final_report["visual_review"] = json.loads(visual_review_result.model_dump_json())

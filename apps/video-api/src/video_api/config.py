@@ -98,6 +98,12 @@ class Settings:
     verify_max_single_freeze_seconds: float = field(
         default_factory=lambda: float(os.getenv("VIDEO_API_MAX_FREEZE_SINGLE_SECONDS", "12"))
     )
+    # Default: a freeze is a quality WARNING, not a failure — the MP4 is still delivered
+    # (with quality_warnings in the report) as long as it is technically valid. Set =1 to
+    # make excessive freeze fail the job (failed_quality) again.
+    verify_freeze_fatal: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_FREEZE_FATAL", False)
+    )
 
     openai_base_url: str | None = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL"))
     openai_api_key: str | None = field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))

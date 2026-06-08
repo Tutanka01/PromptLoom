@@ -60,8 +60,10 @@ def verify_mp4(
     max_freeze_ratio: float = 0.5,
     freeze_floor_seconds: float = 30.0,
     max_single_freeze_seconds: float = 12.0,
+    freeze_fatal: bool = False,
 ) -> dict:
     report_dir.mkdir(parents=True, exist_ok=True)
+    quality_warnings: list[str] = []
     logger.info("verify.start video=%s final_quality=%s report_dir=%s", video_path, final_quality, report_dir)
     ffprobe = runner.run(
         [
@@ -152,12 +154,16 @@ def verify_mp4(
                 f"{max_single_freeze_seconds:.0f}s cap — likely a dead scene, not a held formula"
             )
         if reasons:
-            raise RuntimeError(
+            message = (
                 "too much frozen video detected: "
                 + "; ".join(reasons)
                 + f" [freezes={freeze_summary['count']}, total={freeze_summary['total']:.1f}s, "
                 f"longest={longest:.1f}s, duration={duration:.1f}s; see freeze.json]"
             )
+            if freeze_fatal:
+                raise RuntimeError(message)
+            quality_warnings.append(message)
+            logger.warning("verify.freeze.warning video=%s %s", video_path, message)
 
     snapshot_dir = report_dir / "snapshots"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -190,6 +196,12 @@ def verify_mp4(
         "audio_stream": audio_streams[0],
         "freezedetect": freeze_summary,
         "snapshots": snapshots,
+        "quality_warnings": quality_warnings,
     }
-    logger.info("verify.done video=%s snapshots=%d", video_path, len(snapshots))
+    logger.info(
+        "verify.done video=%s snapshots=%d quality_warnings=%d",
+        video_path,
+        len(snapshots),
+        len(quality_warnings),
+    )
     return report

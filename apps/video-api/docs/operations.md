@@ -287,15 +287,18 @@ Consulter :
 /data/jobs/<job_id>/reports/
 ```
 
-Le job peut finir en `failed_quality` si `ffprobe`, `freezedetect` ou les snapshots echouent.
+Le job peut finir en `failed_quality` si `ffprobe` (pistes manquantes, resolution/fps,
+duree sous le minimum) ou les snapshots echouent. Ces controles techniques restent bloquants.
 
-Pour `freezedetect` : une formule maths tenue immobile compte comme "gelee". La garde
-echoue si le total gele depasse `max(VIDEO_API_FREEZE_FLOOR_SECONDS, duree * VIDEO_API_MAX_FREEZE_RATIO)`
-OU si un seul gel depasse `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`. Le detail (nombre, total,
-plus long gel, et son timestamp) est dans le message d'erreur et dans
-`reports/<low|final>/freeze.json`. Si tes videos sont legitimement statiques (beaucoup de
-formules tenues), augmente `VIDEO_API_MAX_FREEZE_RATIO` et/ou `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`.
-Un gel unique tres long reste le signal d'une scene reellement morte (a refaire).
+Le `freezedetect`, lui, est par defaut un **avertissement, pas un echec** : une formule maths
+tenue immobile compte comme "gelee", donc on prefere livrer le MP4 et laisser l'utilisateur
+juger. Le detail va dans `report.json` -> `quality_warnings` et dans `reports/<low|final>/freeze.json`
+(nombre, total, plus long gel + timestamp). Pour rebloquer le job sur un gel excessif, mettre
+`VIDEO_API_FREEZE_FATAL=1`. Le seuil utilise deux signaux : total gele >
+`max(VIDEO_API_FREEZE_FLOOR_SECONDS, duree * VIDEO_API_MAX_FREEZE_RATIO)` OU un seul gel >
+`VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`. Pour des videos legitimement statiques, augmente
+`VIDEO_API_MAX_FREEZE_RATIO` et/ou `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`. Un gel unique tres
+long reste le signal d'une scene reellement morte (a refaire).
 
 ## Notes de performance
 
