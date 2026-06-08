@@ -38,14 +38,27 @@ video_dir/
 
 ### Palette de composants testés (`remotion/src/scenes/data/scenes.tsx`)
 
-| Composant     | Props clés |
-|---------------|------------|
-| `TitleScene`  | `title, subtitle?, accent?` |
-| `BulletScene` | `title, bullets[2-5], caption?, accent?` |
-| `FormulaScene`| `title, formulas[1-3] (LaTeX/KaTeX), caption?` |
-| `CodeScene`   | `title, code, lang, codeTitle?, caption?` |
-| `PlotScene`   | `title, expr|points, xRange, yRange, sweep?, area?, xLabel?, yLabel?` |
-| `DiagramScene`| `title, nodes[{id,label,x(-6..6),y(-3..3),color?}], edges[{from,to,label?}]` |
+| Composant            | Props clés |
+|----------------------|------------|
+| `TitleScene`         | `title, subtitle?, accent?` |
+| `BulletScene`        | `title, bullets[2-5], caption?, accent?` |
+| `FormulaScene`       | `title, formulas[1-3] (LaTeX/KaTeX), caption?` |
+| `CodeScene`          | `title, code, lang, codeTitle?, caption?` |
+| `PlotScene`          | `title, expr|points, xRange, yRange, sweep?, area?, xLabel?, yLabel?` |
+| `DiagramScene`       | `title, nodes[{id,label,x(-6..6),y(-3..3),color?}], edges[{from,to,label?}]` |
+| `ComparisonScene`    | `title, left{label,items[2-5]}, right{label,items[2-5]}, caption?` |
+| `LayeredSystemScene` | `title, layers[{label,sub?,color?}][2-5], caption?` |
+| `TimelineScene`      | `title, steps[{label,sub?}][2-5], caption?` |
+| `TerminalScene`      | `title, command, output?, caption?` |
+| `MemoryScene`        | `title, cells[{label?,sub?,color?,highlight?}][≤12], cols?(1-6), caption?` |
+| `FlowScene`          | `title, stages[{label,sub?}][2-5], caption?` (paquet qui traverse) |
+| `BarChartScene`      | `title, bars[{label,value,color?}][2-6], caption?` |
+| `CounterScene`       | `title, value, prefix?, suffix?, label?, decimals?, caption?` |
+
+Transitions inter-scènes : **automatiques** (fond `AmbientBackground` persistant au
+niveau de `MainComposition` + fade in/out par scène = cross-dissolve sans toucher
+au timing → la voix off muxée séquentiellement reste synchro). On n'utilise PAS
+`@remotion/transitions` (qui chevaucherait les scènes et désynchroniserait l'audio).
 
 ### Escape hatch `Custom` (code libre encadré)
 

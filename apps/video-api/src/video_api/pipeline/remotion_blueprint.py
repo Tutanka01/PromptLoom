@@ -76,6 +76,30 @@ _COMPONENT_ALIASES = {
     "cli": "TerminalScene",
     "console": "TerminalScene",
     "command": "TerminalScene",
+    "memory": "MemoryScene",
+    "memoryscene": "MemoryScene",
+    "memorygrid": "MemoryScene",
+    "grid": "MemoryScene",
+    "registers": "MemoryScene",
+    "pagetable": "MemoryScene",
+    "page_table": "MemoryScene",
+    "flow": "FlowScene",
+    "flowscene": "FlowScene",
+    "packet": "FlowScene",
+    "dataflow": "FlowScene",
+    "data_flow": "FlowScene",
+    "pipeline": "FlowScene",
+    "barchart": "BarChartScene",
+    "barchartscene": "BarChartScene",
+    "bar": "BarChartScene",
+    "bars": "BarChartScene",
+    "quantities": "BarChartScene",
+    "benchmark": "BarChartScene",
+    "counter": "CounterScene",
+    "counterscene": "CounterScene",
+    "metric": "CounterScene",
+    "number": "CounterScene",
+    "stat": "CounterScene",
     "custom": "Custom",
     "freeform": "Custom",
     "free": "Custom",
@@ -97,6 +121,10 @@ _PALETTE_LINE = (
     "- LayeredSystemScene: { title: str, layers: [ {label: str, sub?: str, color?: \"#hex\"}, ...(2-5) ], caption?: str }  — stacked bands top->bottom (e.g. App / System Call / Kernel / Hardware)\n"
     "- TimelineScene: { title: str, steps: [ {label: str, sub?: str}, ...(2-5) ], caption?: str }  — left->right sequence / process / lifecycle\n"
     "- TerminalScene: { title: str, command: str, output?: str, caption?: str }  — a shell command typed out + its output\n"
+    "- MemoryScene:  { title: str, cells: [ {label?: str, sub?: str, color?: \"#hex\", highlight?: bool}, ...(up to 12) ], cols?: int(1-6), caption?: str }  — grid of cells: memory, page tables, registers, stack frames\n"
+    "- FlowScene:    { title: str, stages: [ {label: str, sub?: str}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
+    "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
+    "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
     "      A separate expert step writes bespoke React/Remotion code for it. Prefer palette components."
 )
@@ -135,7 +163,9 @@ Rules:
 - Choose the component that fits the sentence: equations->FormulaScene, a function/data->PlotScene,
   code->CodeScene, relationships/systems->DiagramScene, lists/definitions->BulletScene,
   two things contrasted->ComparisonScene, stacked layers (app/kernel/hardware)->LayeredSystemScene,
-  an ordered process/lifecycle->TimelineScene, a shell command + output->TerminalScene.
+  an ordered process/lifecycle->TimelineScene, a shell command + output->TerminalScene,
+  memory/page-tables/registers->MemoryScene, data moving through stages->FlowScene,
+  quantities/benchmarks->BarChartScene, one headline metric->CounterScene.
 - Prefer this richer palette over plain BulletScene whenever a sentence has structure (a contrast,
   layers, ordered steps, or a command) — a varied, topic-specific visual reads far better than lists.
 - Use Custom rarely, only when nothing in the palette fits.
@@ -209,6 +239,43 @@ def _label_items(value: Any, fallback_label: str, narration: str) -> dict[str, A
     else:
         label, items = fallback_label, []
     return {"label": label, "items": items or _bullets_from_narration(narration, 3)}
+
+
+def _norm_cells(value: Any) -> list[dict[str, Any]]:
+    """Coerce MemoryScene cells into {label?, sub?, color?, highlight?}."""
+    out: list[dict[str, Any]] = []
+    if isinstance(value, (list, tuple)):
+        for item in list(value)[:12]:
+            if isinstance(item, dict):
+                cell: dict[str, Any] = {}
+                if item.get("label") is not None:
+                    cell["label"] = str(item["label"])[:14]
+                if item.get("sub"):
+                    cell["sub"] = str(item["sub"])[:18]
+                if isinstance(item.get("color"), str):
+                    cell["color"] = item["color"]
+                if item.get("highlight"):
+                    cell["highlight"] = True
+                out.append(cell or {"label": ""})
+            elif isinstance(item, (str, int, float)):
+                out.append({"label": str(item)[:14]})
+    return out
+
+
+def _norm_bars(value: Any) -> list[dict[str, Any]]:
+    """Coerce BarChartScene bars into {label, value, color?}."""
+    out: list[dict[str, Any]] = []
+    if isinstance(value, (list, tuple)):
+        for item in list(value)[:6]:
+            if isinstance(item, dict):
+                bar: dict[str, Any] = {
+                    "label": (str(item.get("label") or item.get("name") or "?").strip() or "?")[:16],
+                    "value": _to_float(item.get("value"), 0.0),
+                }
+                if isinstance(item.get("color"), str):
+                    bar["color"] = item["color"]
+                out.append(bar)
+    return out
 
 
 def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap: int = 40) -> list[dict[str, Any]]:
@@ -285,6 +352,29 @@ def _normalise_props(scene: dict[str, Any]) -> dict[str, Any]:
         output = props.get("output")
         if output is not None:
             props["output"] = str(output)[:500]
+    elif component == "MemoryScene":
+        cells = _norm_cells(props.get("cells"))
+        props["cells"] = cells or [{"label": f"0x{i:X}"} for i in range(8)]
+        props["cols"] = max(1, min(6, int(_to_float(props.get("cols"), 4))))
+    elif component == "FlowScene":
+        stages = _norm_records(props.get("stages"), ("label", "name", "title"), ("sub",), cap=24)
+        props["stages"] = stages or [{"label": b} for b in _bullets_from_narration(narration, 4)]
+    elif component == "BarChartScene":
+        bars = _norm_bars(props.get("bars"))
+        if not bars:
+            sentences = _bullets_from_narration(narration, 4)
+            bars = [
+                {"label": (s.split()[0] if s.split() else "?")[:12], "value": float((i + 2) * 2)}
+                for i, s in enumerate(sentences)
+            ]
+        props["bars"] = bars
+    elif component == "CounterScene":
+        props["value"] = _to_float(props.get("value"), 100.0)
+        for key in ("prefix", "suffix", "label"):
+            if props.get(key) is not None:
+                props[key] = str(props[key])[:40]
+        if props.get("decimals") is not None:
+            props["decimals"] = max(0, min(3, int(_to_float(props.get("decimals"), 0))))
     return props
 
 

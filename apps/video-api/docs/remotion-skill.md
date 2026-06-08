@@ -221,45 +221,11 @@ export const MyComp: React.FC = () => {
 The "Series.Sequence" component works like "Sequence", but has no "from" prop.
 Instead, it has a "offset" prop shifts the start by a number of frames.
 
-For displaying multiple elements after another another and having a transition inbetween, the "TransitionSeries" component from "@remotion/transitions" can be used.
-
-```tsx
-import {
-	linearTiming,
-	springTiming,
-	TransitionSeries,
-} from '@remotion/transitions';
-
-import {fade} from '@remotion/transitions/fade';
-import {wipe} from '@remotion/transitions/wipe';
-
-export const MyComp: React.FC = () => {
-	return (
-		<TransitionSeries>
-			<TransitionSeries.Sequence durationInFrames={60}>
-				<Fill color="blue" />
-			</TransitionSeries.Sequence>
-			<TransitionSeries.Transition
-				timing={springTiming({config: {damping: 200}})}
-				presentation={fade()}
-			/>
-			<TransitionSeries.Sequence durationInFrames={60}>
-				<Fill color="black" />
-			</TransitionSeries.Sequence>
-			<TransitionSeries.Transition
-				timing={linearTiming({durationInFrames: 30})}
-				presentation={wipe()}
-			/>
-			<TransitionSeries.Sequence durationInFrames={60}>
-				<Fill color="white" />
-			</TransitionSeries.Sequence>
-		</TransitionSeries>
-	);
-};
-```
-
-"TransitionSeries.Sequence" works like "Series.Sequence" but has no "offset" prop.
-The order of tags is important, "TransitionSeries.Transition" must be inbetween "TransitionSeries.Sequence" tags.
+Note on transitions BETWEEN scenes: do NOT use `@remotion/transitions` /
+`TransitionSeries`. In this project each scene is its own `<Sequence>` and the
+composition cross-dissolves them automatically (persistent background + edge
+fades) — overlapping transitions would desync the voiceover. You only animate
+WITHIN your one scene, fading your content in at the start and out near `p=1`.
 
 Remotion needs all of the React code to be deterministic. Therefore, it is forbidden to use the Math.random() API.
 If randomness is requested, the "random()" function from "remotion" should be used and a static seed should be passed to it.
@@ -462,7 +428,9 @@ the render):
    - Remotion: `AbsoluteFill`, `Sequence`, `Series`, `Img`, `interpolate`,
      `interpolateColors`, `spring`, `useCurrentFrame`, `useVideoConfig`, `Easing`.
    - Catalog: `AmbientBackground`, `MathFormula`, `CodeBlock`, `Plot`,
-     `TextReveal`, `TypewriterText`, `BlurReveal`, `ScaleBounce`.
+     `TextReveal`, `TypewriterText`, `BlurReveal`, `ScaleBounce`,
+     `MemoryGrid` (cells: memory/page-tables/registers), `FlowToken` (packet on
+     a path), `BarChart`, `Counter`.
    - Layout: `TitleBar`, `Card`, `CodeCard`, `Pill`, `KernelBadge`, `HardwareBox`,
      `Zone`, `Arrow`, `Terminal`, `CrossMark`, `Caption`, `Background`.
    - Tokens/coords: `colors`, `fonts`, `fontSize`, `DIM_OPACITY`, `mx`, `my`,

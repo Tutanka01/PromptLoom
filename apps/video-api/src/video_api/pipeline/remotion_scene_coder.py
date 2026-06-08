@@ -71,7 +71,7 @@ Hard rules (a violation makes the scene unusable):
 - Import ONLY from "react", "remotion", and the project barrel "../../lib". Never import anything else, never read files or the network.
 - The scene length in frames is the `dur` prop. Drive every animation from `const frame = useCurrentFrame()` and `const p = frame / dur` (0..1). Fade the whole scene out near p=1 (use `tailFade(p)` from ../../lib).
 - 1920x1080 at 60fps. Wrap content in <AbsoluteFill>. Use `colors`, `mx(x)`, `my(y)` from ../../lib for the dark theme + coordinate mapping (x in [-6,6], y in [-3,3], origin centered, y up).
-- Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
+- Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
 
 

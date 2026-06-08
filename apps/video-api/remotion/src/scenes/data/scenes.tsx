@@ -5,6 +5,10 @@ import { MathFormula } from "../../catalog/MathFormula";
 import { CodeBlock } from "../../catalog/CodeBlock";
 import { Plot } from "../../catalog/Plot";
 import { TextReveal, BlurReveal } from "../../catalog/text";
+import { MemoryGrid, type MemoryCell } from "../../catalog/MemoryGrid";
+import { FlowToken } from "../../catalog/FlowToken";
+import { BarChart, type Bar } from "../../catalog/BarChart";
+import { Counter } from "../../catalog/Counter";
 import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
 import { colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
 import { appear, dimAt, tailFade } from "../../style/anim";
@@ -364,6 +368,84 @@ export const TerminalScene: React.FC<Base & { command: string; output?: string }
           {output}
         </div>
       ) : null}
+    </Shell>
+  );
+};
+
+/** A grid of labelled cells: memory, page tables, registers, stack frames. */
+export const MemoryScene: React.FC<Base & { cells: MemoryCell[]; cols?: number }> = ({ dur, accent, title, caption, cells, cols }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      <MemoryGrid cells={cells} cols={cols ?? 4} x={0} y={0.1} reveal={appear(p, 0.12, 0.7)} accent={ac} />
+    </Shell>
+  );
+};
+
+/** A packet travelling left-to-right through a row of stages (data flow / syscall path). */
+export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string }[] }> = ({ dur, accent, title, caption, stages }) => {
+  const { p } = useP(dur);
+  const items = (stages ?? []).slice(0, 5);
+  const n = Math.max(1, items.length);
+  const ac = accent ?? colors.success;
+  const x0 = -5;
+  const x1 = 5;
+  const span = n > 1 ? (x1 - x0) / (n - 1) : 0;
+  const xs = items.map((_, i) => (n > 1 ? x0 + i * span : 0));
+  const y = 0.2;
+  const travel = appear(p, 0.22, 0.9); // 0..1 across the whole row
+  const segF = travel * (n - 1);
+  const seg = Math.max(0, Math.min(n - 2, Math.floor(segF)));
+  const segP = n > 1 ? segF - seg : 0;
+  const active = Math.min(n - 1, Math.round(travel * (n - 1)));
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      {items.slice(0, -1).map((_, i) => (
+        <Arrow key={i} from={[xs[i], y]} to={[xs[i + 1], y]} color={colors.edge} width={3} progress={appear(p, 0.1, 0.25)} />
+      ))}
+      {items.map((st, i) => {
+        const op = appear(p, 0.12 + i * 0.06, 0.22 + i * 0.06);
+        return (
+          <React.Fragment key={i}>
+            <div style={{ opacity: op }}>
+              <Card x={xs[i]} y={y} w={2.0} h={1.0} accent={ac} glow={i === active ? 0.85 : 0} fontPx={24}>{st.label}</Card>
+            </div>
+            {st.sub ? <Caption x={xs[i]} y={y - 0.95} label={st.sub} color={colors.muted} size={20} width={2.6} opacity={op} /> : null}
+          </React.Fragment>
+        );
+      })}
+      {n > 1 ? <FlowToken from={[xs[seg], y + 0.85]} to={[xs[seg + 1], y + 0.85]} progress={segP} color={ac} opacity={appear(p, 0.2, 0.3)} /> : null}
+    </Shell>
+  );
+};
+
+/** Animated bar chart for quantities / benchmarks / comparisons. */
+export const BarChartScene: React.FC<Base & { bars: Bar[] }> = ({ dur, accent, title, caption, bars }) => {
+  const { p } = useP(dur);
+  return (
+    <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
+      <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(1.9), display: "flex", justifyContent: "center" }}>
+        <BarChart bars={bars} grow={appear(p, 0.15, 0.6)} />
+      </div>
+    </Shell>
+  );
+};
+
+/** A single big animated number for a metric (throughput, size, count, latency). */
+export const CounterScene: React.FC<
+  Base & { value: number; prefix?: string; suffix?: string; label?: string; decimals?: number }
+> = ({ dur, accent, title, caption, value, prefix, suffix, label, decimals }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.kernel;
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption} accentDefault={colors.kernel}>
+      <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(0.7), display: "flex", flexDirection: "column", alignItems: "center", gap: 24 }}>
+        <Counter value={value} progress={appear(p, 0.15, 0.7)} prefix={prefix} suffix={suffix} decimals={decimals ?? 0} color={ac} />
+        {label ? (
+          <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 36, fontWeight: 600, opacity: appear(p, 0.3, 0.5) }}>{label}</span>
+        ) : null}
+      </div>
     </Shell>
   );
 };

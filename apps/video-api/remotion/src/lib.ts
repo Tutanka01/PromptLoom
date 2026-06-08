@@ -34,6 +34,12 @@ export { MathFormula } from "./catalog/MathFormula";
 export { CodeBlock } from "./catalog/CodeBlock";
 export { Plot } from "./catalog/Plot";
 export { TextReveal, TypewriterText, BlurReveal, ScaleBounce } from "./catalog/text";
+export { MemoryGrid } from "./catalog/MemoryGrid";
+export type { MemoryCell } from "./catalog/MemoryGrid";
+export { FlowToken } from "./catalog/FlowToken";
+export { BarChart } from "./catalog/BarChart";
+export type { Bar } from "./catalog/BarChart";
+export { Counter } from "./catalog/Counter";
 
 // --- Layout primitives -----------------------------------------------------
 export {

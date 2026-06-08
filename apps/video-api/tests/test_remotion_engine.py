@@ -34,6 +34,8 @@ _PROMISED_LIB_EXPORTS = [
     "AbsoluteFill", "tailFade", "colors", "mx", "my",
     "AmbientBackground", "MathFormula", "CodeBlock", "Plot",
     "TitleBar", "Card", "Arrow", "Caption", "TextReveal", "BlurReveal",
+    "MemoryGrid", "FlowToken", "BarChart", "Counter", "Zone", "Terminal",
+    "KernelBadge", "HardwareBox",
 ]
 
 
@@ -141,6 +143,38 @@ def test_normalise_terminal_and_empty_fallbacks() -> None:
     assert empty["props"]["left"]["items"] and empty["props"]["right"]["items"]
     bad_layers = normalize_remotion_blueprint(_wrap_scene("layers", {"layers": "nonsense"}), 240)["scenes"][0]
     assert bad_layers["props"]["layers"]  # fell back to narration-derived layers
+
+
+def test_normalise_memory_flow_bar_counter() -> None:
+    mem = normalize_remotion_blueprint(
+        _wrap_scene("memory", {"cells": [{"label": "0x00", "highlight": True}, "0x08", {"label": "0x10", "sub": "PTE"}], "cols": 9}), 240
+    )["scenes"][0]
+    assert mem["component"] == "MemoryScene"
+    assert mem["props"]["cells"][0] == {"label": "0x00", "highlight": True}
+    assert mem["props"]["cells"][1] == {"label": "0x08"}
+    assert mem["props"]["cols"] == 6  # clamped 1..6
+
+    flow = normalize_remotion_blueprint(_wrap_scene("packet", {"stages": [{"label": "lib"}, "trap", {"name": "kernel"}]}), 240)["scenes"][0]
+    assert flow["component"] == "FlowScene"
+    assert flow["props"]["stages"] == [{"label": "lib"}, {"label": "trap"}, {"label": "kernel"}]
+
+    bar = normalize_remotion_blueprint(_wrap_scene("bars", {"bars": [{"label": "read", "value": "12"}, {"label": "write", "value": 8}]}), 240)["scenes"][0]
+    assert bar["component"] == "BarChartScene"
+    assert bar["props"]["bars"] == [{"label": "read", "value": 12.0}, {"label": "write", "value": 8.0}]
+
+    cnt = normalize_remotion_blueprint(_wrap_scene("metric", {"value": "1000000", "suffix": "/s", "label": "syscalls"}), 240)["scenes"][0]
+    assert cnt["component"] == "CounterScene"
+    assert cnt["props"]["value"] == 1000000.0 and cnt["props"]["suffix"] == "/s"
+
+
+def test_normalise_new_scenes_empty_fallbacks() -> None:
+    # garbage/empty props must still yield renderable structure (never crash render)
+    mem = normalize_remotion_blueprint(_wrap_scene("memory", {"cells": "nope"}), 240)["scenes"][0]
+    assert mem["props"]["cells"]  # fell back to address cells
+    bar = normalize_remotion_blueprint(_wrap_scene("bars", {}), 240)["scenes"][0]
+    assert bar["props"]["bars"] and all("value" in b for b in bar["props"]["bars"])
+    cnt = normalize_remotion_blueprint(_wrap_scene("counter", {}), 240)["scenes"][0]
+    assert isinstance(cnt["props"]["value"], float)
 
 
 def test_normalise_narration_field_aliases() -> None:

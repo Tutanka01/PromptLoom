@@ -1,11 +1,15 @@
 import React from "react";
 import {
+  BarChartScene,
   BulletScene,
   CodeScene,
   ComparisonScene,
+  CounterScene,
   DiagramScene,
+  FlowScene,
   FormulaScene,
   LayeredSystemScene,
+  MemoryScene,
   PlotScene,
   TerminalScene,
   TimelineScene,
@@ -29,4 +33,8 @@ export const SCENE_COMPONENTS: Record<string, React.FC<Record<string, unknown>>>
   LayeredSystemScene: LayeredSystemScene as React.FC<Record<string, unknown>>,
   TimelineScene: TimelineScene as React.FC<Record<string, unknown>>,
   TerminalScene: TerminalScene as React.FC<Record<string, unknown>>,
+  MemoryScene: MemoryScene as React.FC<Record<string, unknown>>,
+  FlowScene: FlowScene as React.FC<Record<string, unknown>>,
+  BarChartScene: BarChartScene as React.FC<Record<string, unknown>>,
+  CounterScene: CounterScene as React.FC<Record<string, unknown>>,
 };
