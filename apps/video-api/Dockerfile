@@ -21,8 +21,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     # Readable UI font for slides. DejaVu Sans renders "rn" as "m" at small sizes
     # ("internet" -> "intemet"); Inter avoids that and looks more professional.
+    # JetBrains Mono is the code/mono face the Remotion tokens ask for; without it
+    # CodeScene/TerminalScene fall back to DejaVu Sans Mono. Both faces are named
+    # in remotion/src/style/tokens.ts (fonts.sans / fonts.mono) and render in the
+    # headless Chrome with no render-time network fetch.
     fontconfig \
     fonts-inter \
+    fonts-jetbrains-mono \
     # Manim MathTex/Tex needs a LaTeX toolchain + dvisvgm (not just latex-base).
     dvisvgm \
     texlive-latex-base \

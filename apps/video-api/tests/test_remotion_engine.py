@@ -24,6 +24,17 @@ from video_api.pipeline.remotion_scene_coder import _validate_static
 from video_api.schemas import RemotionBlueprint
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+REMOTION_DIR = REPO_ROOT / "apps" / "video-api" / "remotion"
+
+# Symbols the scene-coder prompt (remotion_scene_coder._SYSTEM) advertises as
+# importable "from ../../lib". The barrel MUST re-export every one of them, or a
+# Custom scene that follows the prompt fails `tsc` and silently falls back to a
+# BulletScene — which is exactly the bug this guards against.
+_PROMISED_LIB_EXPORTS = [
+    "AbsoluteFill", "tailFade", "colors", "mx", "my",
+    "AmbientBackground", "MathFormula", "CodeBlock", "Plot",
+    "TitleBar", "Card", "Arrow", "Caption", "TextReveal", "BlurReveal",
+]
 
 
 def _settings() -> Settings:
@@ -81,6 +92,55 @@ def test_normalise_expr_to_points_and_drops_expr() -> None:
     assert s0["component"] == "PlotScene"  # alias coerced
     assert "points" in s0["props"] and "expr" not in s0["props"]
     assert s0["key"] == "Scene1_xEN"
+
+
+def _wrap_scene(component: str, props: dict, narration: str = None) -> dict:
+    return {
+        "title": "T", "theme": "cs", "slug": "t", "target_duration_seconds": 240,
+        "audience": "learners here", "teaching_goal": "goal goal goal goal",
+        "style_notes": "dark clean style notes here",
+        "scenes": [{
+            "key": "Scene1_x", "title": "Hook",
+            "narration": narration or ("Sentence one here. Sentence two here. Sentence three here. " * 4),
+            "duration_seconds": 30, "component": component, "props": props,
+        }],
+    }
+
+
+def test_normalise_comparison_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("comparison", {"left": {"label": "User", "items": ["a", "b"]}, "right": ["x", "y"]}), 240
+    )
+    s0 = out["scenes"][0]
+    assert s0["component"] == "ComparisonScene"  # alias coerced
+    assert s0["props"]["left"] == {"label": "User", "items": ["a", "b"]}
+    assert s0["props"]["right"]["label"] == "B" and s0["props"]["right"]["items"] == ["x", "y"]
+
+
+def test_normalise_layered_and_timeline_records() -> None:
+    layered = normalize_remotion_blueprint(
+        _wrap_scene("layers", {"layers": ["Application", {"label": "Kernel", "sub": "ring 0"}, {"name": "Hardware"}]}), 240
+    )["scenes"][0]
+    assert layered["component"] == "LayeredSystemScene"
+    assert layered["props"]["layers"] == [
+        {"label": "Application"}, {"label": "Kernel", "sub": "ring 0"}, {"label": "Hardware"}
+    ]
+    timeline = normalize_remotion_blueprint(
+        _wrap_scene("timeline", {"steps": [{"title": "BIOS"}, "Boot"]}), 240
+    )["scenes"][0]
+    assert timeline["component"] == "TimelineScene"
+    assert timeline["props"]["steps"] == [{"label": "BIOS"}, {"label": "Boot"}]
+
+
+def test_normalise_terminal_and_empty_fallbacks() -> None:
+    term = normalize_remotion_blueprint(_wrap_scene("shell", {"cmd": "ls -la", "output": "a\nb"}), 240)["scenes"][0]
+    assert term["component"] == "TerminalScene"
+    assert term["props"]["command"] == "ls -la" and term["props"]["output"] == "a\nb"
+    # garbage/empty props must still yield renderable, non-empty structure
+    empty = normalize_remotion_blueprint(_wrap_scene("comparison", {}), 240)["scenes"][0]
+    assert empty["props"]["left"]["items"] and empty["props"]["right"]["items"]
+    bad_layers = normalize_remotion_blueprint(_wrap_scene("layers", {"layers": "nonsense"}), 240)["scenes"][0]
+    assert bad_layers["props"]["layers"]  # fell back to narration-derived layers
 
 
 def test_normalise_narration_field_aliases() -> None:
@@ -166,6 +226,10 @@ def test_fallback_custom_to_palette(tmp_path) -> None:
 # Scene-coder static guards
 # --------------------------------------------------------------------------- #
 def test_scene_coder_accepts_valid_component() -> None:
+    # NOTE: this only exercises the string-level allow-list. Whether the imported
+    # symbols actually resolve is covered by `test_lib_barrel_*` +
+    # `test_remotion_project_typechecks` (the previously-missing guard that let
+    # the dead `../../lib` barrel ship unnoticed).
     code = (
         'import React from "react";\n'
         'import { useCurrentFrame } from "remotion";\n'
@@ -196,6 +260,48 @@ def test_scene_coder_requires_exact_export_name() -> None:
     code = 'export const WrongName: React.FC<any> = () => null;'
     with pytest.raises(ValueError):
         _validate_static(code, "Scene1_xEN")
+
+
+# --------------------------------------------------------------------------- #
+# Custom-scene import surface: the `../../lib` barrel
+# --------------------------------------------------------------------------- #
+def test_lib_barrel_exists() -> None:
+    assert (REMOTION_DIR / "src" / "lib.ts").exists(), (
+        "remotion/src/lib.ts is the ONLY import surface Custom scenes may use; "
+        "without it every Custom scene fails tsc and falls back to BulletScene"
+    )
+
+
+def test_lib_barrel_exports_promised_symbols() -> None:
+    import re
+
+    text = (REMOTION_DIR / "src" / "lib.ts").read_text(encoding="utf-8")
+    exported: set[str] = set()
+    for block in re.findall(r"export\s*(?:type\s*)?\{([^}]*)\}", text):
+        for raw in block.split(","):
+            name = raw.strip().split(" as ")[0].strip()
+            if name:
+                exported.add(name)
+    missing = [s for s in _PROMISED_LIB_EXPORTS if s not in exported]
+    assert not missing, f"lib.ts barrel is missing promised exports: {missing}"
+
+
+def test_remotion_project_typechecks() -> None:
+    """`tsc --noEmit` over the whole Remotion project: proves lib.ts compiles and
+    every palette/catalog/scene file is type-correct. Auto-skips when the Node
+    toolchain isn't present (local Python-only runs); always runs in the Docker
+    `test` image, which installs node + node_modules."""
+    import shutil
+
+    if shutil.which("npx") is None or not (REMOTION_DIR / "node_modules").exists():
+        pytest.skip("Node toolchain / node_modules not available")
+    result = subprocess.run(
+        ["npx", "--no-install", "tsc", "--noEmit"],
+        cwd=REMOTION_DIR,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # --------------------------------------------------------------------------- #

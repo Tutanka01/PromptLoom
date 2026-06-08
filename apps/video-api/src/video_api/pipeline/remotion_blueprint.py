@@ -53,6 +53,29 @@ _COMPONENT_ALIASES = {
     "diagram": "DiagramScene",
     "diagramscene": "DiagramScene",
     "graph_diagram": "DiagramScene",
+    "comparison": "ComparisonScene",
+    "comparisonscene": "ComparisonScene",
+    "compare": "ComparisonScene",
+    "comparison_table": "ComparisonScene",
+    "table": "ComparisonScene",
+    "vs": "ComparisonScene",
+    "layered_system": "LayeredSystemScene",
+    "layeredsystemscene": "LayeredSystemScene",
+    "layers": "LayeredSystemScene",
+    "layer": "LayeredSystemScene",
+    "stack": "LayeredSystemScene",
+    "system_layers": "LayeredSystemScene",
+    "timeline": "TimelineScene",
+    "timelinescene": "TimelineScene",
+    "steps": "TimelineScene",
+    "process": "TimelineScene",
+    "sequence": "TimelineScene",
+    "terminal": "TerminalScene",
+    "terminalscene": "TerminalScene",
+    "shell": "TerminalScene",
+    "cli": "TerminalScene",
+    "console": "TerminalScene",
+    "command": "TerminalScene",
     "custom": "Custom",
     "freeform": "Custom",
     "free": "Custom",
@@ -69,6 +92,11 @@ _PALETTE_LINE = (
     "- DiagramScene: { title: str,\n"
     "                  nodes: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), color?: \"#hex\"} ],\n"
     "                  edges: [ {from: id, to: id, color?: \"#hex\", label?: str} ], caption?: str }\n"
+    "- ComparisonScene: { title: str, left: {label: str, items: [str, ...(2-5)]},\n"
+    "                  right: {label: str, items: [str, ...(2-5)]}, caption?: str }  — two columns side by side (user vs kernel, before vs after)\n"
+    "- LayeredSystemScene: { title: str, layers: [ {label: str, sub?: str, color?: \"#hex\"}, ...(2-5) ], caption?: str }  — stacked bands top->bottom (e.g. App / System Call / Kernel / Hardware)\n"
+    "- TimelineScene: { title: str, steps: [ {label: str, sub?: str}, ...(2-5) ], caption?: str }  — left->right sequence / process / lifecycle\n"
+    "- TerminalScene: { title: str, command: str, output?: str, caption?: str }  — a shell command typed out + its output\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
     "      A separate expert step writes bespoke React/Remotion code for it. Prefer palette components."
 )
@@ -105,7 +133,11 @@ Rules:
 - Open with a TitleScene and end with a BulletScene recap.
 - Scene keys are ordered Scene1_..., Scene2_..., each ending in EN (e.g. Scene3_LimitEN).
 - Choose the component that fits the sentence: equations->FormulaScene, a function/data->PlotScene,
-  code->CodeScene, relationships/systems->DiagramScene, lists/definitions->BulletScene.
+  code->CodeScene, relationships/systems->DiagramScene, lists/definitions->BulletScene,
+  two things contrasted->ComparisonScene, stacked layers (app/kernel/hardware)->LayeredSystemScene,
+  an ordered process/lifecycle->TimelineScene, a shell command + output->TerminalScene.
+- Prefer this richer palette over plain BulletScene whenever a sentence has structure (a contrast,
+  layers, ordered steps, or a command) — a varied, topic-specific visual reads far better than lists.
 - Use Custom rarely, only when nothing in the palette fits.
 Palette hints: user=#3A86FF, gold=#FFBE0B, success=#06D6A0, purple=#9B5DE5, danger=#FB5607."""
 
@@ -167,6 +199,44 @@ def _bullets_from_narration(text: str, count: int = 3) -> list[str]:
     return bullets or ["Key idea"]
 
 
+def _label_items(value: Any, fallback_label: str, narration: str) -> dict[str, Any]:
+    """Coerce a comparison column into {label, items[<=5]}, tolerating LLM variants."""
+    if isinstance(value, dict):
+        label = (str(value.get("label") or value.get("title") or fallback_label).strip() or fallback_label)[:40]
+        items = _as_str_list(value.get("items") or value.get("bullets") or value.get("points"))[:5]
+    elif isinstance(value, (list, tuple)):
+        label, items = fallback_label, _as_str_list(value)[:5]
+    else:
+        label, items = fallback_label, []
+    return {"label": label, "items": items or _bullets_from_narration(narration, 3)}
+
+
+def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap: int = 40) -> list[dict[str, Any]]:
+    """Coerce a list of {label, ...} records (for layers/steps); skip empties."""
+    out: list[dict[str, Any]] = []
+    if isinstance(value, (list, tuple)):
+        for item in list(value)[:5]:
+            if isinstance(item, dict):
+                label = ""
+                for k in keys:
+                    if item.get(k):
+                        label = str(item[k]).strip()[:cap]
+                        break
+                if not label:
+                    continue
+                record: dict[str, Any] = {"label": label}
+                for k in extra:
+                    if k == "color":
+                        if isinstance(item.get("color"), str):
+                            record["color"] = item["color"]
+                    elif item.get(k):
+                        record[k] = str(item[k]).strip()[:48]
+                out.append(record)
+            elif isinstance(item, str) and item.strip():
+                out.append({"label": item.strip()[:cap]})
+    return out
+
+
 def _normalise_props(scene: dict[str, Any]) -> dict[str, Any]:
     component = scene.get("component")
     props = dict(scene.get("props") or {})
@@ -201,6 +271,20 @@ def _normalise_props(scene: dict[str, Any]) -> dict[str, Any]:
                 node["y"] = max(-3.0, min(3.0, _to_float(node.get("y"), 0.0)))
         props["nodes"] = nodes
         props["edges"] = props.get("edges") if isinstance(props.get("edges"), list) else []
+    elif component == "ComparisonScene":
+        props["left"] = _label_items(props.get("left"), "A", narration)
+        props["right"] = _label_items(props.get("right"), "B", narration)
+    elif component == "LayeredSystemScene":
+        layers = _norm_records(props.get("layers"), ("label", "name", "title"), ("sub", "color"))
+        props["layers"] = layers or [{"label": b} for b in _bullets_from_narration(narration, 4)]
+    elif component == "TimelineScene":
+        steps = _norm_records(props.get("steps"), ("label", "name", "title"), ("sub",), cap=36)
+        props["steps"] = steps or [{"label": b} for b in _bullets_from_narration(narration, 4)]
+    elif component == "TerminalScene":
+        props["command"] = str(props.get("command") or props.get("cmd") or "echo hello").strip()[:120]
+        output = props.get("output")
+        if output is not None:
+            props["output"] = str(output)[:500]
     return props
 
 

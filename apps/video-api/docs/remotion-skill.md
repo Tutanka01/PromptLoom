@@ -416,14 +416,19 @@ Compose these; they cover most STEM explanations.
    decorative motion.
 4. **Focus / dim.** Dim (opacity ~0.32) everything except the element under
    discussion; add a soft glow to the focus. No permanent highlight on all.
-5. **Scene transitions.** Join scenes with `@remotion/transitions`
-   (`TransitionSeries` + `fade`/`slide`/`wipe`), not hard cuts.
+5. **Scene transitions are automatic.** The composition cross-dissolves between
+   scenes (persistent ambient background + fade in/out at the edges). You do NOT
+   add transitions yourself — just fade your own content in at the start and out
+   near `p=1` with `tailFade(p)`.
 
 ## Synchronisation contract (REQUIRED)
 
-A scene receives its duration from `useVideoConfig().durationInFrames`. Drive
-every beat off normalized progress `p = frame / durationInFrames` (or off
-`spring`/`interpolate` on `frame`). Aim for 5–7 beats; keep the image evolving
+A scene receives its own length in frames as the `dur` prop (NOT
+`useVideoConfig().durationInFrames`, which is the whole video). Export
+`export const {Key}: React.FC<any> = ({ dur, ...props }) => { ... }` and drive
+every beat off normalized progress `p = frame / dur` (or off
+`spring`/`interpolate` on `frame`). Fade the whole scene out near `p=1` with
+`tailFade(p)`. Aim for 5–7 beats; keep the image evolving
 until ~85–90% of the scene, then a short settle. Never end on a long static
 hold. Durations come from `audio/en/durations.json` — never hardcode seconds.
 
@@ -447,7 +452,31 @@ hold. Durations come from `audio/en/durations.json` — never hardcode seconds.
 
 ## What you may import
 
-`react`, `remotion`, `@remotion/transitions`, `@remotion/shapes`, `shiki`,
-`katex`, and the project library: `src/components/primitives` and
-`src/catalog/*` (see `remotion-catalog.md` for the full proposable palette). Do
-NOT import `fs`, `child_process`, `eval`, network clients, or anything else.
+ONLY three sources, enforced by the validator (anything else is rejected before
+the render):
+
+1. `react`
+2. `remotion`
+3. the project barrel **`"../../lib"`** — the single, type-checked design-system
+   surface. It re-exports everything you need:
+   - Remotion: `AbsoluteFill`, `Sequence`, `Series`, `Img`, `interpolate`,
+     `interpolateColors`, `spring`, `useCurrentFrame`, `useVideoConfig`, `Easing`.
+   - Catalog: `AmbientBackground`, `MathFormula`, `CodeBlock`, `Plot`,
+     `TextReveal`, `TypewriterText`, `BlurReveal`, `ScaleBounce`.
+   - Layout: `TitleBar`, `Card`, `CodeCard`, `Pill`, `KernelBadge`, `HardwareBox`,
+     `Zone`, `Arrow`, `Terminal`, `CrossMark`, `Caption`, `Background`.
+   - Tokens/coords: `colors`, `fonts`, `fontSize`, `DIM_OPACITY`, `mx`, `my`,
+     `mu`, `atCenter`, `WIDTH`, `HEIGHT`.
+   - Beats: `beat`, `appear`, `dimAt`, `tailFade`.
+
+```tsx
+import React from "react";
+import { useCurrentFrame } from "remotion";
+import { AbsoluteFill, AmbientBackground, colors, mx, my, tailFade, dimAt } from "../../lib";
+```
+
+Do NOT import `@remotion/transitions`, `@remotion/shapes`, `shiki`, `katex`,
+`src/catalog/*`, `src/components/*`, `fs`, `child_process`, `eval`, network
+clients, or anything else — those resolve outside the barrel and the scene will
+be rejected. (Transitions between scenes are handled by the composition, not by
+individual scenes.)

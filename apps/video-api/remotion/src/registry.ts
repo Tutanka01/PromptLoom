@@ -2,9 +2,13 @@ import React from "react";
 import {
   BulletScene,
   CodeScene,
+  ComparisonScene,
   DiagramScene,
   FormulaScene,
+  LayeredSystemScene,
   PlotScene,
+  TerminalScene,
+  TimelineScene,
   TitleScene,
 } from "./scenes/data/scenes";
 
@@ -21,4 +25,8 @@ export const SCENE_COMPONENTS: Record<string, React.FC<Record<string, unknown>>>
   CodeScene: CodeScene as React.FC<Record<string, unknown>>,
   PlotScene: PlotScene as React.FC<Record<string, unknown>>,
   DiagramScene: DiagramScene as React.FC<Record<string, unknown>>,
+  ComparisonScene: ComparisonScene as React.FC<Record<string, unknown>>,
+  LayeredSystemScene: LayeredSystemScene as React.FC<Record<string, unknown>>,
+  TimelineScene: TimelineScene as React.FC<Record<string, unknown>>,
+  TerminalScene: TerminalScene as React.FC<Record<string, unknown>>,
 };

@@ -276,6 +276,10 @@ REMOTION_PALETTE = (
     "CodeScene",
     "PlotScene",
     "DiagramScene",
+    "ComparisonScene",
+    "LayeredSystemScene",
+    "TimelineScene",
+    "TerminalScene",
 )
 
 RemotionComponent = Literal[
@@ -285,6 +289,10 @@ RemotionComponent = Literal[
     "CodeScene",
     "PlotScene",
     "DiagramScene",
+    "ComparisonScene",
+    "LayeredSystemScene",
+    "TimelineScene",
+    "TerminalScene",
     "Custom",
 ]
 

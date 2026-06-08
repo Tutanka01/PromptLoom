@@ -5,14 +5,20 @@ import { MathFormula } from "../../catalog/MathFormula";
 import { CodeBlock } from "../../catalog/CodeBlock";
 import { Plot } from "../../catalog/Plot";
 import { TextReveal, BlurReveal } from "../../catalog/text";
-import { Arrow, Caption, Card, TitleBar } from "../../components/primitives";
-import { colors, mx, my } from "../../style/tokens";
+import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
+import { colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
+import { appear, dimAt, tailFade } from "../../style/anim";
 
 /**
  * Data-driven STEM scene templates. Each reads plain props (no code) so a
  * blueprint produced by the LLM — or a deterministic builder — can render a real
  * video by *composing the tested library*. `dur` is the scene's length in
  * frames (injected by MainComposition); beats are driven off p = frame / dur.
+ *
+ * Beat/cue helpers come from `style/anim` (smoothstep easing, shared with the
+ * Custom-scene barrel). Each scene fades its content IN at the start and OUT
+ * near the end; the composition's persistent AmbientBackground shows through the
+ * dip, so scenes cross-dissolve over a continuous background.
  */
 
 type Base = { dur: number; accent?: string; title?: string; caption?: string };
@@ -21,9 +27,9 @@ const useP = (dur: number) => {
   const frame = useCurrentFrame();
   return { frame, p: frame / dur };
 };
-const fadeTail = (p: number) => interpolate(p, [0.95, 1], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-const inOp = (p: number, a: number, b: number) =>
-  interpolate(p, [a, b], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+// Whole-scene envelope: dissolve in over the first ~6%, hold, dissolve out over
+// the last ~7%. Multiplying gives a clean cross-dissolve with the next scene.
+const envelope = (p: number) => appear(p, 0, 0.06) * tailFade(p, 0.93);
 
 const Shell: React.FC<Base & { children: React.ReactNode; accentDefault?: string }> = ({
   dur,
@@ -36,12 +42,12 @@ const Shell: React.FC<Base & { children: React.ReactNode; accentDefault?: string
   const { p } = useP(dur);
   const ac = accent ?? accentDefault;
   return (
-    <AbsoluteFill style={{ opacity: fadeTail(p) }}>
+    <AbsoluteFill style={{ opacity: envelope(p) }}>
       <AmbientBackground accent={ac} />
-      {title ? <TitleBar label={title} opacity={inOp(p, 0, 0.08)} /> : null}
+      {title ? <TitleBar label={title} opacity={appear(p, 0, 0.08)} /> : null}
       {children}
       {caption ? (
-        <Caption x={0} y={-3.05} label={caption} color={colors.muted} size={28} opacity={inOp(p, 0.55, 0.68)} width={13} />
+        <Caption x={0} y={-3.05} label={caption} color={colors.muted} size={28} opacity={appear(p, 0.55, 0.68)} width={13} />
       ) : null}
     </AbsoluteFill>
   );
@@ -51,12 +57,12 @@ const Shell: React.FC<Base & { children: React.ReactNode; accentDefault?: string
 export const TitleScene: React.FC<Base & { subtitle?: string }> = ({ dur, accent, title = "", subtitle }) => {
   const { frame, p } = useP(dur);
   return (
-    <AbsoluteFill style={{ opacity: fadeTail(p), alignItems: "center", justifyContent: "center" }}>
+    <AbsoluteFill style={{ opacity: envelope(p), alignItems: "center", justifyContent: "center" }}>
       <AmbientBackground accent={accent ?? colors.purple} />
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 30 }}>
         <TextReveal text={title} fontSize={84} color={colors.text} staggerDelay={4} />
         {subtitle ? (
-          <div style={{ opacity: inOp(p, 0.25, 0.4) }}>
+          <div style={{ opacity: appear(p, 0.25, 0.4) }}>
             <BlurReveal text={subtitle} fontSize={40} color={colors.muted} delay={Math.round(0.25 * dur)} />
           </div>
         ) : null}
@@ -73,11 +79,16 @@ export const BulletScene: React.FC<Base & { bullets: string[] }> = ({ dur, accen
   return (
     <Shell dur={dur} accent={ac} title={title} caption={caption}>
       <div style={{ position: "absolute", left: mx(-5.2), top: my(1.6), display: "flex", flexDirection: "column", gap: 34, width: mx(5.2) - mx(-5.2) }}>
-        {bullets.slice(0, 6).map((b, i) => {
+        {bullets.slice(0, 6).map((b, i, arr) => {
           const start = 0.12 + i * 0.12;
-          const op = inOp(p, start, start + 0.1);
+          const enter = appear(p, start, start + 0.1);
+          // Focus the bullet currently being spoken: once the NEXT bullet
+          // appears, gently dim this one so attention follows the narration
+          // while the whole list stays readable. The last bullet stays bright.
+          const isLast = i === arr.length - 1;
+          const focus = isLast ? 1 : dimAt(p, start + 0.12, 0.6);
           return (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 22, opacity: op, transform: `translateX(${interpolate(op, [0, 1], [-30, 0])}px)` }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 22, opacity: enter * focus, transform: `translateX(${interpolate(enter, [0, 1], [-30, 0])}px)` }}>
               <div style={{ width: 16, height: 16, borderRadius: 4, background: ac, flexShrink: 0, transform: "rotate(45deg)" }} />
               <span style={{ color: colors.text, fontFamily: "Inter, sans-serif", fontSize: 38, fontWeight: 500 }}>{b}</span>
             </div>
@@ -94,11 +105,16 @@ export const FormulaScene: React.FC<Base & { formulas: string[] }> = ({ dur, acc
   return (
     <Shell dur={dur} accent={accent ?? colors.kernel} title={title} caption={caption} accentDefault={colors.kernel}>
       <div style={{ position: "absolute", left: 0, width: 1920, top: my(2.3), height: my(-2.5) - my(2.3), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 40 }}>
-        {formulas.slice(0, 3).map((tex, i) => {
+        {formulas.slice(0, 3).map((tex, i, arr) => {
           const start = 0.12 + i * 0.2;
+          const enter = appear(p, start, start + 0.12);
+          // Dim each derivation step once the next one appears; the final line
+          // (the result) stays bright — classic focus/dim for a derivation.
+          const isLast = i === arr.length - 1;
+          const focus = isLast ? 1 : dimAt(p, 0.12 + (i + 1) * 0.2, 0.5);
           return (
-            <div key={i} style={{ opacity: inOp(p, start, start + 0.12) }}>
-              <MathFormula tex={tex} fontSize={i === 0 ? 54 : 44} color={i === formulas.length - 1 ? (accent ?? colors.kernel) : colors.text} delay={Math.round(start * dur)} />
+            <div key={i} style={{ opacity: enter * focus }}>
+              <MathFormula tex={tex} fontSize={i === 0 ? 54 : 44} color={isLast ? (accent ?? colors.kernel) : colors.text} delay={Math.round(start * dur)} />
             </div>
           );
         })}
@@ -203,6 +219,151 @@ export const DiagramScene: React.FC<
           </div>
         );
       })}
+    </Shell>
+  );
+};
+
+const LAYER_COLORS = [colors.user, colors.success, colors.kernel, colors.hardware, colors.purple];
+
+/** Two-column comparison: user vs kernel, before vs after, pros vs cons. */
+export const ComparisonScene: React.FC<
+  Base & {
+    left: { label: string; items: string[] };
+    right: { label: string; items: string[] };
+  }
+> = ({ dur, accent, title, caption, left, right }) => {
+  const { p } = useP(dur);
+  const column = (side: { label: string; items: string[] }, cx: number, color: string, base: number) => (
+    <>
+      <Zone x={cx} y={-0.45} w={5.7} h={4.1} color={color} fill={`${color}12`} opacity={appear(p, base, base + 0.1)} />
+      {/* Header centered over THIS column (not the full screen). */}
+      <div style={{ position: "absolute", left: mx(cx) - mu(2.85), top: my(2.05), width: mu(5.7), textAlign: "center", opacity: appear(p, base, base + 0.1) }}>
+        <span style={{ color, fontFamily: fonts.sans, fontSize: 31, fontWeight: 700 }}>{side.label}</span>
+      </div>
+      <div style={{ position: "absolute", left: mx(cx) - mu(2.4), top: my(1.15), width: mu(4.8), display: "flex", flexDirection: "column", gap: 24 }}>
+        {(side.items ?? []).slice(0, 5).map((it, i) => {
+          const start = base + 0.14 + i * 0.1;
+          const op = appear(p, start, start + 0.1);
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 14, opacity: op }}>
+              <div style={{ width: 12, height: 12, marginTop: 9, borderRadius: 3, background: color, flexShrink: 0, transform: "rotate(45deg)" }} />
+              <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 29, fontWeight: 500, lineHeight: 1.25 }}>{it}</span>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+  return (
+    <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
+      {column(left, -3.35, accent ?? colors.user, 0.1)}
+      {column(right, 3.35, colors.kernel, 0.22)}
+    </Shell>
+  );
+};
+
+/** Stacked system layers (app -> syscall -> kernel -> hardware), top to bottom. */
+export const LayeredSystemScene: React.FC<
+  Base & { layers: { label: string; sub?: string; color?: string }[] }
+> = ({ dur, accent, title, caption, layers }) => {
+  const { p } = useP(dur);
+  const items = (layers ?? []).slice(0, 5);
+  const n = Math.max(1, items.length);
+  const top = 1.9;
+  const bottom = -2.5;
+  const gap = 0.32;
+  const bandH = (top - bottom - gap * (n - 1)) / n;
+  return (
+    <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
+      {items.map((layer, i) => {
+        const cy = top - bandH / 2 - i * (bandH + gap);
+        const start = 0.12 + i * 0.12;
+        const op = appear(p, start, start + 0.12);
+        const color = layer.color ?? LAYER_COLORS[i % LAYER_COLORS.length];
+        return (
+          <React.Fragment key={i}>
+            <Zone x={0} y={cy} w={9.2} h={bandH} color={color} fill={`${color}16`} opacity={op} />
+            <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(cy) - 24, textAlign: "center", opacity: op }}>
+              <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 34, fontWeight: 700 }}>{layer.label}</span>
+              {layer.sub ? <span style={{ color: colors.muted, fontFamily: fonts.sans, fontSize: 24, marginLeft: 16 }}>{layer.sub}</span> : null}
+            </div>
+            {i < items.length - 1 ? (
+              <Arrow from={[0, cy - bandH / 2]} to={[0, cy - bandH / 2 - gap]} color={colors.muted} width={3} progress={appear(p, start + 0.08, start + 0.16)} />
+            ) : null}
+          </React.Fragment>
+        );
+      })}
+    </Shell>
+  );
+};
+
+/** Left-to-right sequence of steps along a baseline (process / lifecycle). */
+export const TimelineScene: React.FC<
+  Base & { steps: { label: string; sub?: string }[] }
+> = ({ dur, accent, title, caption, steps }) => {
+  const { p } = useP(dur);
+  const items = (steps ?? []).slice(0, 5);
+  const n = Math.max(1, items.length);
+  const ac = accent ?? colors.user;
+  const x0 = -5;
+  const x1 = 5;
+  const span = n > 1 ? (x1 - x0) / (n - 1) : 0;
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      <Arrow from={[x0 - 0.5, 0]} to={[x1 + 0.5, 0]} color={colors.edge} width={3} progress={appear(p, 0.1, 0.3)} />
+      {items.map((step, i) => {
+        const cx = n > 1 ? x0 + i * span : 0;
+        const start = 0.2 + i * 0.14;
+        const op = appear(p, start, start + 0.12);
+        const focus = i === items.length - 1 ? 1 : dimAt(p, start + 0.14, 0.55);
+        return (
+          <React.Fragment key={i}>
+            <div style={{ opacity: op * focus }}>
+              <Card x={cx} y={0} w={1.5} h={1.0} accent={ac} fontPx={30}>{`${i + 1}`}</Card>
+            </div>
+            <div style={{ position: "absolute", left: mx(cx) - mu(1.5), top: my(-0.9), width: mu(3.0), textAlign: "center", opacity: op }}>
+              <div style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 26, fontWeight: 600, lineHeight: 1.2 }}>{step.label}</div>
+              {step.sub ? <div style={{ color: colors.muted, fontFamily: fonts.sans, fontSize: 20 }}>{step.sub}</div> : null}
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </Shell>
+  );
+};
+
+/** A shell command typed out, with its output below (CLI / syscall demos). */
+export const TerminalScene: React.FC<Base & { command: string; output?: string }> = ({
+  dur,
+  accent,
+  title,
+  caption,
+  command,
+  output,
+}) => {
+  const { p } = useP(dur);
+  const typed = interpolate(p, [0.12, 0.5], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return (
+    <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
+      <Terminal x={0} y={1.15} w={11} h={1.1} text={`$ ${command}`} typed={typed} opacity={appear(p, 0.06, 0.16)} />
+      {output ? (
+        <div
+          style={{
+            position: "absolute",
+            left: mx(-5.5),
+            top: my(0.2),
+            width: mu(11),
+            opacity: appear(p, 0.55, 0.7),
+            fontFamily: fonts.mono,
+            fontSize: 26,
+            lineHeight: 1.5,
+            color: colors.muted,
+            whiteSpace: "pre-line",
+          }}
+        >
+          {output}
+        </div>
+      ) : null}
     </Shell>
   );
 };

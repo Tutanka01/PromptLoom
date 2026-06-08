@@ -1,6 +1,7 @@
 import React from "react";
 import { AbsoluteFill, Audio, Sequence, staticFile } from "remotion";
 import { z } from "zod";
+import { AmbientBackground } from "./catalog/AmbientBackground";
 import { SCENE_COMPONENTS } from "./registry";
 import { colors } from "./style/tokens";
 
@@ -40,6 +41,13 @@ export const MainComposition: React.FC<MainCompositionProps> = ({ scenes, embedA
   let from = 0;
   return (
     <AbsoluteFill style={{ backgroundColor: colors.bg }}>
+      {/* Persistent living background, BEHIND every scene. Each scene fades its
+          own content in/out at its edges (fadeIn * fadeTail); during that dip
+          this continuous background shows through, so scene-to-scene boundaries
+          cross-dissolve instead of hard-cutting — and there is never a black or
+          frozen frame between scenes (keeps freezedetect happy). No timeline
+          overlap, so the per-segment voiceover stays perfectly in sync. */}
+      <AmbientBackground />
       {scenes.map((scene, i) => {
         const Comp = components[scene.component];
         const start = from;
