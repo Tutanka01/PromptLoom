@@ -22,3 +22,18 @@ apps/video-api/.venv/
 apps/video-api/.pytest_cache/
 
 CLAUDE.md
+
+# Ignore any node_modules directories in the project
+node_modules/
+**/node_modules/
+
+# Remotion engine: render output + per-job generated entries/scenes (the
+# scene-coder/render inject these into the shared project and clean them up).
+apps/video-api/remotion/out/
+apps/video-api/remotion/public/jobs/
+apps/video-api/remotion/public/audio/
+apps/video-api/remotion/src/entries/*
+!apps/video-api/remotion/src/entries/.gitkeep
+apps/video-api/remotion/src/jobScenes/*
+!apps/video-api/remotion/src/jobScenes/.gitkeep
+

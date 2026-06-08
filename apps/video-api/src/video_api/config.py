@@ -74,6 +74,11 @@ class Settings:
         default_factory=lambda: int(os.getenv("VIDEO_API_MAX_REPAIR_ATTEMPTS", "2"))
     )
     fake_llm: bool = field(default_factory=lambda: _bool_env("VIDEO_API_FAKE_LLM", False))
+    # Rendering engine. "manim" (default) keeps the existing Python/Manim path.
+    # "remotion" switches materialize + render to the React/Remotion engine
+    # (data-driven component palette), reusing the same TTS, assemble and verify
+    # steps. This is the only switch needed to change engines.
+    render_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower())
     default_target_duration_seconds: int = field(
         default_factory=lambda: int(
             os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", str(timing.DEFAULT_TARGET_DURATION_SECONDS))

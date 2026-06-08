@@ -118,8 +118,16 @@ def _scene_midpoints(
 
 
 def _active_beat(scene: Any, ratio: float = 0.5) -> dict:
-    """Return the beat whose `at` is closest to the given ratio within a scene."""
-    best = min(scene.beats, key=lambda b: abs(b.at - ratio))
+    """Return the beat whose `at` is closest to the given ratio within a scene.
+
+    Remotion scenes carry no beats; synthesize one from the visual intent so the
+    review works uniformly across engines.
+    """
+    beats = getattr(scene, "beats", None) or []
+    if not beats:
+        intent = getattr(scene, "visual_intent", "") or scene.text[:160]
+        return {"key": "mid", "at": ratio, "text_hint": intent, "visual_action": intent}
+    best = min(beats, key=lambda b: abs(b.at - ratio))
     return {
         "key": best.key,
         "at": best.at,

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import logging
 import shlex
@@ -14,16 +13,8 @@ from video_api.config import Settings, get_settings
 from video_api.db import SessionLocal
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
+from video_api.pipeline.engine import make_engine
 from video_api.pipeline.llm import LLMClient
-from video_api.schemas import VideoBlueprint
-from video_api.pipeline.materialize import Materializer, build_single_scene_module
-from video_api.pipeline.scene_coder import SceneCoder
-from video_api.pipeline.validate import (
-    smoke_render_scene,
-    validate_scene_ast_security,
-    validate_scene_names,
-    validate_static_video_source,
-)
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
 from video_api.schemas import VisualReviewResult
@@ -74,8 +65,7 @@ class VideoPipeline:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self.llm = LLMClient(self.settings)
-        self.materializer = Materializer(self.settings)
-        self.scene_coder = SceneCoder(self.settings)
+        self.engine = make_engine(self.settings, self.llm)
         self.visual_reviewer = VisualReviewer(self.settings)
 
     def _update(
@@ -186,7 +176,7 @@ class VideoPipeline:
                 )
                 if attempt == 0:
                     self._update(session, job, "planning", 5, "planning")
-                    blueprint = self.llm.generate_blueprint(
+                    blueprint = self.engine.generate_blueprint(
                         job.prompt,
                         job.theme,
                         job.target_duration_seconds,
@@ -197,7 +187,7 @@ class VideoPipeline:
                         repair_hint = last_error.result.repair_hint()
                     else:
                         repair_hint = f"{type(last_error).__name__}: {last_error}"
-                    blueprint = self.llm.repair_blueprint(
+                    blueprint = self.engine.repair_blueprint(
                         job.prompt,
                         blueprint_data or {},
                         repair_hint,
@@ -216,17 +206,20 @@ class VideoPipeline:
                     len(blueprint.scenes),
                 )
 
-                self._update(session, job, "manim_generation", 20, "materializing_sources")
-                video_dir = self.materializer.materialize(blueprint, workspace)
-                logger.info("job.sources.materialized job_id=%s video_dir=%s", job.id, video_dir)
+                self._update(session, job, "generating_sources", 20, "materializing_sources")
+                video_dir = self.engine.materialize(blueprint, workspace)
+                logger.info(
+                    "job.sources.materialized job_id=%s engine=%s video_dir=%s",
+                    job.id,
+                    self.engine.name,
+                    video_dir,
+                )
 
-                self._update(session, job, "manim_generation", 26, "scene_codegen")
-                scene_codes = self._generate_scene_codes(blueprint, video_dir)
-                if scene_codes:
-                    self.materializer.write_scene_codes(video_dir, blueprint, scene_codes)
+                self._update(session, job, "generating_sources", 26, "scene_codegen")
+                self.engine.generate_scenes(blueprint, video_dir)
 
                 self._update(session, job, "static_validation", 30, "static_validation")
-                validate_static_video_source(video_dir)
+                self.engine.validate_static(video_dir)
                 logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
 
                 self._update(session, job, "voice_generation", 40, "voice_generation")
@@ -339,84 +332,6 @@ class VideoPipeline:
                     attempt + 1,
                     type(exc).__name__,
                 )
-
-
-    def _generate_scene_codes(self, blueprint: VideoBlueprint, video_dir: Path) -> dict[str, str]:
-        """Generate LLM Manim code for each scene with a repair loop + deterministic fallback.
-
-        Each candidate is checked for security, syntax, undefined names, and — unless
-        disabled — proven to render via a single-scene smoke render. A scene that fails
-        every attempt is omitted so the materializer uses its deterministic fallback
-        template, guaranteeing the global render still succeeds.
-
-        Returns a dict mapping scene_key → full class code string.
-        """
-        if not self.settings.scene_coder_enabled:
-            logger.info("scene_codegen.skip reason=deterministic_only (VIDEO_API_SCENE_CODER_ENABLED=0)")
-            return {}
-        if self.settings.fake_llm or not self.settings.openai_api_key:
-            logger.info("scene_codegen.skip fake_llm=%s has_key=%s", self.settings.fake_llm, bool(self.settings.openai_api_key))
-            return {}
-
-        slug_module = blueprint.slug.replace("-", "_")
-        scene_codes: dict[str, str] = {}
-        for scene in blueprint.scenes:
-            prev_code: str = ""
-            prev_error: str = ""
-            succeeded = False
-            for attempt in range(self.settings.scene_coder_attempts):
-                code: str = ""
-                try:
-                    if attempt == 0:
-                        code = self.scene_coder.generate(scene, blueprint)
-                    else:
-                        code = self.scene_coder.repair(scene, blueprint, prev_code, prev_error)
-
-                    validate_scene_ast_security(code, scene.key)
-                    ast.parse(code)
-
-                    if self.settings.scene_coder_smoke_render:
-                        module_source = build_single_scene_module(slug_module, code)
-                        validate_scene_names(module_source, scene.key)
-                        smoke_render_scene(
-                            video_dir,
-                            scene.key,
-                            module_source,
-                            self.settings.scene_coder_smoke_timeout_seconds,
-                        )
-
-                    scene_codes[scene.key] = code
-                    succeeded = True
-                    logger.info(
-                        "scene_codegen.success scene=%s attempt=%d",
-                        scene.key,
-                        attempt,
-                    )
-                    break
-                except Exception as exc:
-                    prev_error = str(exc)
-                    prev_code = code
-                    logger.warning(
-                        "scene_codegen.attempt_failed scene=%s attempt=%d error=%s",
-                        scene.key,
-                        attempt,
-                        exc,
-                    )
-
-            if not succeeded:
-                logger.warning(
-                    "scene_codegen.fallback scene=%s using deterministic template after %d attempts",
-                    scene.key,
-                    self.settings.scene_coder_attempts,
-                )
-
-        logger.info(
-            "scene_codegen.done total=%d llm=%d fallback=%d",
-            len(blueprint.scenes),
-            len(scene_codes),
-            len(blueprint.scenes) - len(scene_codes),
-        )
-        return scene_codes
 
 
 def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:

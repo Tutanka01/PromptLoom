@@ -36,6 +36,9 @@ services:
       VIDEO_API_REPO_ROOT: /workspace
       VIDEO_API_VOICE_ENGINE: ${VIDEO_API_VOICE_ENGINE:-chatterbox}
       VIDEO_API_VOICE_COMMAND: ${VIDEO_API_VOICE_COMMAND:-python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45}
+      # manim (default) keeps the Python/Manim path; remotion switches to the
+      # React/Remotion render engine (same TTS, assemble, verify).
+      VIDEO_API_RENDER_ENGINE: ${VIDEO_API_RENDER_ENGINE:-manim}
       MANIM_USE_UV: "0"
     command: celery -A video_api.celery_app worker --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
     volumes:

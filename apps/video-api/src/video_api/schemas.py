@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -253,3 +253,137 @@ def _short_label(text: str, limit: int = 40) -> str:
 
 def _estimated_spoken_seconds(text: str) -> int:
     return timing.estimated_spoken_seconds(text)
+
+
+# ---------------------------------------------------------------------------
+# Remotion engine blueprint
+#
+# Dedicated, decoupled contract for the Remotion render engine
+# (VIDEO_API_RENDER_ENGINE=remotion). Unlike SceneSpec (Manim), a scene names a
+# tested React component from a fixed palette and carries plain props, OR uses
+# "Custom" to request free-form TSX written by the Remotion scene-coder. The
+# field names mirror the Manim path where the shared downstream needs them
+# (key, title, text/narration, duration_seconds) so segments / durations / TTS
+# reuse the same plumbing. The duration + narration gates are shared with
+# VideoBlueprint via video_api.timing, so a blueprint that validates here is
+# guaranteed enough narration to clear verify_mp4.
+# ---------------------------------------------------------------------------
+
+REMOTION_PALETTE = (
+    "TitleScene",
+    "BulletScene",
+    "FormulaScene",
+    "CodeScene",
+    "PlotScene",
+    "DiagramScene",
+)
+
+RemotionComponent = Literal[
+    "TitleScene",
+    "BulletScene",
+    "FormulaScene",
+    "CodeScene",
+    "PlotScene",
+    "DiagramScene",
+    "Custom",
+]
+
+
+class RemotionScene(BaseModel):
+    key: str
+    title: str = Field(min_length=2, max_length=80)
+    # Spoken narration for this scene. Exposed downstream as `.text` so the
+    # shared segments/TTS code can treat Manim and Remotion scenes uniformly.
+    narration: str = Field(min_length=30, max_length=1600)
+    duration_seconds: int = Field(default=30, ge=12, le=90)
+    component: RemotionComponent = "BulletScene"
+    props: dict[str, Any] = Field(default_factory=dict)
+    # Concrete visual plan; only consumed when component == "Custom" (drives the
+    # Remotion scene-coder). Harmless for palette scenes.
+    visual_intent: str = Field(default="", max_length=600)
+
+    @property
+    def text(self) -> str:
+        return self.narration
+
+    @property
+    def is_custom(self) -> bool:
+        return self.component == "Custom"
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, value: str) -> str:
+        value = value.strip()
+        if not CLASS_KEY_RE.match(value):
+            raise ValueError("scene key must look like Scene1_HookEN")
+        return value
+
+
+class RemotionBlueprint(BaseModel):
+    title: str = Field(min_length=3, max_length=100)
+    theme: str = Field(min_length=2, max_length=80)
+    slug: str
+    target_duration_seconds: int = Field(default=240, ge=45, le=900)
+    subject_area: SubjectArea = "general_stem"
+    difficulty: Difficulty = "intro"
+    audience: str = Field(min_length=5, max_length=240)
+    teaching_goal: str = Field(min_length=10, max_length=400)
+    learning_objectives: list[str] = Field(
+        default_factory=lambda: ["Explain the core idea clearly."],
+        min_length=1,
+        max_length=5,
+    )
+    style_notes: str = Field(min_length=10, max_length=700)
+    scenes: list[RemotionScene] = Field(min_length=3, max_length=14)
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not SLUG_RE.match(value):
+            raise ValueError("slug must use lowercase kebab-case")
+        return value
+
+    @field_validator("learning_objectives")
+    @classmethod
+    def validate_learning_objectives(cls, value: list[str]) -> list[str]:
+        cleaned = [" ".join(item.split()) for item in value if item and item.strip()]
+        if not cleaned:
+            raise ValueError("learning_objectives must contain at least one objective")
+        if any(len(item) > 180 for item in cleaned):
+            raise ValueError("learning_objectives entries must stay concise")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_scene_sequence(self) -> "RemotionBlueprint":
+        expected = [f"Scene{i}_" for i in range(1, len(self.scenes) + 1)]
+        actual = [scene.key for scene in self.scenes]
+        for prefix, key in zip(expected, actual, strict=True):
+            if not key.startswith(prefix):
+                raise ValueError("scene keys must be ordered Scene1_..., Scene2_...")
+        if len(set(actual)) != len(actual):
+            raise ValueError("scene keys must be unique")
+        if self.target_duration_seconds >= 180 and len(self.scenes) < 8:
+            raise ValueError("3-5 minute videos need at least 8 scenes")
+        if self.target_duration_seconds <= 300 and len(self.scenes) > 12:
+            raise ValueError("3-5 minute videos should use at most 12 scenes")
+
+        planned_duration = sum(scene.duration_seconds for scene in self.scenes)
+        lower = max(45, int(self.target_duration_seconds * 0.75))
+        upper = int(self.target_duration_seconds * 1.25)
+        if planned_duration < lower or planned_duration > upper:
+            raise ValueError(
+                f"planned scene duration {planned_duration}s is outside target window {lower}-{upper}s"
+            )
+
+        estimated_narration = sum(_estimated_spoken_seconds(scene.narration) for scene in self.scenes)
+        min_narration = timing.required_narration_seconds(self.target_duration_seconds)
+        if estimated_narration < min_narration:
+            needed_words = timing.required_total_words(self.target_duration_seconds)
+            have_words = sum(timing.word_count(scene.narration) for scene in self.scenes)
+            raise ValueError(
+                f"estimated narration {estimated_narration}s is too short for target "
+                f"{self.target_duration_seconds}s (need >= {min_narration}s of narration, "
+                f"about {needed_words} words across all scenes; blueprint has {have_words})"
+            )
+        return self

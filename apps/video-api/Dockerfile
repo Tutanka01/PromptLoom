@@ -33,6 +33,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
+# --- Node + headless Chrome layer -----------------------------------------
+# For the Remotion render engine (VIDEO_API_RENDER_ENGINE=remotion). Stable, so
+# kept high for caching. The libs are what Remotion's headless Chrome needs.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends \
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+    libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
+    libasound2 libpango-1.0-0 libpangocairo-1.0-0 libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # uv installed once, independent of the project so it stays cached.
 RUN pip install --no-cache-dir uv
 
@@ -48,6 +59,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r /workspace/apps/video-api/pyproject.toml \
     --extra worker --extra test
 
+# --- Remotion dependency layer --------------------------------------------
+# Only the manifest is copied here so `npm ci` + the Chrome Headless Shell
+# download are cached unless the lockfile changes (not on every src edit).
+COPY apps/video-api/remotion/package.json apps/video-api/remotion/package-lock.json \
+    /workspace/apps/video-api/remotion/
+RUN cd /workspace/apps/video-api/remotion && npm ci
+# Pre-download Chrome Headless Shell so runtime renders never fetch it.
+RUN cd /workspace/apps/video-api/remotion && npx --no-install remotion browser ensure
+
 # --- Source layer ---------------------------------------------------------
 # Editing any of these only re-runs the cheap steps below, never the deps.
 COPY apps/video-api/src /workspace/apps/video-api/src
@@ -58,6 +78,10 @@ COPY apps/video-api/docs /workspace/apps/video-api/docs
 COPY docs/boilerplate /workspace/docs/boilerplate
 COPY videos/linux-fondamentaux/002-c-est-quoi-un-syscall/generate_voice_en.py \
     /workspace/videos/linux-fondamentaux/002-c-est-quoi-un-syscall/generate_voice_en.py
+# Remotion engine sources (catalog + data scenes + generated-entry targets).
+COPY apps/video-api/remotion/tsconfig.json apps/video-api/remotion/remotion.config.ts \
+    /workspace/apps/video-api/remotion/
+COPY apps/video-api/remotion/src /workspace/apps/video-api/remotion/src
 
 # Editable install of the project only (deps already satisfied above). Fast.
 RUN --mount=type=cache,target=/root/.cache/uv \

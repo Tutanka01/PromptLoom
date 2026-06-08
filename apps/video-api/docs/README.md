@@ -12,6 +12,7 @@ Le but de cette application est de recevoir un prompt utilisateur, creer un job 
 - [Developer Guide](developer-guide.md): comment travailler sur le code, ajouter une etape ou changer le generateur.
 - [Operations](operations.md): variables d'environnement, Docker, tests, logs, volumes, depannage.
 - [LLM Contract](llm-contract.md): contrat attendu entre le worker et un endpoint compatible OpenAI.
+- [Remotion Engine](remotion-engine.md): moteur de rendu Remotion (`VIDEO_API_RENDER_ENGINE=remotion`), alternative a Manim partageant TTS/assemble/verify.
 
 ## Principe important
 

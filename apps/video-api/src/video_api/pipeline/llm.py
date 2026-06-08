@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from video_api import timing
 from video_api.config import Settings
-from video_api.schemas import BeatSpec, SceneSpec, VideoBlueprint
+from video_api.schemas import BeatSpec, RemotionBlueprint, SceneSpec, VideoBlueprint
 
 
 logger = logging.getLogger(__name__)
@@ -756,6 +756,98 @@ class LLMClient:
             logger.warning("llm.blueprint.invalid errors=%s", exc)
             repaired = self.repair_blueprint(prompt, data, str(exc))
             return repaired
+
+    def generate_remotion_blueprint(
+        self,
+        prompt: str,
+        theme: str | None,
+        target_duration_seconds: int | None,
+    ) -> "RemotionBlueprint":
+        """Generate a Remotion-engine blueprint (component palette + props)."""
+        from video_api.pipeline import remotion_blueprint as rb
+
+        effective_target = target_duration_seconds or self.settings.default_target_duration_seconds
+        if self.settings.fake_llm:
+            logger.info("llm.fake_remotion_blueprint.start prompt_chars=%d theme=%s", len(prompt), theme)
+            return rb.fake_remotion_blueprint(prompt, theme, effective_target)
+        if not self.settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required unless VIDEO_API_FAKE_LLM=1")
+        client = self._build_client()
+        logger.info(
+            "llm.remotion.request.start model=%s base_url=%s prompt_chars=%d theme=%s",
+            self.settings.openai_model,
+            self.settings.openai_base_url,
+            len(prompt),
+            theme,
+        )
+        user_prompt = {
+            "prompt": prompt,
+            "theme": theme or "general-stem",
+            "target_duration_seconds": effective_target,
+            "duration_policy": self._duration_policy(effective_target),
+        }
+        content = self._complete(
+            client,
+            [
+                {"role": "system", "content": rb.REMOTION_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(user_prompt, ensure_ascii=True)},
+            ],
+            temperature=self.settings.llm_temperature,
+            json_mode=True,
+        )
+        logger.info("llm.remotion.request.done model=%s response_chars=%d", self.settings.openai_model, len(content))
+        data = rb.normalize_remotion_blueprint(_extract_json_object(content), effective_target)
+        try:
+            return RemotionBlueprint.model_validate(data)
+        except ValidationError as exc:
+            logger.warning("llm.remotion_blueprint.invalid errors=%s", exc)
+            return self.repair_remotion_blueprint(prompt, data, str(exc))
+
+    def repair_remotion_blueprint(self, prompt: str, previous: Any, error_report: str) -> "RemotionBlueprint":
+        from video_api.pipeline import remotion_blueprint as rb
+
+        if self.settings.fake_llm:
+            target = previous.get("target_duration_seconds") if isinstance(previous, dict) else None
+            return rb.fake_remotion_blueprint(prompt, target_duration_seconds=target)
+        if not self.settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for LLM repair")
+        client = self._build_client()
+        target = int(
+            (isinstance(previous, dict) and previous.get("target_duration_seconds"))
+            or self.settings.default_target_duration_seconds
+        )
+        logger.info("llm.remotion.repair.start model=%s error_chars=%d", self.settings.openai_model, len(error_report))
+        content = self._complete(
+            client,
+            [
+                {"role": "system", "content": rb.REMOTION_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": "Repair this Remotion video blueprint JSON so it validates.",
+                            "original_prompt": prompt,
+                            "previous": previous,
+                            "errors": error_report,
+                            "duration_policy": self._duration_policy(target),
+                            "repair_rules": (
+                                "Return the COMPLETE top-level object with fields title, theme, slug, "
+                                "target_duration_seconds, subject_area, difficulty, audience, teaching_goal, "
+                                "learning_objectives, style_notes, scenes. Keys ordered Scene1_...EN. "
+                                "Each scene needs a valid component + props. If narration is too short, "
+                                "LENGTHEN the spoken 'narration' until it meets duration_policy."
+                            ),
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+            temperature=0.15,
+            json_mode=True,
+        )
+        logger.info("llm.remotion.repair.done model=%s response_chars=%d", self.settings.openai_model, len(content))
+        data = rb.normalize_remotion_blueprint(_extract_json_object(content), target)
+        return RemotionBlueprint.model_validate(data)
 
     def repair_blueprint(self, prompt: str, previous: Any, error_report: str) -> VideoBlueprint:
         if self.settings.fake_llm:

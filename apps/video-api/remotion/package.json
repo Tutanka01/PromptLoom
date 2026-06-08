@@ -1,0 +1,30 @@
+{
+  "name": "video-api-remotion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remotion rendering engine for video-api (spike: syscall intro port)",
+  "scripts": {
+    "dev": "remotion studio",
+    "render": "remotion render",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/google-fonts": "4.0.400",
+    "@remotion/shapes": "4.0.400",
+    "@remotion/transitions": "^4.0.400",
+    "@types/katex": "^0.16.7",
+    "katex": "^0.16.11",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.400",
+    "shiki": "^1.24.0",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@remotion/cli": "^4.0.400",
+    "@remotion/renderer": "^4.0.400",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "typescript": "5.6.3"
+  }
+}

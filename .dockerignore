@@ -1,0 +1,15 @@
+# Build context is the repo root (compose context: ../..). Keep it lean: none of
+# these are needed by any COPY in apps/video-api/Dockerfile (the Remotion
+# node_modules are reinstalled via `npm ci`, Chrome is fetched during build).
+.git
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.pytest_cache
+**/.DS_Store
+apps/video-api/data
+apps/video-api/remotion/out
+apps/video-api/remotion/public/jobs
+apps/video-api/remotion/public/audio
+apps/video-api/e2e/out

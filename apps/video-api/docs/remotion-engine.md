@@ -1,0 +1,104 @@
+# Moteur de rendu Remotion (video-api)
+
+Moteur de rendu alternatif à Manim, activé par `VIDEO_API_RENDER_ENGINE=remotion`.
+Une requête API → un blueprint LLM → TTS Chatterbox → rendu Remotion → assemble
+ffmpeg → vérif → MP4. **Manim reste le défaut** ; bascule par variable d'env, zéro
+régression sur l'existant.
+
+## Principe : même couture que Manim
+
+Le pipeline shell-out sur des scripts d'un `video_dir`. Le moteur Remotion écrit le
+**même contrat** que Manim ; seul `render_en.sh` change. Voice / assemble / verify /
+visual_review sont partagés (`pipeline/engine.py` sélectionne le moteur, le reste de
+`production.py` est commun).
+
+```
+video_dir/
+  segments_en.json      # {segments:[{key,title,text}]}  -> generate_voice_en.py (Chatterbox)
+  generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.mp3
+  scenes_map.json       # {fps, scenes:[{key, component, custom, props}]} (ordonné)
+  build_video_json.py   # durations.json + scenes_map.json -> video.json
+  render_en.sh          # build video.json, injecte l'entrée par job, npx remotion render -> final/<slug>-en-silent.mp4
+  assemble_en.sh        # partagé avec Manim : mux silent + voiceover -> final/<slug>-en-final.mp4
+  remotion_scenes/*.tsx # composants Custom générés (scene-coder)
+  jobScenes_index.ts    # re-exporte les Custom -> COMPONENTS
+```
+
+`durationInFrames` par scène = `round(durations[key] * 60)`. Le rendu est **silencieux**
+(`embedAudio:false`) ; `assemble_en.sh` muxe la voix off globale.
+
+## Blueprint (contrat LLM)
+
+`schemas.RemotionBlueprint` / `RemotionScene`. Champs miroir de Manim (key ordonnée
+`Scene1_…EN`, `title`, `narration`, `duration_seconds`) + `component` + `props` +
+`visual_intent`. Les gates de durée/narration sont partagées avec Manim via
+`video_api.timing` : un blueprint qui valide ici a assez de narration pour passer
+`verify_mp4`. Prompt + normalisation : `pipeline/remotion_blueprint.py`
+(`expr → points` échantillonnés en sandbox, clamp des ranges, alias de champs).
+
+### Palette de composants testés (`remotion/src/scenes/data/scenes.tsx`)
+
+| Composant     | Props clés |
+|---------------|------------|
+| `TitleScene`  | `title, subtitle?, accent?` |
+| `BulletScene` | `title, bullets[2-5], caption?, accent?` |
+| `FormulaScene`| `title, formulas[1-3] (LaTeX/KaTeX), caption?` |
+| `CodeScene`   | `title, code, lang, codeTitle?, caption?` |
+| `PlotScene`   | `title, expr|points, xRange, yRange, sweep?, area?, xLabel?, yLabel?` |
+| `DiagramScene`| `title, nodes[{id,label,x(-6..6),y(-3..3),color?}], edges[{from,to,label?}]` |
+
+### Escape hatch `Custom` (code libre encadré)
+
+Quand aucune palette ne convient, le blueprint met `component:"Custom"` + un
+`visual_intent`. `pipeline/remotion_scene_coder.py` fait écrire au LLM un composant
+TSX autonome (`export const Scene3_…EN: React.FC<any> = ({dur, ...props}) => …`),
+puis l'**encadre** (analogues des gardes Manim) :
+
+1. allow-list d'imports : seulement `react`, `remotion`, et le barrel `../../lib` ;
+2. scan d'API interdites (`eval`/`Function`/`fetch`/`require`/`import()`/`process`/`fs`/…) ;
+3. export du nom exact = clé de scène ;
+4. `tsc --noEmit` sur le projet avec le candidat en place ;
+5. smoke `remotion still` d'une frame de la scène isolée.
+
+Échec après `VIDEO_API_SCENE_CODER_ATTEMPTS` tentatives → **fallback déterministe**
+vers une `BulletScene` construite depuis la narration (`fallback_custom_to_palette`).
+Le rendu global réussit toujours. Désactiver le code libre :
+`VIDEO_API_SCENE_CODER_ENABLED=0` (toutes les scènes Custom retombent sur la palette).
+
+Surface autorisée pour le code libre : le barrel `remotion/src/lib.ts` (catalogue +
+primitives + style + hooks Remotion courants). Skill LLM : `docs/remotion-skill.md`.
+
+## Isolation par job
+
+`render_en.sh` injecte les scènes Custom + une **entrée par job** dans le projet
+Remotion partagé sous un id unique : `src/jobScenes/<id>/` et `src/entries/<id>.tsx`
+(nettoyés via `trap` en fin de rendu). Pas de mutation de fichiers partagés → sûr en
+concurrence ; `node_modules` résolus depuis le projet partagé. `$VIDEO_API_REMOTION_DIR`
+override le chemin (défaut `repo_root/apps/video-api/remotion`).
+
+## Qualité / verify
+
+`verify_mp4` ne vérifie 1920×1080/60 et le gate de freeze qu'au **pass final**
+(`final_quality=True`). Donc `QUALITY=ql` rend en `--scale=0.5` (preview rapide) et
+`QUALITY=qh` en `--scale=1 --crf=18`. GL : `swangle` (logiciel, sûr en headless Docker).
+
+## Docker
+
+Le `Dockerfile` ajoute Node 20, les libs de Chrome headless, `npm ci` du projet
+Remotion et `npx remotion browser ensure` (Chrome Headless Shell pré-téléchargé).
+Image partagée api/worker/test → le flag marche sans rebuild.
+
+## Activation
+
+```bash
+# apps/video-api/.env ou environnement compose
+VIDEO_API_RENDER_ENGINE=remotion
+# (optionnel) forcer 100% palette, sans code libre
+VIDEO_API_SCENE_CODER_ENABLED=0
+```
+
+```bash
+docker compose -f apps/video-api/compose.yaml up -d
+curl -X POST localhost:8080/jobs -H 'content-type: application/json' \
+  -d '{"prompt":"Explain virtual memory and page tables","theme":"cs"}'
+```

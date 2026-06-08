@@ -147,6 +147,20 @@ MANIM_USE_UV=0
 
 Dans Docker, Manim est deja installe dans l'image. `MANIM_USE_UV=0` evite de relancer `uv run --with manim` pendant les jobs.
 
+### Moteur de rendu
+
+```text
+VIDEO_API_RENDER_ENGINE=manim     # manim (defaut) | remotion
+VIDEO_API_REMOTION_DIR=           # optionnel, defaut <repo>/apps/video-api/remotion
+```
+
+`remotion` bascule le rendu vers React/Remotion (palette de composants testes + code
+libre encadre par scene), en gardant TTS Chatterbox, `assemble_en.sh` et `verify.py`.
+L'image Docker embarque deja Node 20 + Chrome headless. Detail complet :
+[Remotion Engine](remotion-engine.md). Rappel : chaque service compose a sa propre
+image, donc apres un edit du `Dockerfile` rebuild explicitement (`docker compose ...
+build worker api test`).
+
 ## Volumes
 
 ```text

@@ -11,6 +11,7 @@ Start here:
 - [docs/architecture.md](docs/architecture.md): system architecture and job lifecycle.
 - [docs/developer-guide.md](docs/developer-guide.md): developer workflow and extension points.
 - [docs/operations.md](docs/operations.md): Docker, environment variables, testing, and troubleshooting.
+- [docs/remotion-engine.md](docs/remotion-engine.md): Remotion render engine (`VIDEO_API_RENDER_ENGINE=remotion`), an alternative to Manim sharing the same TTS/assemble/verify.
 
 ## Run Locally
 
