@@ -102,8 +102,15 @@ scenes qui ne compilent pas) :
   `eval`/`exec`/`open`, et tout import hors liste blanche.
 - `_validate_body_contract` : impose le contrat de synchro (`begin_sync` / `play_until` /
   `finish_sync`, pas de `self.wait`/`self.time`).
+- `validate_scene_names` : rejette les noms indefinis (symbole Manim hallucine type
+  `GlowDots`, helper inexistant) en les comparant a `dir(manim)` + helpers + locaux.
+- `smoke_render_scene` : rend une frame de la scene isolee (`manim -ql -s`) pour prouver
+  que `construct()` s'execute vraiment — attrape `NameError`, mauvais arguments, erreurs
+  LaTeX, avant le render global. Desactivable via `VIDEO_API_SCENE_CODER_SMOKE_RENDER=0`.
+  Ces deux checks ne tournent que la ou manim est installe (worker Docker).
 - boucle de reparation par scene (`VIDEO_API_SCENE_CODER_ATTEMPTS`), puis fallback template
-  deterministe si la scene ne passe toujours pas.
+  deterministe si la scene ne passe toujours pas. C'est ce filet qui garantit qu'une scene
+  fautive ne fait pas echouer tout le job (`failed_render`).
 - `validate_static_video_source` + `py_compile` avant tout rendu.
 
 Pour forcer l'ancien comportement 100% deterministe : `VIDEO_API_SCENE_CODER_ENABLED=0`.

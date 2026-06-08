@@ -165,6 +165,11 @@ x ∈ [-6.8, 6.8], y ∈ [-3.8, 3.8].
 - Never use `open()`, `eval()`, `exec()`, `__import__()`, `compile()`, `input()`.
 - Never touch `os`, `sys`, `subprocess`, `socket`, `requests`, `shutil`, `ctypes`, `pickle`.
 - No file, network, or system access of any kind. Only build and animate Mobjects.
+- **Use ONLY real Manim Community classes and the helpers listed above. Never invent a
+  symbol.** If you are not certain a class exists, do not use it — compose the effect from
+  primitives you know (`Dot`, `Circle`, `VGroup`, `Indicate`, `Flash`, the `glow()` helper,
+  ...). Inventing a name like `GlowDots`, `FlashArrow` or `PulseCircle` raises `NameError`
+  and the scene is rejected and rebuilt. For a glow, use the `glow(mob, color=...)` helper.
 
 ## Example A — equation transformation with LaTeX (math)
 
