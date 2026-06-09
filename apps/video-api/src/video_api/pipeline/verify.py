@@ -61,6 +61,7 @@ def verify_mp4(
     freeze_floor_seconds: float = 30.0,
     max_single_freeze_seconds: float = 12.0,
     freeze_fatal: bool = False,
+    expected_fps: float = 60.0,
 ) -> dict:
     report_dir.mkdir(parents=True, exist_ok=True)
     quality_warnings: list[str] = []
@@ -97,8 +98,8 @@ def verify_mp4(
         if video.get("width") != 1920 or video.get("height") != 1080:
             raise RuntimeError("final video must be 1920x1080")
         fps = _frame_rate(video.get("r_frame_rate", "0/1"))
-        if abs(fps - 60.0) > 0.01:
-            raise RuntimeError("final video must be 60 fps")
+        if abs(fps - expected_fps) > 0.01:
+            raise RuntimeError(f"final video must be {expected_fps:g} fps")
     logger.info(
         "verify.probe.done video=%s duration=%.3fs width=%s height=%s fps=%s audio_codec=%s",
         video_path,

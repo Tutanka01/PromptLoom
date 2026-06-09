@@ -36,8 +36,6 @@ from video_api.schemas import RemotionBlueprint, RemotionScene
 
 logger = logging.getLogger(__name__)
 
-FPS = 60
-
 
 def _segments_json(blueprint: RemotionBlueprint) -> dict:
     return {
@@ -48,7 +46,7 @@ def _segments_json(blueprint: RemotionBlueprint) -> dict:
     }
 
 
-def _scenes_map(blueprint: RemotionBlueprint) -> dict:
+def _scenes_map(blueprint: RemotionBlueprint, fps: int) -> dict:
     """Ordered scene->component map. Custom scenes are registered under their key."""
     scenes = []
     for scene in blueprint.scenes:
@@ -61,7 +59,7 @@ def _scenes_map(blueprint: RemotionBlueprint) -> dict:
                 "props": dict(scene.props or {}),
             }
         )
-    return {"fps": FPS, "scenes": scenes}
+    return {"fps": fps, "scenes": scenes}
 
 
 def _script_markdown(blueprint: RemotionBlueprint) -> str:
@@ -104,11 +102,11 @@ print(f"video.json: {len(scenes)} scenes, {total} frames ({total / FPS:.1f}s)")
 '''
 
 
-def _build_video_json_py() -> str:
-    return _BUILD_VIDEO_JSON.replace("__FPS__", str(FPS))
+def _build_video_json_py(fps: int) -> str:
+    return _BUILD_VIDEO_JSON.replace("__FPS__", str(fps))
 
 
-def _entry_tsx(entry_id: str) -> str:
+def _entry_tsx(entry_id: str, fps: int) -> str:
     """Per-job Remotion entry: registers the data-driven `Video` composition with
     a registry = palette components + this job's custom scenes."""
     return f'''import React from "react";
@@ -126,10 +124,10 @@ const Root: React.FC = () => (
     component={{JobMain}}
     schema={{videoSchema}}
     defaultProps={{{{ scenes: [], embedAudio: false }}}}
-    fps={{{FPS}}}
+    fps={{{fps}}}
     width={{1920}}
     height={{1080}}
-    durationInFrames={{{FPS}}}
+    durationInFrames={{{fps}}}
     calculateMetadata={{({{ props }}: any) => ({{
       durationInFrames: Math.max(
         1,
@@ -143,11 +141,18 @@ registerRoot(Root);
 '''
 
 
-def _render_script(blueprint: RemotionBlueprint, remotion_dir: Path, entry_id: str) -> str:
+def _render_script(
+    blueprint: RemotionBlueprint,
+    remotion_dir: Path,
+    entry_id: str,
+    fps: int,
+    concurrency: str,
+    x264_preset: str,
+) -> str:
     silent = f"final/{blueprint.slug}-en-silent.mp4"
     # The per-job entry imports `../jobScenes/<entry_id>/index`; the heredoc below
     # writes that entry verbatim (it contains no shell metacharacters).
-    entry_body = _entry_tsx(entry_id)
+    entry_body = _entry_tsx(entry_id, fps)
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -184,7 +189,7 @@ cp -f jobScenes_index.ts "${{SCENES_DIR}}/index.ts"
 cat > "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx" <<'REMOTION_ENTRY_EOF'
 {entry_body}REMOTION_ENTRY_EOF
 
-# 3. Render (silent). verify checks 1920x1080/60 only on the final (scale=1) pass.
+# 3. Render (silent). verify checks 1920x1080 + render_fps only on the final (scale=1) pass.
 mkdir -p final
 ( cd "${{REMOTION_DIR}}" && npx --no-install remotion render \\
     "src/entries/${{ENTRY_ID}}.tsx" Video \\
@@ -192,6 +197,8 @@ mkdir -p final
     --props="${{VIDEO_DIR}}/video.json" \\
     --scale="${{SCALE}}" \\
     --crf="${{CRF}}" \\
+    --concurrency="{concurrency}" \\
+    --x264-preset="{x264_preset}" \\
     --log=error )
 
 echo "Wrote {silent}"
@@ -233,10 +240,11 @@ class RemotionMaterializer:
         (video_dir / "segments_en.json").write_text(
             json.dumps(_segments_json(blueprint), indent=2) + "\n", encoding="utf-8"
         )
+        fps = self.settings.render_fps
         (video_dir / "scenes_map.json").write_text(
-            json.dumps(_scenes_map(blueprint), indent=2) + "\n", encoding="utf-8"
+            json.dumps(_scenes_map(blueprint, fps), indent=2) + "\n", encoding="utf-8"
         )
-        (video_dir / "build_video_json.py").write_text(_build_video_json_py(), encoding="utf-8")
+        (video_dir / "build_video_json.py").write_text(_build_video_json_py(fps), encoding="utf-8")
         # Default (palette-only) custom-scene index; the scene-coder overwrites it
         # together with remotion_scenes/*.tsx when there are Custom scenes.
         (video_dir / "jobScenes_index.ts").write_text(
@@ -257,7 +265,15 @@ class RemotionMaterializer:
         render_path = video_dir / "render_en.sh"
         assemble_path = video_dir / "assemble_en.sh"
         render_path.write_text(
-            _render_script(blueprint, self._remotion_dir(), entry_id), encoding="utf-8"
+            _render_script(
+                blueprint,
+                self._remotion_dir(),
+                entry_id,
+                fps,
+                self.settings.remotion_concurrency,
+                self.settings.render_x264_preset,
+            ),
+            encoding="utf-8",
         )
         assemble_path.write_text(_assemble_script(blueprint), encoding="utf-8")
         render_path.chmod(0o755)

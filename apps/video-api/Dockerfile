@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    # espeak-ng: grapheme->phoneme backend for Kokoro TTS (required for French,
+    # used by misaki[fr]). Harmless when the Chatterbox engine is used.
+    espeak-ng \
     ffmpeg \
     git \
     libcairo2-dev \

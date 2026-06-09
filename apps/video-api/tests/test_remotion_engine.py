@@ -201,6 +201,9 @@ def test_materialize_writes_contract(tmp_path) -> None:
     render = (video_dir / "render_en.sh").read_text()
     assert "remotion render" in render
     assert f"final/{bp.slug}-en-silent.mp4" in render
+    # speed knobs from Settings are pinned on the render command
+    assert '--concurrency="75%"' in render
+    assert '--x264-preset="faster"' in render
 
 
 def test_segments_and_scenes_map_key_parity(tmp_path) -> None:
@@ -223,7 +226,7 @@ def test_build_video_json_frames_from_durations(tmp_path) -> None:
     video = json.loads((video_dir / "video.json").read_text())
     assert video["embedAudio"] is False
     assert len(video["scenes"]) == len(bp.scenes)
-    assert video["scenes"][0]["durationInFrames"] == 180  # 3.0s * 60fps
+    assert video["scenes"][0]["durationInFrames"] == 90  # 3.0s * 30fps (default render_fps)
 
 
 def test_build_video_json_floors_missing_duration(tmp_path) -> None:
@@ -233,7 +236,7 @@ def test_build_video_json_floors_missing_duration(tmp_path) -> None:
     (video_dir / "audio" / "en" / "durations.json").write_text("{}")  # no durations
     subprocess.run([sys.executable, "build_video_json.py"], cwd=video_dir, check=True, capture_output=True)
     video = json.loads((video_dir / "video.json").read_text())
-    assert all(s["durationInFrames"] >= 60 for s in video["scenes"])  # MIN_FRAMES
+    assert all(s["durationInFrames"] >= 30 for s in video["scenes"])  # MIN_FRAMES (== render_fps)
 
 
 # --------------------------------------------------------------------------- #

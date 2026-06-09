@@ -57,12 +57,17 @@ def should_skip_existing(key: str, force: bool) -> bool:
     return True
 
 
-def generate_kokoro(segments: list[dict], voice: str, speed: float, force: bool) -> None:
+# Kokoro language code per spoken language. "a" = American English, "f" = French.
+KOKORO_LANG_CODES = {"en": "a", "fr": "f"}
+
+
+def generate_kokoro(segments: list[dict], voice: str, speed: float, lang: str, force: bool) -> None:
     import numpy as np
     import soundfile as sf
     from kokoro import KPipeline
 
-    pipeline = KPipeline(lang_code="a")
+    lang_code = KOKORO_LANG_CODES.get(lang.strip().lower(), "a")
+    pipeline = KPipeline(lang_code=lang_code)
     for segment in segments:
         key = segment["key"]
         text = segment["text"]
@@ -259,6 +264,7 @@ def main() -> None:
     parser.add_argument("--engine", choices=["kokoro", "chatterbox", "chatterbox-turbo", "openai"], default="chatterbox")
     parser.add_argument("--kokoro-voice", default="af_bella")
     parser.add_argument("--kokoro-speed", type=float, default=0.92)
+    parser.add_argument("--kokoro-lang", default="en", help="Spoken language for Kokoro: en or fr.")
     parser.add_argument("--exaggeration", type=float, default=0.45)
     parser.add_argument("--cfg-weight", type=float, default=0.55)
     parser.add_argument("--temperature", type=float, default=0.55)
@@ -290,7 +296,7 @@ def main() -> None:
     segments = json.loads(SEGMENTS_FILE.read_text(encoding="utf-8"))["segments"]
 
     if args.engine == "kokoro":
-        generate_kokoro(segments, args.kokoro_voice, args.kokoro_speed, args.force)
+        generate_kokoro(segments, args.kokoro_voice, args.kokoro_speed, args.kokoro_lang, args.force)
     elif args.engine == "chatterbox":
         generate_chatterbox(segments, args.exaggeration, args.cfg_weight, args.temperature, args.force)
     elif args.engine == "chatterbox-turbo":

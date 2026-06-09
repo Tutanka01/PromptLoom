@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 class Engine(Protocol):
     name: str
+    # The frame rate the engine actually writes, so verify can assert it. Manim's
+    # quality presets fix this (qh == 60); Remotion honors settings.render_fps.
+    output_fps: float
 
     def generate_blueprint(self, prompt: str, theme: str | None, target: int | None) -> Any: ...
 
@@ -39,6 +42,8 @@ class Engine(Protocol):
 
 class ManimEngine:
     name = "manim"
+    # Manim's -qh quality preset renders at 1080p60; render_fps does not apply here.
+    output_fps = 60.0
 
     def __init__(self, settings: Settings, llm: LLMClient):
         from video_api.pipeline.materialize import Materializer
@@ -148,6 +153,8 @@ class RemotionEngine:
         self.llm = llm
         self.materializer = RemotionMaterializer(settings)
         self.scene_coder = RemotionSceneCoder(settings)
+        # Remotion renders at the configured frame rate (default 30).
+        self.output_fps = float(settings.render_fps)
 
     def generate_blueprint(self, prompt: str, theme: str | None, target: int | None) -> Any:
         return self.llm.generate_remotion_blueprint(prompt, theme, target)

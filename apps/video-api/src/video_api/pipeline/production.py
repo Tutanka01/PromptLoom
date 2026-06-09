@@ -28,6 +28,24 @@ def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str,
     engine = settings.voice_engine.strip().lower()
     if engine in {"chatterbox", "local", "command"}:
         return shlex.split(settings.voice_command), None
+    if engine == "kokoro":
+        # Kokoro is ~5x real-time on CPU (vs Chatterbox being GPU-oriented) and
+        # supports EN + FR. Deps live in the worker image; no env needed.
+        return (
+            [
+                "python",
+                "generate_voice_en.py",
+                "--engine",
+                "kokoro",
+                "--kokoro-lang",
+                settings.voice_language,
+                "--kokoro-voice",
+                settings.kokoro_voice,
+                "--tail-padding",
+                f"{settings.voice_tail_padding:.3f}",
+            ],
+            None,
+        )
     if engine in {"openai", "openai-compatible", "openai_compatible"}:
         return (
             [
@@ -49,7 +67,7 @@ def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str,
         )
     raise ValueError(
         "Unsupported VIDEO_API_VOICE_ENGINE="
-        f"{settings.voice_engine!r}; expected 'chatterbox' or 'openai'."
+        f"{settings.voice_engine!r}; expected 'chatterbox', 'kokoro' or 'openai'."
     )
 
 
@@ -299,6 +317,7 @@ class VideoPipeline:
                     freeze_floor_seconds=self.settings.verify_freeze_floor_seconds,
                     max_single_freeze_seconds=self.settings.verify_max_single_freeze_seconds,
                     freeze_fatal=self.settings.verify_freeze_fatal,
+                    expected_fps=self.engine.output_fps,
                 )
                 if visual_review_result is not None:
                     final_report["visual_review"] = json.loads(visual_review_result.model_dump_json())

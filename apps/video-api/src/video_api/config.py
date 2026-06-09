@@ -79,6 +79,22 @@ class Settings:
     # (data-driven component palette), reusing the same TTS, assemble and verify
     # steps. This is the only switch needed to change engines.
     render_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower())
+    # Render speed knobs (no-GPU VM: the Remotion render is CPU-bound on software GL,
+    # so concurrency + frame count + x264 preset are the real levers).
+    # - render_fps: output frame rate. 30 (default) halves the frames to encode vs 60
+    #   for explainer content; raise to 60 for maximum smoothness.
+    # - remotion_concurrency: passed to `remotion render --concurrency`. Accepts an int
+    #   or a percentage ("75%" ~= 12 tabs on 16 cores). Each Chrome tab uses ~0.5-1 GB,
+    #   so on 16 GB cap near ~10-12; lower to "50%" if the worker OOMs.
+    # - render_x264_preset: x264 preset for the final encode. "faster" trades a little
+    #   file size for a big speed win at crf 18 with near-invisible quality loss.
+    render_fps: int = field(default_factory=lambda: int(os.getenv("VIDEO_API_RENDER_FPS", "30")))
+    remotion_concurrency: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_REMOTION_CONCURRENCY", "75%")
+    )
+    render_x264_preset: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_RENDER_X264_PRESET", "faster")
+    )
     default_target_duration_seconds: int = field(
         default_factory=lambda: int(
             os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", str(timing.DEFAULT_TARGET_DURATION_SECONDS))
@@ -161,6 +177,12 @@ class Settings:
     )
 
     voice_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_VOICE_ENGINE", "chatterbox"))
+    # Language for the local TTS (currently only consumed by the kokoro engine, which
+    # maps en->lang_code "a", fr->lang_code "f"). Chatterbox ignores it (English model).
+    voice_language: str = field(default_factory=lambda: os.getenv("VIDEO_API_VOICE_LANGUAGE", "en"))
+    # Kokoro voice id (e.g. "af_bella" for EN, "ff_siwis" for FR). Used when
+    # VIDEO_API_VOICE_ENGINE=kokoro. Kokoro is ~5x real-time on CPU vs Chatterbox.
+    kokoro_voice: str = field(default_factory=lambda: os.getenv("VIDEO_API_KOKORO_VOICE", "af_bella"))
     voice_command: str = field(
         default_factory=lambda: os.getenv(
             "VIDEO_API_VOICE_COMMAND",

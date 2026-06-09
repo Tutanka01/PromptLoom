@@ -16,6 +16,10 @@ dependencies = [
 [project.optional-dependencies]
 worker = [
   "chatterbox-tts>=0.1",
+  # Kokoro: fast (~5x real-time CPU) EN+FR TTS, opt-in via VIDEO_API_VOICE_ENGINE=kokoro.
+  # misaki[fr] adds the French G2P (needs the espeak-ng system package, see Dockerfile).
+  "kokoro>=0.9",
+  "misaki[en,fr]>=0.9",
   "manim>=0.18,<0.20",
   "numpy>=1.26",
   "soundfile>=0.12",

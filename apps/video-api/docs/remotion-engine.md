@@ -24,7 +24,8 @@ video_dir/
   jobScenes_index.ts    # re-exporte les Custom -> COMPONENTS
 ```
 
-`durationInFrames` par scène = `round(durations[key] * 60)`. Le rendu est **silencieux**
+`durationInFrames` par scène = `round(durations[key] * render_fps)` (fps configurable,
+défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 (`embedAudio:false`) ; `assemble_en.sh` muxe la voix off globale.
 
 ## Blueprint (contrat LLM)
@@ -91,9 +92,15 @@ override le chemin (défaut `repo_root/apps/video-api/remotion`).
 
 ## Qualité / verify
 
-`verify_mp4` ne vérifie 1920×1080/60 et le gate de freeze qu'au **pass final**
-(`final_quality=True`). Donc `QUALITY=ql` rend en `--scale=0.5` (preview rapide) et
-`QUALITY=qh` en `--scale=1 --crf=18`. GL : `swangle` (logiciel, sûr en headless Docker).
+`verify_mp4` ne vérifie 1920×1080 + `render_fps` (défaut 30) et le gate de freeze qu'au
+**pass final** (`final_quality=True`). Donc `QUALITY=ql` rend en `--scale=0.5` (preview
+rapide) et `QUALITY=qh` en `--scale=1 --crf=18`. GL : `swangle` (logiciel, sûr en headless
+Docker).
+
+**Leviers vitesse (VM sans GPU, rendu CPU-bound)** — toutes les passes en profitent :
+`--concurrency=$VIDEO_API_REMOTION_CONCURRENCY` (défaut `"75%"` ≈ 12 tabs/16 cœurs ;
+~0,5–1 Go/tab → baisser à `"50%"` si OOM), `--x264-preset=$VIDEO_API_RENDER_X264_PRESET`
+(défaut `faster`), et `VIDEO_API_RENDER_FPS` (défaut 30, ~2× moins de frames que 60).
 
 ## Docker
 
