@@ -139,6 +139,17 @@ Le worker reutilise `OPENAI_BASE_URL` et `OPENAI_API_KEY`. La cle est transmise 
 variable d'environnement au script de voix, pas dans la commande loggee. Pour revenir
 a Chatterbox, remettre `VIDEO_API_VOICE_ENGINE=chatterbox`.
 
+Voix locale rapide (Kokoro, ~5x temps reel CPU vs Chatterbox, EN + FR) :
+
+```text
+VIDEO_API_VOICE_ENGINE=kokoro
+VIDEO_API_VOICE_LANGUAGE=en        # en (lang_code "a") | fr (lang_code "f")
+VIDEO_API_KOKORO_VOICE=af_bella    # voix Kokoro ; FR p.ex. ff_siwis
+```
+
+Kokoro et ses deps (`kokoro`, `misaki[en,fr]`) sont dans l'image worker ; le paquet
+systeme `espeak-ng` (G2P, requis surtout pour le francais) est dans le `Dockerfile`.
+
 ### Manim
 
 ```text
@@ -153,6 +164,18 @@ Dans Docker, Manim est deja installe dans l'image. `MANIM_USE_UV=0` evite de rel
 VIDEO_API_RENDER_ENGINE=manim     # manim (defaut) | remotion
 VIDEO_API_REMOTION_DIR=           # optionnel, defaut <repo>/apps/video-api/remotion
 ```
+
+Leviers vitesse du rendu **Remotion** (VM sans GPU, rendu CPU-bound ; toutes les passes
+en profitent, sans effet sur Manim) :
+
+```text
+VIDEO_API_RENDER_FPS=30           # 30 (defaut) ~= 2x moins de frames qu'en 60
+VIDEO_API_REMOTION_CONCURRENCY=75%  # entier ou %, "75%" ~= 12 tabs/16 coeurs ; "50%" si OOM
+VIDEO_API_RENDER_X264_PRESET=faster # encode plus vite, qualite ~identique a crf 18
+```
+
+`verify.py` controle desormais `VIDEO_API_RENDER_FPS` (et plus 60 en dur) au pass final
+pour le moteur Remotion ; Manim reste verifie a 60 fps (preset `-qh` fixe).
 
 `remotion` bascule le rendu vers React/Remotion (palette de composants testes + code
 libre encadre par scene), en gardant TTS Chatterbox, `assemble_en.sh` et `verify.py`.

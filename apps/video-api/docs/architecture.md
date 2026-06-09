@@ -188,6 +188,8 @@ Chatterbox principal non-turbo
 Le moteur de voix est configurable avec `VIDEO_API_VOICE_ENGINE` :
 
 - `chatterbox` : lance la commande locale `VIDEO_API_VOICE_COMMAND` ;
+- `kokoro` : TTS local rapide (~5x temps reel CPU), EN + FR, pilote par
+  `VIDEO_API_VOICE_LANGUAGE` (en/fr) et `VIDEO_API_KOKORO_VOICE` ;
 - `openai` : appelle le endpoint OpenAI-compatible `OPENAI_BASE_URL` via `/audio/speech`.
 
 Le resultat attendu :
