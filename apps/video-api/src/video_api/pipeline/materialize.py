@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from video_api.config import Settings
+from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import SceneSpec, VideoBlueprint
 
 
@@ -540,22 +541,42 @@ cd "$(dirname "$0")"
 VIDEO="${{VIDEO:-final/{blueprint.slug}-en-silent.mp4}}"
 AUDIO="${{AUDIO:-audio/en/voiceover_en.mp3}}"
 OUTPUT="${{OUTPUT:-final/{blueprint.slug}-en-final.mp4}}"
+# Optional background music: set MUSIC_FILE to a readable audio file to mix it
+# under the voiceover. The music is looped, attenuated (MUSIC_DB, default -26),
+# and sidechain-ducked by the voice so narration always stays on top.
+MUSIC_FILE="${{MUSIC_FILE:-}}"
+MUSIC_DB="${{MUSIC_DB:--26}}"
 
-# apad extends the audio stream with silence to cover the full video duration.
-# -shortest then trims any remaining audio tail beyond the video end.
-# This prevents the audio track from ending before the video (which caused
-# freezedetect false-positives on the silent last seconds).
-ffmpeg -y \\
-  -i "${{VIDEO}}" \\
-  -i "${{AUDIO}}" \\
-  -filter_complex "[1:a]apad[a_padded]" \\
-  -map 0:v:0 \\
-  -map "[a_padded]" \\
-  -c:v copy \\
-  -c:a aac \\
-  -b:a 192k \\
-  -shortest \\
-  "${{OUTPUT}}"
+# apad extends the voice stream with silence to cover the full video duration.
+# -shortest then trims everything to the video end. This prevents the audio
+# track from ending before the video (which caused freezedetect
+# false-positives on the silent last seconds).
+if [[ -n "${{MUSIC_FILE}}" && -f "${{MUSIC_FILE}}" ]]; then
+  ffmpeg -y \\
+    -i "${{VIDEO}}" \\
+    -i "${{AUDIO}}" \\
+    -stream_loop -1 -i "${{MUSIC_FILE}}" \\
+    -filter_complex "[1:a]apad,asplit=2[voice_mix][voice_key];[2:a]volume=${{MUSIC_DB}}dB[music];[music][voice_key]sidechaincompress=threshold=0.03:ratio=8:attack=5:release=400[ducked];[voice_mix][ducked]amix=inputs=2:duration=first:normalize=0[a_out]" \\
+    -map 0:v:0 \\
+    -map "[a_out]" \\
+    -c:v copy \\
+    -c:a aac \\
+    -b:a 192k \\
+    -shortest \\
+    "${{OUTPUT}}"
+else
+  ffmpeg -y \\
+    -i "${{VIDEO}}" \\
+    -i "${{AUDIO}}" \\
+    -filter_complex "[1:a]apad[a_padded]" \\
+    -map 0:v:0 \\
+    -map "[a_padded]" \\
+    -c:v copy \\
+    -c:a aac \\
+    -b:a 192k \\
+    -shortest \\
+    "${{OUTPUT}}"
+fi
 
 echo "Wrote ${{OUTPUT}}"
 '''
@@ -580,12 +601,19 @@ class Materializer:
         )
         docs_dir.mkdir(parents=True, exist_ok=True)
         video_dir.mkdir(parents=True, exist_ok=True)
-        for generated_name in ["audio", "media", "final", "renders"]:
+        for generated_name in ["media", "final", "renders"]:
             generated_path = video_dir / generated_name
             if generated_path.exists():
                 shutil.rmtree(generated_path)
         for concat_path in video_dir.glob("concat*.txt"):
             concat_path.unlink()
+        # audio/ is NOT wiped: per-segment WAVs are cached by text+voice-params hash
+        # so a repair attempt only re-synthesizes the segments that actually changed.
+        prune_stale_audio(
+            video_dir,
+            _segments_json(blueprint)["segments"],
+            voice_signature(self.settings),
+        )
 
         (docs_dir / "plan.md").write_text(_plan_markdown(blueprint), encoding="utf-8")
         (docs_dir / "script.md").write_text(_script_markdown(blueprint), encoding="utf-8")

@@ -95,6 +95,20 @@ class Settings:
     render_x264_preset: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_RENDER_X264_PRESET", "faster")
     )
+    # Word-level forced alignment of the TTS audio (Remotion engine only). Drives
+    # narration-synced visual cues (props.cues): each item reveals when its words
+    # are actually spoken instead of on an even grid. torchaudio MMS_FA; CPU is
+    # fine for short English segments, "auto" picks CUDA when available. Failures
+    # are non-fatal (scenes keep their default timings).
+    align_enabled: bool = field(default_factory=lambda: _bool_env("VIDEO_API_ALIGN_ENABLED", True))
+    align_device: str = field(default_factory=lambda: os.getenv("VIDEO_API_ALIGN_DEVICE", "auto"))
+    # Optional background music under the voiceover. Point VIDEO_API_MUSIC_FILE
+    # at an audio file readable from the worker (e.g. a CC0 ambient loop under
+    # /data); it is looped, attenuated by VIDEO_API_MUSIC_DB (default -26 dB)
+    # and sidechain-ducked by the voice in assemble_en.sh. Empty = no music
+    # (no asset ships with the repo).
+    music_file: str = field(default_factory=lambda: os.getenv("VIDEO_API_MUSIC_FILE", ""))
+    music_gain_db: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_MUSIC_DB", "-26")))
     default_target_duration_seconds: int = field(
         default_factory=lambda: int(
             os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", str(timing.DEFAULT_TARGET_DURATION_SECONDS))
@@ -119,11 +133,16 @@ class Settings:
     verify_max_single_freeze_seconds: float = field(
         default_factory=lambda: float(os.getenv("VIDEO_API_MAX_FREEZE_SINGLE_SECONDS", "12"))
     )
-    # Default: a freeze is a quality WARNING, not a failure — the MP4 is still delivered
-    # (with quality_warnings in the report) as long as it is technically valid. Set =1 to
-    # make excessive freeze fail the job (failed_quality) again.
+    # Freeze fatality. On the Remotion engine a long freeze is a real bug (the
+    # AmbientBackground guarantees continuous motion, so a frozen stretch means a
+    # scene crashed or rendered nothing) — fatal by default. On Manim, held
+    # formulas legitimately read as "frozen" — warning by default. Override with
+    # VIDEO_API_FREEZE_FATAL=0/1.
     verify_freeze_fatal: bool = field(
-        default_factory=lambda: _bool_env("VIDEO_API_FREEZE_FATAL", False)
+        default_factory=lambda: _bool_env(
+            "VIDEO_API_FREEZE_FATAL",
+            os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower() == "remotion",
+        )
     )
 
     openai_base_url: str | None = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL"))
@@ -144,6 +163,23 @@ class Settings:
     # The OpenAI SDK retries timeouts twice by default, turning one slow call into a
     # 3x hang. Keep retries low so a stuck request fails fast and surfaces clearly.
     llm_max_retries: int = field(default_factory=lambda: int(os.getenv("VIDEO_API_LLM_MAX_RETRIES", "1")))
+    # Concurrent LLM calls for per-scene work (scene coders, per-scene blueprint
+    # passes). Scenes are independent and the calls are I/O-bound, so a small pool
+    # cuts wall time by ~N. Keep modest: a local vLLM/llama.cpp endpoint saturates
+    # quickly and slows every request when over-subscribed.
+    llm_parallel: int = field(default_factory=lambda: max(1, int(os.getenv("VIDEO_API_LLM_PARALLEL", "3"))))
+    # Two-pass Remotion blueprint generation: pass 1 plans a compact outline
+    # (structure, components, pedagogy), pass 2 writes each scene in parallel
+    # (narration + props + beat anchors) with strict per-scene validation and
+    # targeted retries. The model focuses on ~60 words and one component at a
+    # time instead of a whole 8-12 scene video, which is where narration and
+    # prop quality is won. Set =0 to fall back to the legacy single-pass call.
+    blueprint_two_pass: bool = field(default_factory=lambda: _bool_env("VIDEO_API_BLUEPRINT_TWO_PASS", True))
+    # Targeted retries when one scene of pass 2 fails validation (placeholder
+    # props, anchors not found in the narration, item/beat count mismatch).
+    blueprint_scene_attempts: int = field(
+        default_factory=lambda: max(1, int(os.getenv("VIDEO_API_BLUEPRINT_SCENE_ATTEMPTS", "2")))
+    )
 
     # v2 default: the LLM authors real, free-form Manim per scene (scene_coder) so videos
     # are visually varied and can use LaTeX, plotted axes and code blocks instead of one
@@ -167,7 +203,15 @@ class Settings:
         default_factory=lambda: int(os.getenv("VIDEO_API_SCENE_CODER_SMOKE_TIMEOUT", "150"))
     )
 
-    visual_review_enabled: bool = field(default_factory=lambda: _bool_env("VIDEO_API_VISION_ENABLED", False))
+    # Visual review auto-enables when a vision model is configured: setting
+    # VIDEO_API_VISION_MODEL is an unambiguous "I want review", so requiring a
+    # second flag just left the gate silently off. VIDEO_API_VISION_ENABLED
+    # still overrides in both directions.
+    visual_review_enabled: bool = field(
+        default_factory=lambda: _bool_env(
+            "VIDEO_API_VISION_ENABLED", bool(os.getenv("VIDEO_API_VISION_MODEL", "").strip())
+        )
+    )
     visual_review_model: str = field(default_factory=lambda: os.getenv("VIDEO_API_VISION_MODEL", ""))
     visual_review_min_score: float = field(
         default_factory=lambda: float(os.getenv("VIDEO_API_VISION_MIN_SCORE", "75"))
@@ -203,8 +247,73 @@ class Settings:
     command_timeout_seconds: int = field(
         default_factory=lambda: int(os.getenv("VIDEO_API_COMMAND_TIMEOUT_SECONDS", "14400"))
     )
+    # Hard ceiling for one whole job (Celery soft/hard time limits). A job that
+    # exceeds it raises SoftTimeLimitExceeded inside the pipeline (clean failure
+    # in DB) and is killed 5 minutes later if it ignores that. Chatterbox on CPU
+    # is slow, so the default stays generous; lower it on faster setups.
+    task_time_limit_seconds: int = field(
+        default_factory=lambda: int(os.getenv("VIDEO_API_TASK_TIME_LIMIT_SECONDS", "10800"))
+    )
+    # A job whose DB row stopped moving for this long (worker killed mid-job,
+    # OOM, host reboot) is marked failed by the API at startup so it never sits
+    # in "running" forever.
+    stale_job_hours: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_STALE_JOB_HOURS", "6"))
+    )
+    # Comma-separated API keys. Empty (default) = authentication disabled, so
+    # existing deployments keep working; set it to require X-API-Key on /v1/*.
+    api_keys: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            key.strip() for key in os.getenv("VIDEO_API_KEYS", "").split(",") if key.strip()
+        )
+    )
+    # HMAC-SHA256 secret for webhook payloads (X-Video-API-Signature header).
+    # Empty = webhooks are sent unsigned.
+    webhook_secret: str = field(default_factory=lambda: os.getenv("VIDEO_API_WEBHOOK_SECRET", ""))
+    # Workspace garbage collection: terminal jobs older than this many days get
+    # their /data/jobs/<id> directory removed at API startup. 0 (default) = off.
+    job_ttl_days: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_JOB_TTL_DAYS", "0")))
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def apply_quality_profile(settings: Settings, profile: str) -> Settings:
+    """Per-job overrides for the requested quality profile.
+
+    - draft: fast iteration — Kokoro voice (~5x real-time on CPU), half-res
+      render (QUALITY=ql), no visual review, fastest x264 preset, lenient final
+      verify (no 1080p/fps assertion). For testing a prompt, not for shipping.
+    - standard (alias: final): the configured defaults.
+    - high: standard + visual review forced on (requires VIDEO_API_VISION_MODEL;
+      without a model it stays off) + fatal freeze gate.
+    """
+    import dataclasses
+
+    profile = (profile or "standard").strip().lower()
+    if profile == "draft":
+        return dataclasses.replace(
+            settings,
+            voice_engine="kokoro",
+            visual_review_enabled=False,
+            render_x264_preset="ultrafast",
+        )
+    if profile == "high":
+        return dataclasses.replace(
+            settings,
+            visual_review_enabled=bool(settings.visual_review_model),
+            verify_freeze_fatal=True,
+        )
+    return settings
+
+
+def render_quality_for_profile(profile: str) -> str:
+    """QUALITY env for the final render: draft renders half-res (ql)."""
+    return "ql" if (profile or "").strip().lower() == "draft" else "qh"
+
+
+def strict_final_verify_for_profile(profile: str) -> bool:
+    """Draft renders are half-res by design — skip the 1080p/fps assertion."""
+    return (profile or "").strip().lower() != "draft"

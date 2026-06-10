@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import ast
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -96,11 +98,14 @@ class ManimEngine:
             return {}
 
         slug_module = blueprint.slug.replace("-", "_")
-        scene_codes: dict[str, str] = {}
-        for scene in blueprint.scenes:
+        # Scenes are independent: the LLM calls are I/O-bound, so a thread pool cuts
+        # wall time by ~pool size. Smoke renders spawn a Manim process each (CPU
+        # heavy), so they are gated to 2 at a time regardless of the LLM pool.
+        smoke_gate = threading.Semaphore(2)
+
+        def _code_one_scene(scene: Any) -> tuple[str, str | None]:
             prev_code = ""
             prev_error = ""
-            succeeded = False
             for attempt in range(self.settings.scene_coder_attempts):
                 code = ""
                 try:
@@ -113,26 +118,29 @@ class ManimEngine:
                     if self.settings.scene_coder_smoke_render:
                         module_source = build_single_scene_module(slug_module, code)
                         validate_scene_names(module_source, scene.key)
-                        smoke_render_scene(
-                            video_dir,
-                            scene.key,
-                            module_source,
-                            self.settings.scene_coder_smoke_timeout_seconds,
-                        )
-                    scene_codes[scene.key] = code
-                    succeeded = True
+                        with smoke_gate:
+                            smoke_render_scene(
+                                video_dir,
+                                scene.key,
+                                module_source,
+                                self.settings.scene_coder_smoke_timeout_seconds,
+                            )
                     logger.info("scene_codegen.success scene=%s attempt=%d", scene.key, attempt)
-                    break
+                    return scene.key, code
                 except Exception as exc:
                     prev_error = str(exc)
                     prev_code = code
                     logger.warning("scene_codegen.attempt_failed scene=%s attempt=%d error=%s", scene.key, attempt, exc)
-            if not succeeded:
-                logger.warning(
-                    "scene_codegen.fallback scene=%s using deterministic template after %d attempts",
-                    scene.key,
-                    self.settings.scene_coder_attempts,
-                )
+            logger.warning(
+                "scene_codegen.fallback scene=%s using deterministic template after %d attempts",
+                scene.key,
+                self.settings.scene_coder_attempts,
+            )
+            return scene.key, None
+
+        with ThreadPoolExecutor(max_workers=self.settings.llm_parallel) as pool:
+            results = list(pool.map(_code_one_scene, blueprint.scenes))
+        scene_codes = {key: code for key, code in results if code is not None}
         logger.info(
             "scene_codegen.done total=%d llm=%d fallback=%d",
             len(blueprint.scenes),
@@ -161,6 +169,36 @@ class RemotionEngine:
 
     def repair_blueprint(self, prompt: str, previous: dict, hint: str) -> Any:
         return self.llm.repair_remotion_blueprint(prompt, previous, hint)
+
+    def repair_scenes(self, blueprint_data: dict, review: Any) -> Any | None:
+        """Scene-level repair after a failed visual review: rewrite ONLY the
+        flagged scenes (review feedback in context), keeping every clean scene's
+        narration — so the TTS cache skips them on the re-run. Returns None when
+        no scene is identifiable (caller falls back to the global repair)."""
+        from video_api.schemas import RemotionBlueprint
+
+        feedback: dict[str, list[str]] = {}
+        for issue in getattr(review, "issues", []) or []:
+            if issue.severity in ("blocker", "major") and issue.scene_key != "unknown":
+                line = f"[{issue.severity}] {issue.dimension}: {issue.message}"
+                if issue.suggestion:
+                    line += f" Suggestion: {issue.suggestion}"
+                feedback.setdefault(issue.scene_key, []).append(line)
+        for score in getattr(review, "scene_scores", []) or []:
+            if score.score < 60 and score.scene_key not in feedback:
+                feedback[score.scene_key] = [
+                    f"scene scored {score.score:.0f}/100 — the visual does not carry the narration; "
+                    "make the props concrete and topic-specific"
+                ]
+        blueprint = RemotionBlueprint.model_validate(blueprint_data)
+        valid_keys = {scene.key for scene in blueprint.scenes}
+        feedback = {key: lines for key, lines in feedback.items() if key in valid_keys}
+        if not feedback:
+            return None
+        logger.info("engine.repair_scenes scenes=%s", ",".join(sorted(feedback)))
+        return self.llm.rewrite_remotion_scenes(
+            blueprint, {key: " ".join(lines) for key, lines in feedback.items()}
+        )
 
     def materialize(self, blueprint: Any, workspace: Path) -> Path:
         return self.materializer.materialize(blueprint, workspace)

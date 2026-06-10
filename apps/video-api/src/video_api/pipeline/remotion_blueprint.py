@@ -21,13 +21,41 @@ import math
 import re
 from typing import Any
 
-from video_api import timing
 from video_api.schemas import REMOTION_PALETTE, RemotionBlueprint
 
 logger = logging.getLogger(__name__)
 
 
 _ALLOWED_COMPONENTS = set(REMOTION_PALETTE) | {"Custom"}
+
+# Mirrors TRANSITIONS in remotion/src/MainComposition.tsx (+ "auto").
+_TRANSITIONS = {"auto", "fade", "rise", "slide-left", "scale", "slide-right", "wipe"}
+
+# Mirrors ICON_NAMES in remotion/src/catalog/Icon.tsx (parity covered by a test).
+ICON_NAMES = frozenset({
+    "activity", "alert", "arrow-right", "atom", "beaker", "binary", "book", "box",
+    "braces", "brain", "bug", "cable", "calculator", "chart", "circuit", "clock",
+    "cloud", "code", "cog", "compass", "cpu", "database", "disc", "dna", "exchange",
+    "file", "filter", "flask", "folder", "function", "gauge", "git", "globe",
+    "graduation", "hash", "infinity", "key", "layers", "lightbulb", "lock", "magnet",
+    "memory", "microscope", "monitor", "network", "orbit", "package", "pi", "pointer",
+    "radio", "refresh", "repeat", "rocket", "ruler", "scale", "search", "server",
+    "settings", "shield", "shuffle", "sigma", "smartphone", "sparkles", "storage",
+    "table", "target", "telescope", "terminal", "test-tube", "thermometer", "timer",
+    "trending", "triangle", "unlock", "usb", "variable", "waves", "wifi", "workflow",
+    "wrench", "x", "zap",
+})
+
+
+def _norm_icon(value: Any) -> str | None:
+    """Validate an icon name against the allow-list; unknown -> None (dropped)."""
+    name = str(value or "").strip().lower()
+    if not name:
+        return None
+    if name in ICON_NAMES:
+        return name
+    logger.info("remotion_blueprint.icon_dropped name=%s", name)
+    return None
 
 # Lower-cased aliases the model often emits for component names.
 _COMPONENT_ALIASES = {
@@ -107,14 +135,14 @@ _COMPONENT_ALIASES = {
 
 _PALETTE_LINE = (
     "- TitleScene:   { title: str, subtitle?: str, accent?: \"#hex\" }  — open a video/section\n"
-    "- BulletScene:  { title: str, bullets: [str, ...(2-5)], caption?: str, accent?: \"#hex\" }\n"
+    "- BulletScene:  { title: str, bullets: [str, ...(2-5)], icons?: [icon_name|null per bullet], caption?: str, accent?: \"#hex\" }\n"
     "- FormulaScene: { title: str, formulas: [latex_str, ...(1-3)], caption?: str }\n"
     "      latex example: \"f'(x) = \\\\lim_{h \\\\to 0} \\\\frac{f(x+h)-f(x)}{h}\" (escape backslashes for JSON)\n"
     "- CodeScene:    { title: str, code: \"line1\\nline2\", lang: \"python|c|bash|tsx\", codeTitle?: str, caption?: str }\n"
     "- PlotScene:    { title: str, expr: \"python expr in x, e.g. 0.18*x**2 or sin(x)\",\n"
     "                  xRange: [min,max], yRange: [min,max], sweep?: bool, area?: bool, xLabel?: str, yLabel?: str, caption?: str }\n"
     "- DiagramScene: { title: str,\n"
-    "                  nodes: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), color?: \"#hex\"} ],\n"
+    "                  nodes: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), color?: \"#hex\", icon?: icon_name} ],\n"
     "                  edges: [ {from: id, to: id, color?: \"#hex\", label?: str} ], caption?: str }\n"
     "- ComparisonScene: { title: str, left: {label: str, items: [str, ...(2-5)]},\n"
     "                  right: {label: str, items: [str, ...(2-5)]}, caption?: str }  — two columns side by side (user vs kernel, before vs after)\n"
@@ -122,7 +150,7 @@ _PALETTE_LINE = (
     "- TimelineScene: { title: str, steps: [ {label: str, sub?: str}, ...(2-5) ], caption?: str }  — left->right sequence / process / lifecycle\n"
     "- TerminalScene: { title: str, command: str, output?: str, caption?: str }  — a shell command typed out + its output\n"
     "- MemoryScene:  { title: str, cells: [ {label?: str, sub?: str, color?: \"#hex\", highlight?: bool}, ...(up to 12) ], cols?: int(1-6), caption?: str }  — grid of cells: memory, page tables, registers, stack frames\n"
-    "- FlowScene:    { title: str, stages: [ {label: str, sub?: str}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
+    "- FlowScene:    { title: str, stages: [ {label: str, sub?: str, icon?: icon_name}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
     "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
     "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
@@ -149,7 +177,9 @@ Return ONLY one JSON object (no prose, no markdown fences) with this shape:
     {{ "key": "Scene1_HookEN", "title": "short scene title",
        "narration": "full spoken sentences for this scene (this is the spine)",
        "duration_seconds": <int>, "component": "<ComponentName>",
-       "props": {{ ... }}, "visual_intent": "concrete visual plan (required for Custom)" }}
+       "props": {{ ... }},
+       "beats": [ {{ "anchor": "3-8 word phrase copied VERBATIM from this scene's narration" }} ],
+       "visual_intent": "concrete visual plan (required for Custom)" }}
   ]
 }}
 
@@ -168,6 +198,12 @@ Rules:
   quantities/benchmarks->BarChartScene, one headline metric->CounterScene.
 - Prefer this richer palette over plain BulletScene whenever a sentence has structure (a contrast,
   layers, ordered steps, or a command) — a varied, topic-specific visual reads far better than lists.
+- BEATS: for every scene whose component shows multiple items (bullets, layers, steps, stages, cells,
+  nodes, formulas, comparison items), add "beats": one anchor per visual item, in display order.
+  Each anchor is the exact 3-8 word phrase from THIS scene's narration spoken at the moment that item
+  should appear (copy it verbatim, do not paraphrase). The renderer aligns the voiceover and reveals
+  each item exactly when its anchor is spoken. For ComparisonScene, order anchors as all left items
+  then all right items. Scenes with a single visual (TitleScene, CounterScene) may omit beats.
 - Use Custom rarely, only when nothing in the palette fits.
 Palette hints: user=#3A86FF, gold=#FFBE0B, success=#06D6A0, purple=#9B5DE5, danger=#FB5607."""
 
@@ -227,6 +263,30 @@ def _bullets_from_narration(text: str, count: int = 3) -> list[str]:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     bullets = [s[:70].rstrip(" .,:;") for s in sentences[:count]]
     return bullets or ["Key idea"]
+
+
+def _norm_beats(value: Any) -> list[dict[str, str]]:
+    """Coerce blueprint beats into [{anchor}], tolerating strings and aliases.
+
+    Anchors are matched fuzzily against the aligned audio downstream
+    (pipeline/beats.py); an anchor the TTS never speaks simply resolves to a
+    null cue, so light coercion here is safe.
+    """
+    out: list[dict[str, str]] = []
+    if isinstance(value, (list, tuple)):
+        for item in list(value)[:10]:
+            if isinstance(item, str):
+                anchor = item
+            elif isinstance(item, dict):
+                anchor = str(
+                    item.get("anchor") or item.get("phrase") or item.get("text") or item.get("when") or ""
+                )
+            else:
+                continue
+            anchor = " ".join(anchor.split())[:80]
+            if len(anchor) >= 3:
+                out.append({"anchor": anchor})
+    return out
 
 
 def _label_items(value: Any, fallback_label: str, narration: str) -> dict[str, Any]:
@@ -296,6 +356,10 @@ def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap
                     if k == "color":
                         if isinstance(item.get("color"), str):
                             record["color"] = item["color"]
+                    elif k == "icon":
+                        icon = _norm_icon(item.get("icon"))
+                        if icon:
+                            record["icon"] = icon
                     elif item.get(k):
                         record[k] = str(item[k]).strip()[:48]
                 out.append(record)
@@ -304,12 +368,20 @@ def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap
     return out
 
 
-def _normalise_props(scene: dict[str, Any]) -> dict[str, Any]:
+def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = None) -> dict[str, Any]:
     component = scene.get("component")
     props = dict(scene.get("props") or {})
     title = scene.get("title") or props.get("title") or ""
     narration = scene.get("narration") or ""
     props.setdefault("title", title)
+
+    def degrade(message: str) -> None:
+        # A placeholder keeps the render alive, but it is content the viewer was
+        # never meant to see — record it so report.json can expose it.
+        full = f"{scene.get('key', '?')}: {message}"
+        logger.warning("remotion_blueprint.degraded %s", full)
+        if degradations is not None:
+            degradations.append(full)
 
     if component == "PlotScene":
         x_range = _clamp_range(props.get("xRange"), -50, 50, (-4.0, 4.0))
@@ -317,51 +389,91 @@ def _normalise_props(scene: dict[str, Any]) -> dict[str, Any]:
         props["xRange"] = x_range
         props["yRange"] = y_range
         if not props.get("points"):
-            expr = str(props.pop("expr", "") or "0.18*x**2")
+            expr = str(props.pop("expr", "") or "")
+            if not expr:
+                degrade("PlotScene without expr/points — generic parabola injected")
+                expr = "0.18*x**2"
             props["points"] = sample_expr(expr, x_range[0], x_range[1])
         else:
             props.pop("expr", None)
     elif component == "BulletScene":
         bullets = _as_str_list(props.get("bullets"))[:5]
-        props["bullets"] = bullets or _bullets_from_narration(narration)
+        if not bullets:
+            degrade("BulletScene without bullets — derived from narration sentences")
+            bullets = _bullets_from_narration(narration)
+        props["bullets"] = bullets
+        if props.get("icons") is not None:
+            raw_icons = props["icons"] if isinstance(props["icons"], (list, tuple)) else []
+            props["icons"] = [_norm_icon(icon) for icon in list(raw_icons)[: len(bullets)]]
     elif component == "FormulaScene":
         formulas = _as_str_list(props.get("formulas"))[:3]
-        props["formulas"] = formulas or ["y = f(x)"]
+        if not formulas:
+            degrade("FormulaScene without formulas — placeholder 'y = f(x)' injected")
+            formulas = ["y = f(x)"]
+        props["formulas"] = formulas
     elif component == "CodeScene":
-        props.setdefault("code", "# code")
+        if not str(props.get("code") or "").strip():
+            degrade("CodeScene without code — placeholder comment injected")
+            props["code"] = "# code"
         props.setdefault("lang", "python")
     elif component == "DiagramScene":
         nodes = props.get("nodes") if isinstance(props.get("nodes"), list) else []
+        if not nodes:
+            degrade("DiagramScene without nodes")
         for node in nodes:
             if isinstance(node, dict):
                 node["x"] = max(-6.0, min(6.0, _to_float(node.get("x"), 0.0)))
                 node["y"] = max(-3.0, min(3.0, _to_float(node.get("y"), 0.0)))
+                icon = _norm_icon(node.get("icon"))
+                if icon:
+                    node["icon"] = icon
+                else:
+                    node.pop("icon", None)
         props["nodes"] = nodes
         props["edges"] = props.get("edges") if isinstance(props.get("edges"), list) else []
     elif component == "ComparisonScene":
+        if not isinstance(props.get("left"), (dict, list)) or not isinstance(props.get("right"), (dict, list)):
+            degrade("ComparisonScene missing a column — derived from narration")
         props["left"] = _label_items(props.get("left"), "A", narration)
         props["right"] = _label_items(props.get("right"), "B", narration)
     elif component == "LayeredSystemScene":
         layers = _norm_records(props.get("layers"), ("label", "name", "title"), ("sub", "color"))
-        props["layers"] = layers or [{"label": b} for b in _bullets_from_narration(narration, 4)]
+        if not layers:
+            degrade("LayeredSystemScene without layers — derived from narration")
+            layers = [{"label": b} for b in _bullets_from_narration(narration, 4)]
+        props["layers"] = layers
     elif component == "TimelineScene":
         steps = _norm_records(props.get("steps"), ("label", "name", "title"), ("sub",), cap=36)
-        props["steps"] = steps or [{"label": b} for b in _bullets_from_narration(narration, 4)]
+        if not steps:
+            degrade("TimelineScene without steps — derived from narration")
+            steps = [{"label": b} for b in _bullets_from_narration(narration, 4)]
+        props["steps"] = steps
     elif component == "TerminalScene":
-        props["command"] = str(props.get("command") or props.get("cmd") or "echo hello").strip()[:120]
+        command = str(props.get("command") or props.get("cmd") or "").strip()
+        if not command:
+            degrade("TerminalScene without command — placeholder 'echo hello' injected")
+            command = "echo hello"
+        props["command"] = command[:120]
         output = props.get("output")
         if output is not None:
             props["output"] = str(output)[:500]
     elif component == "MemoryScene":
         cells = _norm_cells(props.get("cells"))
-        props["cells"] = cells or [{"label": f"0x{i:X}"} for i in range(8)]
+        if not cells:
+            degrade("MemoryScene without cells — generic 0x0..0x7 grid injected")
+            cells = [{"label": f"0x{i:X}"} for i in range(8)]
+        props["cells"] = cells
         props["cols"] = max(1, min(6, int(_to_float(props.get("cols"), 4))))
     elif component == "FlowScene":
-        stages = _norm_records(props.get("stages"), ("label", "name", "title"), ("sub",), cap=24)
-        props["stages"] = stages or [{"label": b} for b in _bullets_from_narration(narration, 4)]
+        stages = _norm_records(props.get("stages"), ("label", "name", "title"), ("sub", "icon"), cap=24)
+        if not stages:
+            degrade("FlowScene without stages — derived from narration")
+            stages = [{"label": b} for b in _bullets_from_narration(narration, 4)]
+        props["stages"] = stages
     elif component == "BarChartScene":
         bars = _norm_bars(props.get("bars"))
         if not bars:
+            degrade("BarChartScene without bars — INVENTED values injected")
             sentences = _bullets_from_narration(narration, 4)
             bars = [
                 {"label": (s.split()[0] if s.split() else "?")[:12], "value": float((i + 2) * 2)}
@@ -369,6 +481,8 @@ def _normalise_props(scene: dict[str, Any]) -> dict[str, Any]:
             ]
         props["bars"] = bars
     elif component == "CounterScene":
+        if props.get("value") is None:
+            degrade("CounterScene without value — placeholder 100 injected")
         props["value"] = _to_float(props.get("value"), 100.0)
         for key in ("prefix", "suffix", "label"):
             if props.get(key) is not None:
@@ -417,6 +531,7 @@ def normalize_remotion_blueprint(data: Any, target_duration_seconds: int) -> dic
     raw_scenes = coerced.get("scenes")
     if not isinstance(raw_scenes, list) or not raw_scenes:
         raise ValueError("Remotion blueprint produced no scenes")
+    degradations: list[str] = list(coerced.get("degradations") or [])
     scenes: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_scenes, start=1):
         if not isinstance(raw, dict):
@@ -434,12 +549,214 @@ def normalize_remotion_blueprint(data: Any, target_duration_seconds: int) -> dic
         )
         scene["component"] = _normalise_component(scene.get("component"))
         scene["visual_intent"] = scene.get("visual_intent") or scene.get("visual") or scene.get("visual_description") or ""
-        scene["props"] = _normalise_props(scene)
+        scene["props"] = _normalise_props(scene, degradations)
+        scene["beats"] = _norm_beats(scene.get("beats") or scene.get("anchors") or scene.get("cues"))
+        transition = str(scene.get("transition") or "auto").strip().lower()
+        scene["transition"] = transition if transition in _TRANSITIONS else "auto"
         scene.pop("name", None)
         scene.pop("text", None)
         scenes.append(scene)
     coerced["scenes"] = scenes
+    coerced["degradations"] = degradations
     return coerced
+
+
+# --------------------------------------------------------------------------- #
+# Two-pass generation: outline prompt + per-scene prompt + strict validation
+# --------------------------------------------------------------------------- #
+
+REMOTION_OUTLINE_PROMPT = f"""You are a STEM explainer-video director planning a short narrated video.
+Design ONLY the pedagogical outline as STRICT JSON — scene narrations and props are written later,
+one scene at a time, from your outline.
+
+Return ONLY one JSON object (no prose, no fences):
+{{
+  "title": "short video title",
+  "theme": "kebab-case theme",
+  "slug": "kebab-case-slug",
+  "subject_area": "math | physics | cs | biology | chemistry | engineering | general_stem",
+  "difficulty": "intro | intermediate | advanced",
+  "audience": "who this is for",
+  "teaching_goal": "one sentence",
+  "learning_objectives": ["1 to 5 concise objectives"],
+  "style_notes": "visual style in one or two sentences",
+  "scenes": [
+    {{ "key": "Scene1_HookEN", "title": "short scene title",
+       "component": "<ComponentName>", "duration_seconds": <int>,
+       "goal": "the ONE idea this scene must make click (1-2 sentences)",
+       "visual_idea": "concrete, topic-specific visual plan (1-2 sentences)" }}
+  ]
+}}
+
+Available components (props come later; pick by what the scene shows):
+{_PALETTE_LINE}
+
+Rules:
+- Plan the explanation from intuition, to mechanism, to transfer or recap. Scene 1 hooks with a
+  question or surprising fact; the last scene is a BulletScene recap of the key takeaways.
+- Open with a TitleScene. Scene keys ordered Scene1_...EN, Scene2_...EN.
+- AT MOST 2 BulletScene in the whole video (recap included). Every idea with structure gets a
+  structural component: contrast->ComparisonScene, layers->LayeredSystemScene, ordered process->
+  TimelineScene or FlowScene, function/data->PlotScene, equations->FormulaScene, code->CodeScene,
+  command->TerminalScene, memory->MemoryScene, relationships->DiagramScene.
+- Each scene teaches exactly ONE idea; goals must build on each other in order.
+- Respect the duration_policy scene count and per-scene durations handed in the user message."""
+
+REMOTION_SCENE_PROMPT = f"""You write ONE scene of a STEM explainer video, as STRICT JSON.
+You receive the video outline, this scene's goal, its component, and its neighbours for continuity.
+
+Return ONLY one JSON object (no prose, no fences):
+{{
+  "narration": "full spoken sentences for this scene",
+  "props": {{ ... complete props for the component ... }},
+  "beats": [ {{ "anchor": "3-8 word phrase copied VERBATIM from your narration" }} ]
+}}
+
+Component prop reference:
+{_PALETTE_LINE}
+
+Rules:
+- The narration is spoken aloud by a TTS voice: write natural, flowing sentences with a concrete
+  example or analogy. Do not reference the screen ("as you can see"); the visual follows the words.
+- Open by linking to the previous scene's idea; end by leaning toward the next scene's idea.
+- Meet the word budget you are given — too few words and the scene is rejected.
+- Props must be COMPLETE and topic-specific: real formulas, real code, real labels. Never leave a
+  list empty, never write filler like "example" or "value".
+- beats: one anchor per visual item, in display order (ComparisonScene: all left items then all
+  right items). Copy each anchor verbatim from your narration — the renderer reveals the item when
+  those words are spoken. Mention every visual item's content in the narration so anchors exist.
+- visual term limit: ~7 words per on-screen label; put detail in the narration, not the screen.
+- ICONS: where the component supports them (BulletScene icons, DiagramScene nodes[].icon,
+  FlowScene stages[].icon), pick a fitting name from this list (anything else is dropped):
+  {", ".join(sorted(ICON_NAMES))}
+
+Example output (component=FlowScene, goal="trace the path of one read() call"):
+{{
+  "narration": "Let's follow a single read call from start to finish. Your program calls read, and the C library wraps that request into a system call. The CPU then switches into kernel mode, where the kernel checks that your program is allowed to touch that file. Only then does the driver pull the data off the disk and hand it back up the same path.",
+  "props": {{
+    "title": "The journey of read()",
+    "stages": [
+      {{ "label": "Program", "sub": "read()" }},
+      {{ "label": "libc", "sub": "wraps the call" }},
+      {{ "label": "Kernel", "sub": "checks permissions" }},
+      {{ "label": "Driver", "sub": "reads the disk" }}
+    ]
+  }},
+  "beats": [
+    {{ "anchor": "Your program calls read" }},
+    {{ "anchor": "the C library wraps that request" }},
+    {{ "anchor": "the kernel checks that your program" }},
+    {{ "anchor": "the driver pull the data" }}
+  ]
+}}"""
+
+# Per-component required props for STRICT validation (pass 2). A scene that
+# fails these gets a targeted retry with the error list; only after retries are
+# exhausted does the lenient normalisation fill placeholders (recorded as
+# degradations).
+_LIST_PROPS = {
+    "BulletScene": "bullets",
+    "FormulaScene": "formulas",
+    "LayeredSystemScene": "layers",
+    "TimelineScene": "steps",
+    "FlowScene": "stages",
+    "DiagramScene": "nodes",
+    "BarChartScene": "bars",
+    "MemoryScene": "cells",
+}
+
+
+def _items_count(component: str, props: dict[str, Any]) -> int | None:
+    """Number of cue-able visual items the component will display, or None."""
+    if component in _LIST_PROPS:
+        value = props.get(_LIST_PROPS[component])
+        return len(value) if isinstance(value, (list, tuple)) else 0
+    if component == "ComparisonScene":
+        total = 0
+        for side in ("left", "right"):
+            value = props.get(side)
+            if isinstance(value, dict) and isinstance(value.get("items"), (list, tuple)):
+                total += len(value["items"][:5])
+            elif isinstance(value, (list, tuple)):
+                total += len(value[:5])
+        return total
+    return None
+
+
+def validate_scene_payload(scene: dict[str, Any]) -> list[str]:
+    """Strict per-scene checks for pass-2 output. Returns human-readable errors.
+
+    Catches what the lenient normalisation would otherwise paper over with
+    placeholders: missing/empty props, anchors that do not appear in the
+    narration, and item/anchor count drift on multi-item components.
+    """
+    from video_api.pipeline.beats import anchor_in_text
+
+    errors: list[str] = []
+    component = str(scene.get("component") or "")
+    props = scene.get("props") if isinstance(scene.get("props"), dict) else {}
+    narration = str(scene.get("narration") or "")
+
+    if len(narration.split()) < 15:
+        errors.append("narration is too short — write full spoken sentences")
+
+    # Density: more items than the component can show kills comprehension (and
+    # the renderer would silently slice them off anyway).
+    item_count = _items_count(component, props)
+    max_items = 12 if component == "MemoryScene" else 6
+    if item_count is not None and item_count > max_items:
+        errors.append(
+            f"{item_count} visual items is too dense for {component} (max {max_items}) — "
+            "keep the strongest items and move the rest into the narration"
+        )
+
+    if component in _LIST_PROPS:
+        key = _LIST_PROPS[component]
+        value = props.get(key)
+        if not isinstance(value, (list, tuple)) or len([v for v in value if v]) < 2:
+            errors.append(f"props.{key} must list at least 2 real items for {component}")
+    elif component == "CodeScene":
+        code = str(props.get("code") or "").strip()
+        if len(code.splitlines()) < 2 or code in {"# code", "..."}:
+            errors.append("props.code must contain real, topic-specific code (2+ lines)")
+    elif component == "TerminalScene":
+        command = str(props.get("command") or props.get("cmd") or "").strip()
+        if not command or command == "echo hello":
+            errors.append("props.command must be a real, topic-specific shell command")
+    elif component == "PlotScene":
+        if not props.get("expr") and not props.get("points"):
+            errors.append("PlotScene needs props.expr (python expression in x) or props.points")
+    elif component == "ComparisonScene":
+        for side in ("left", "right"):
+            value = props.get(side)
+            items = value.get("items") if isinstance(value, dict) else value
+            if not isinstance(items, (list, tuple)) or len(items) < 2:
+                errors.append(f"props.{side}.items must list at least 2 real items")
+    elif component == "CounterScene":
+        if props.get("value") is None:
+            errors.append("CounterScene needs a real props.value")
+
+    beats = scene.get("beats") or []
+    anchors = [
+        str(b.get("anchor") if isinstance(b, dict) else b) for b in beats if b
+    ]
+    for anchor in anchors:
+        if anchor and not anchor_in_text(narration, anchor):
+            errors.append(
+                f"beat anchor {anchor!r} does not appear in the narration — copy it verbatim"
+            )
+    expected = _items_count(component, props)
+    if expected is not None and expected >= 2 and anchors:
+        if abs(len(anchors) - expected) > 1:
+            errors.append(
+                f"{len(anchors)} beat anchors for {expected} visual items — provide one anchor "
+                "per item in display order"
+            )
+    elif expected is not None and expected >= 2 and not anchors:
+        errors.append(
+            "multi-item scene without beats — add one verbatim narration anchor per visual item"
+        )
+    return errors
 
 
 # --------------------------------------------------------------------------- #
@@ -515,6 +832,14 @@ def fake_remotion_blueprint(
     last_index = len(base.scenes) - 1
     for index, scene in enumerate(base.scenes):
         component = _component_for_layout(scene.layout, index == 0, index == last_index)
+        # Verbatim leading words of each sentence double as beat anchors so the
+        # fake path exercises the full align -> cues plumbing end to end.
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", scene.text) if s.strip()]
+        beats = [
+            {"anchor": " ".join(sentence.split()[:6])}
+            for sentence in sentences[:4]
+            if len(sentence.split()) >= 3
+        ]
         scenes.append(
             {
                 "key": scene.key,
@@ -523,6 +848,7 @@ def fake_remotion_blueprint(
                 "duration_seconds": scene.duration_seconds,
                 "component": component,
                 "props": _props_for(component, scene.title, scene.text, scene.beats),
+                "beats": beats,
                 "visual_intent": scene.visual_intent,
             }
         )

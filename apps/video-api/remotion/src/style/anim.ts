@@ -57,3 +57,27 @@ export const tailFade = (p: number, start = 0.97): number =>
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
+
+/**
+ * Narration-synced cue for item i. `cues` comes from props (resolved by the
+ * pipeline from the word-level alignment of the TTS audio); `null` means the
+ * anchor wasn't matched, so the item keeps the scene's default ratio.
+ */
+export const cueOr = (
+  cues: (number | null)[] | undefined,
+  i: number,
+  fallback: number,
+): number => cues?.[i] ?? fallback;
+
+/** Last resolved cue — "finish this animation by the time that is spoken". */
+export const lastCue = (
+  cues: (number | null)[] | undefined,
+  fallback: number,
+): number => {
+  if (!cues) return fallback;
+  for (let i = cues.length - 1; i >= 0; i--) {
+    const c = cues[i];
+    if (c !== null && c !== undefined) return c;
+  }
+  return fallback;
+};

@@ -66,6 +66,11 @@ COPY apps/video-api/pyproject.toml apps/video-api/README.md /workspace/apps/vide
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r /workspace/apps/video-api/pyproject.toml \
     --extra worker --extra test
+# Pre-download the MMS_FA forced-alignment weights (~300 MB) into the torch hub
+# cache so the audio_alignment step never downloads at job time. Failure is
+# tolerated (offline build): the worker would then fetch lazily on first use.
+RUN python -c "from torchaudio.pipelines import MMS_FA; MMS_FA.get_model(with_star=False)" || \
+    echo "WARNING: MMS_FA pre-download failed; weights will download on first use"
 
 # --- Remotion dependency layer --------------------------------------------
 # Only the manifest is copied here so `npm ci` + the Chrome Headless Shell

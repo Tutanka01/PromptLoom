@@ -32,6 +32,7 @@ from pathlib import Path
 
 from video_api.config import Settings
 from video_api.pipeline.materialize import _assemble_script, slugify
+from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import RemotionBlueprint, RemotionScene
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def _scenes_map(blueprint: RemotionBlueprint, fps: int) -> dict:
                 "key": scene.key,
                 "component": component,
                 "custom": scene.is_custom,
+                "transition": getattr(scene, "transition", "auto"),
                 "props": dict(scene.props or {}),
             }
         )
@@ -92,6 +94,7 @@ for entry in scene_map["scenes"]:
     scenes.append({
         "component": entry["component"],
         "props": entry.get("props", {}),
+        "transition": entry.get("transition", "auto"),
         "durationInFrames": frames,
     })
 
@@ -227,10 +230,17 @@ class RemotionMaterializer:
         )
         docs_dir.mkdir(parents=True, exist_ok=True)
         video_dir.mkdir(parents=True, exist_ok=True)
-        for name in ["audio", "final", "renders"]:
+        for name in ["final", "renders"]:
             stale = video_dir / name
             if stale.exists():
                 shutil.rmtree(stale)
+        # audio/ is NOT wiped: per-segment WAVs are cached by text+voice-params hash
+        # so a repair attempt only re-synthesizes the segments that actually changed.
+        prune_stale_audio(
+            video_dir,
+            _segments_json(blueprint)["segments"],
+            voice_signature(self.settings),
+        )
         scenes_dir = video_dir / "remotion_scenes"
         if scenes_dir.exists():
             shutil.rmtree(scenes_dir)

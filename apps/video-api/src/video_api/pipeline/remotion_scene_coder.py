@@ -20,8 +20,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import subprocess
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -69,9 +72,10 @@ Write ONE self-contained scene component. Output ONLY TypeScript/TSX code — no
 Hard rules (a violation makes the scene unusable):
 - Export exactly: `export const {KEY}: React.FC<any> = ({{ dur, ...props }}) => {{ ... }}` where {KEY} is the scene key.
 - Import ONLY from "react", "remotion", and the project barrel "../../lib". Never import anything else, never read files or the network.
-- The scene length in frames is the `dur` prop. Drive every animation from `const frame = useCurrentFrame()` and `const p = frame / dur` (0..1). Fade the whole scene out near p=1 (use `tailFade(p)` from ../../lib).
+- The scene length in frames is the `dur` prop. Drive every animation from `const frame = useCurrentFrame()` and `const p = frame / dur` (0..1). Do NOT fade the whole scene in/out yourself — the composition's SceneFrame owns the scene envelope and transition; just keep your last beat settling before p≈0.9.
+- If `props.cues` (array of number|null) is present, it holds narration-synced reveal ratios per visual item: use `cueOr(cues, i, fallback)` from ../../lib so item i appears when its words are spoken.
 - 1920x1080 at 60fps. Wrap content in <AbsoluteFill>. Use `colors`, `mx(x)`, `my(y)` from ../../lib for the dark theme + coordinate mapping (x in [-6,6], y in [-3,3], origin centered, y up).
-- Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
+- Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox, Icon). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
 
 
@@ -79,19 +83,21 @@ class RemotionSceneCoder:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._client: Any = None
+        self._client_lock = threading.Lock()
 
     # ------------------------------------------------------------------ LLM
     def _get_client(self) -> Any:
-        if self._client is None:
-            from openai import OpenAI
+        with self._client_lock:
+            if self._client is None:
+                from openai import OpenAI
 
-            self._client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_base_url,
-                timeout=self.settings.llm_timeout_seconds,
-                max_retries=self.settings.llm_max_retries,
-            )
-        return self._client
+                self._client = OpenAI(
+                    api_key=self.settings.openai_api_key,
+                    base_url=self.settings.openai_base_url,
+                    timeout=self.settings.llm_timeout_seconds,
+                    max_retries=self.settings.llm_max_retries,
+                )
+            return self._client
 
     def _model(self) -> str:
         return self.settings.scene_coder_model or self.settings.openai_model
@@ -169,18 +175,18 @@ class RemotionSceneCoder:
             return
 
         remotion_dir = self.settings.repo_root / "apps" / "video-api" / "remotion"
-        scene_codes: dict[str, str] = {}
-        failed: set[str] = set()
-        for scene in custom:
-            code = self._code_one_scene(scene, blueprint, remotion_dir)
-            if code is not None:
-                scene_codes[scene.key] = code
-            else:
-                failed.add(scene.key)
+        scene_codes = self._code_scenes_in_waves(custom, blueprint, remotion_dir)
+        failed = {scene.key for scene in custom} - set(scene_codes)
 
         if scene_codes:
             materializer.write_scene_codes(video_dir, blueprint, scene_codes)
         if failed:
+            for key in sorted(failed):
+                logger.warning(
+                    "remotion_scene_coder.fallback scene=%s after %d attempts",
+                    key,
+                    self.settings.scene_coder_attempts,
+                )
             fallback_custom_to_palette(video_dir, blueprint, failed)
         logger.info(
             "remotion_scene_coder.done custom=%d generated=%d fallback=%d",
@@ -189,34 +195,73 @@ class RemotionSceneCoder:
             len(failed),
         )
 
-    def _code_one_scene(self, scene: Any, blueprint: Any, remotion_dir: Path) -> str | None:
-        prev_code = ""
-        prev_error = ""
+    def _code_scenes_in_waves(
+        self, custom: list[Any], blueprint: Any, remotion_dir: Path
+    ) -> dict[str, str]:
+        """Generate all Custom scenes in attempt *waves*.
+
+        Per wave: LLM calls for the still-pending scenes run in parallel (I/O
+        bound), then ONE `tsc --noEmit` type-checks every candidate of the wave
+        at once (instead of a full project check per candidate), then each
+        type-clean candidate is proven with a one-frame `remotion still`. Scenes
+        that fail carry their code+error into the next wave as repair context.
+        """
+        scenes_by_key = {scene.key: scene for scene in custom}
+        pending = list(custom)
+        prev: dict[str, tuple[str, str]] = {}
+        scene_codes: dict[str, str] = {}
+
         for attempt in range(self.settings.scene_coder_attempts):
-            try:
+            if not pending:
+                break
+
+            candidates: dict[str, str] = {}
+            errors: dict[str, str] = {}
+
+            def _generate(scene: Any) -> str:
+                prev_code, prev_error = prev.get(scene.key, ("", ""))
                 raw = self._call_llm(self._messages(scene, blueprint, prev_code, prev_error))
                 code = _strip_fences(raw)
                 _validate_static(code, scene.key)
-                if self.settings.scene_coder_smoke_render:
-                    _smoke_check(
-                        code,
-                        scene,
-                        remotion_dir,
-                        self.settings.scene_coder_smoke_timeout_seconds,
-                    )
-                logger.info("remotion_scene_coder.success scene=%s attempt=%d", scene.key, attempt)
                 return code
-            except Exception as exc:
-                prev_code = locals().get("code", prev_code) or prev_code
-                prev_error = str(exc)
-                logger.warning(
-                    "remotion_scene_coder.attempt_failed scene=%s attempt=%d error=%s",
-                    scene.key,
-                    attempt,
-                    str(exc)[:300],
+
+            with ThreadPoolExecutor(max_workers=self.settings.llm_parallel) as pool:
+                futures = {pool.submit(_generate, scene): scene for scene in pending}
+                for future in as_completed(futures):
+                    scene = futures[future]
+                    try:
+                        candidates[scene.key] = future.result()
+                    except Exception as exc:
+                        errors[scene.key] = str(exc)
+
+            if candidates and self.settings.scene_coder_smoke_render:
+                smoke_errors = _batch_smoke_check(
+                    candidates,
+                    scenes_by_key,
+                    remotion_dir,
+                    self.settings.scene_coder_smoke_timeout_seconds,
                 )
-        logger.warning("remotion_scene_coder.fallback scene=%s after %d attempts", scene.key, self.settings.scene_coder_attempts)
-        return None
+                errors.update(smoke_errors)
+
+            next_pending: list[Any] = []
+            for scene in pending:
+                key = scene.key
+                if key in candidates and key not in errors:
+                    scene_codes[key] = candidates[key]
+                    logger.info("remotion_scene_coder.success scene=%s attempt=%d", key, attempt)
+                else:
+                    old_code, _ = prev.get(key, ("", ""))
+                    prev[key] = (candidates.get(key) or old_code, errors.get(key, ""))
+                    next_pending.append(scene)
+                    logger.warning(
+                        "remotion_scene_coder.attempt_failed scene=%s attempt=%d error=%s",
+                        key,
+                        attempt,
+                        errors.get(key, "")[:300],
+                    )
+            pending = next_pending
+
+        return scene_codes
 
 
 def _strip_fences(raw: str) -> str:
@@ -238,41 +283,80 @@ def _validate_static(code: str, scene_key: str) -> None:
             raise ValueError(f"disallowed import: {spec!r} (allowed: react, remotion, ../../lib)")
 
 
-def _smoke_check(code: str, scene: Any, remotion_dir: Path, timeout: int) -> None:
-    """Typecheck the project with the candidate in place, then render one frame.
+def _batch_smoke_check(
+    candidates: dict[str, str],
+    scenes_by_key: dict[str, Any],
+    remotion_dir: Path,
+    timeout: int,
+) -> dict[str, str]:
+    """Typecheck a whole wave of candidates with ONE ``tsc --noEmit``, then render
+    one frame per type-clean candidate. Returns {scene_key: error} for failures.
 
-    The candidate is placed under src/jobScenes/<smoke_id>/ so its ``../../lib``
-    import resolves exactly as it will at render time. A throwaway entry exposes a
-    ``Smoke`` composition rendering the scene with its real props.
+    Candidates live under src/jobScenes/<batch_id>/ so their ``../../lib`` import
+    resolves exactly as at render time; tsconfig includes ``src``, so a single tsc
+    run covers every candidate of the wave. tsc errors are attributed per scene by
+    file path in the diagnostic output.
     """
-    smoke_id = "smoke_" + uuid.uuid4().hex[:12]
-    scenes_dir = remotion_dir / "src" / "jobScenes" / smoke_id
-    entry_path = remotion_dir / "src" / "entries" / f"{smoke_id}.tsx"
-    out_png = remotion_dir / "src" / "entries" / f"{smoke_id}.png"
+    batch_id = "smoke_" + uuid.uuid4().hex[:12]
+    scenes_dir = remotion_dir / "src" / "jobScenes" / batch_id
+    entries_dir = remotion_dir / "src" / "entries"
+    errors: dict[str, str] = {}
     scenes_dir.mkdir(parents=True, exist_ok=True)
-    entry_path.parent.mkdir(parents=True, exist_ok=True)
+    entries_dir.mkdir(parents=True, exist_ok=True)
     try:
-        (scenes_dir / f"{scene.key}.tsx").write_text(code, encoding="utf-8")
-        props_literal = json.dumps(scene.props or {})
-        entry_path.write_text(_smoke_entry(scene.key, smoke_id, props_literal), encoding="utf-8")
+        for key, code in candidates.items():
+            (scenes_dir / f"{key}.tsx").write_text(code, encoding="utf-8")
 
-        _run(["npx", "--no-install", "tsc", "--noEmit"], remotion_dir, timeout, "tsc")
-        _run(
-            [
-                "npx", "--no-install", "remotion", "still",
-                f"src/entries/{smoke_id}.tsx", "Smoke", str(out_png),
-                "--frame=75", "--log=error",
-            ],
-            remotion_dir,
-            timeout,
-            "still",
+        proc = subprocess.run(
+            ["npx", "--no-install", "tsc", "--noEmit"],
+            cwd=remotion_dir,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
-    finally:
-        import shutil as _sh
+        if proc.returncode != 0:
+            output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+            attributed = False
+            for key in candidates:
+                marker = f"jobScenes/{batch_id}/{key}.tsx"
+                lines = [line for line in output.splitlines() if marker in line]
+                if lines:
+                    errors[key] = "tsc failed:\n" + "\n".join(lines[:12])
+                    attributed = True
+            if not attributed:
+                # Diagnostics outside any candidate file (should not happen on a
+                # healthy project): fail the whole wave conservatively.
+                tail = output[-1500:]
+                for key in candidates:
+                    errors[key] = f"tsc failed (unattributed): {tail}"
 
-        _sh.rmtree(scenes_dir, ignore_errors=True)
-        entry_path.unlink(missing_ok=True)
-        out_png.unlink(missing_ok=True)
+        for key, code in candidates.items():
+            if key in errors:
+                continue
+            scene = scenes_by_key[key]
+            entry_path = entries_dir / f"{batch_id}_{key}.tsx"
+            out_png = entries_dir / f"{batch_id}_{key}.png"
+            try:
+                props_literal = json.dumps(scene.props or {})
+                entry_path.write_text(_smoke_entry(key, batch_id, props_literal), encoding="utf-8")
+                _run(
+                    [
+                        "npx", "--no-install", "remotion", "still",
+                        f"src/entries/{batch_id}_{key}.tsx", "Smoke", str(out_png),
+                        "--frame=75", "--log=error",
+                    ],
+                    remotion_dir,
+                    timeout,
+                    "still",
+                )
+            except Exception as exc:
+                errors[key] = str(exc)
+            finally:
+                entry_path.unlink(missing_ok=True)
+                out_png.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(scenes_dir, ignore_errors=True)
+    return errors
 
 
 def _smoke_entry(scene_key: str, smoke_id: str, props_literal: str) -> str:

@@ -28,8 +28,12 @@ Your role is to evaluate rendered video frames against narration context and ide
 For each scene provided, you receive:
 - The scene's narration (what is being spoken)
 - The visual_intent (what the animation should show)
-- The active beat at that timestamp (the specific visual action expected)
-- One PNG frame extracted at the midpoint of that scene
+- The active beat around the scene midpoint (the specific visual action expected)
+- THREE PNG frames extracted at ~20%, ~55% and ~85% of the scene: early (layout settling in),
+  mid (the scene's richest state) and late (final state, earlier items may be dimmed).
+  Score the scene considering all three: items should accumulate across frames (a static
+  scene where the three frames are identical scores low on narration_match), and every
+  frame must stay readable and in-frame.
 
 Score each scene on FIVE dimensions, each from 0 to 10:
 
@@ -92,6 +96,11 @@ def _encode_image(path: Path) -> str:
     return f"data:image/png;base64,{data}"
 
 
+# Sample each scene early (layout), mid (richest state) and late (final state +
+# dim) — one midpoint frame is blind to a scene that starts broken or dies early.
+SAMPLE_RATIOS = (0.2, 0.55, 0.85)
+
+
 def _scene_midpoints(
     blueprint: VideoBlueprint, durations_path: Path
 ) -> tuple[list[tuple[Any, float]], float]:
@@ -115,6 +124,26 @@ def _scene_midpoints(
         midpoints.append((scene, cumulative + dur / 2.0))
         cumulative += dur
     return midpoints, cumulative
+
+
+def _scene_sample_points(
+    blueprint: VideoBlueprint, durations_path: Path
+) -> tuple[list[tuple[Any, list[float]]], float]:
+    """Return ([(scene, [t_early, t_mid, t_late])], total_seconds) in scene order."""
+    durations: dict[str, float] = {}
+    if durations_path.exists():
+        try:
+            durations = json.loads(durations_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    samples: list[tuple[Any, list[float]]] = []
+    cumulative = 0.0
+    for scene in blueprint.scenes:
+        dur = float(durations.get(scene.key, scene.duration_seconds))
+        samples.append((scene, [cumulative + dur * ratio for ratio in SAMPLE_RATIOS]))
+        cumulative += dur
+    return samples, cumulative
 
 
 def _active_beat(scene: Any, ratio: float = 0.5) -> dict:
@@ -226,7 +255,7 @@ class VisualReviewer:
         runner: CommandRunner,
         report_dir: Path,
     ) -> VisualReviewResult:
-        """Extract one frame per scene at its narrative midpoint and ask a vision model to review them.
+        """Extract three frames per scene (early/mid/late) and ask a vision model to review them.
 
         Returns a VisualReviewResult with weighted scores and a pass/fail decision.
         """
@@ -234,60 +263,73 @@ class VisualReviewer:
 
         video_dir = video_path.parent.parent  # video_path = .../final/<slug>-en-final.mp4
         durations_path = video_dir / "audio" / "en" / "durations.json"
-        midpoints, total_duration = _scene_midpoints(blueprint, durations_path)
+        samples, total_duration = _scene_sample_points(blueprint, durations_path)
+        midpoints = [(scene, points[1]) for scene, points in samples]
 
         vision_dir = report_dir / "vision"
         vision_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build scene context list and extract one frame per scene
+        # Build scene context list and extract the frames per scene
+        stage_names = ("early", "mid", "late")
         scene_contexts: list[dict] = []
-        frame_paths: list[Path] = []
+        scene_frames: list[list[Path | None]] = []
 
-        for scene, ts in midpoints:
-            safe_ts = min(ts, total_duration - 0.1) if total_duration > 0.1 else ts
-            frame_out = vision_dir / f"{scene.key}.png"
-            try:
-                extract_frame(runner, video_path, safe_ts, frame_out)
-                frame_paths.append(frame_out)
-            except Exception as exc:
-                logger.warning("vision.frame_extraction.failed scene=%s ts=%.3f error=%s", scene.key, ts, exc)
-                frame_paths.append(None)  # type: ignore[arg-type]
+        for scene, points in samples:
+            frames: list[Path | None] = []
+            for stage, ts in zip(stage_names, points):
+                safe_ts = min(ts, total_duration - 0.1) if total_duration > 0.1 else ts
+                frame_out = vision_dir / f"{scene.key}_{stage}.png"
+                try:
+                    extract_frame(runner, video_path, safe_ts, frame_out)
+                    frames.append(frame_out)
+                except Exception as exc:
+                    logger.warning(
+                        "vision.frame_extraction.failed scene=%s stage=%s ts=%.3f error=%s",
+                        scene.key, stage, ts, exc,
+                    )
+                    frames.append(None)
+            scene_frames.append(frames)
 
             scene_contexts.append({
                 "scene_key": scene.key,
                 "narration": scene.text,
                 "visual_intent": scene.visual_intent,
                 "active_beat": _active_beat(scene),
-                "timestamp_seconds": round(ts, 2),
+                "frame_timestamps_seconds": [round(ts, 2) for ts in points],
             })
-            logger.info("vision.frame.ready scene=%s ts=%.3fs path=%s", scene.key, ts, frame_out)
+            logger.info(
+                "vision.frames.ready scene=%s frames=%d", scene.key,
+                sum(1 for f in frames if f is not None),
+            )
 
-        # Build multimodal message: text rubric + one image per scene (in order)
+        # Build multimodal message: text rubric + three images per scene (in order)
         content: list[dict] = [
             {
                 "type": "text",
                 "text": (
-                    f"Review {len(midpoints)} scenes from an educational Manim video.\n"
-                    f"Each image below corresponds to one scene in the order listed.\n\n"
+                    f"Review {len(samples)} scenes from an educational video.\n"
+                    f"Each scene has THREE frames below (early/mid/late), in scene order.\n\n"
                     f"Scene contexts (JSON):\n{json.dumps(scene_contexts, indent=2, ensure_ascii=True)}\n\n"
-                    "Images follow in the same order. Score each scene on the 5 dimensions described in your instructions."
+                    "Images follow grouped per scene. Score each scene on the 5 dimensions described in your instructions."
                 ),
             }
         ]
-        for i, (frame_path, (scene, _)) in enumerate(zip(frame_paths, midpoints)):
-            content.append({"type": "text", "text": f"Image {i + 1}: scene {scene.key}"})
-            if frame_path is not None and frame_path.exists():
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": _encode_image(frame_path)},
-                })
-            else:
-                content.append({"type": "text", "text": "(frame extraction failed — treat not_blank as 0)"})
+        for frames, (scene, _) in zip(scene_frames, samples):
+            for stage, frame_path in zip(stage_names, frames):
+                content.append({"type": "text", "text": f"Scene {scene.key} — {stage} frame:"})
+                if frame_path is not None and frame_path.exists():
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": _encode_image(frame_path)},
+                    })
+                else:
+                    content.append({"type": "text", "text": "(frame extraction failed — treat not_blank as 0)"})
 
         logger.info(
-            "vision.review.start model=%s scenes=%d",
+            "vision.review.start model=%s scenes=%d frames=%d",
             self._model(),
-            len(midpoints),
+            len(samples),
+            sum(len([f for f in frames if f]) for frames in scene_frames),
         )
 
         client = self._get_client()

@@ -110,36 +110,41 @@ def verify_mp4(
         audio_streams[0].get("codec_name"),
     )
 
-    freeze = runner.run(
-        ["ffmpeg", "-i", str(video_path), "-vf", "freezedetect=n=-60dB:d=3", "-an", "-f", "null", "-"],
-        cwd=video_path.parent,
-        log_name=f"freezedetect-{video_path.stem}.log",
-    )
-    freeze_starts = [float(match) for match in re.findall(r"freeze_start: ([0-9.]+)", freeze.stderr)]
-    freeze_durations = [float(match) for match in re.findall(r"freeze_duration: ([0-9.]+)", freeze.stderr)]
-    segments = [
-        {"start": round(start, 3), "duration": round(dur, 3)}
-        for start, dur in zip(freeze_starts, freeze_durations)
-    ]
-    longest = max(freeze_durations) if freeze_durations else 0.0
-    freeze_summary = {
-        "count": len(freeze_durations),
-        "total": round(sum(freeze_durations), 3),
-        "average": round(sum(freeze_durations) / len(freeze_durations), 3) if freeze_durations else 0,
-        "longest": round(longest, 3),
-        "segments": segments,
-    }
-    # Persist the breakdown before the gate so a failed job still exposes *why*.
-    (report_dir / "freeze.json").write_text(json.dumps(freeze_summary, indent=2) + "\n", encoding="utf-8")
-    logger.info(
-        "verify.freezedetect.done video=%s freezes=%d freeze_total=%.3fs freeze_avg=%.3fs freeze_longest=%.3fs",
-        video_path,
-        freeze_summary["count"],
-        freeze_summary["total"],
-        freeze_summary["average"],
-        freeze_summary["longest"],
-    )
+    # freezedetect decodes the whole file and the low render is never shipped, so
+    # the freeze gate (and the snapshot sweep) only run on the final render. The
+    # low-quality verify is just the cheap ffprobe contract above.
+    freeze_summary: dict | None = None
+    snapshots: list[str] = []
     if final_quality:
+        freeze = runner.run(
+            ["ffmpeg", "-i", str(video_path), "-vf", "freezedetect=n=-60dB:d=3", "-an", "-f", "null", "-"],
+            cwd=video_path.parent,
+            log_name=f"freezedetect-{video_path.stem}.log",
+        )
+        freeze_starts = [float(match) for match in re.findall(r"freeze_start: ([0-9.]+)", freeze.stderr)]
+        freeze_durations = [float(match) for match in re.findall(r"freeze_duration: ([0-9.]+)", freeze.stderr)]
+        segments = [
+            {"start": round(start, 3), "duration": round(dur, 3)}
+            for start, dur in zip(freeze_starts, freeze_durations)
+        ]
+        longest = max(freeze_durations) if freeze_durations else 0.0
+        freeze_summary = {
+            "count": len(freeze_durations),
+            "total": round(sum(freeze_durations), 3),
+            "average": round(sum(freeze_durations) / len(freeze_durations), 3) if freeze_durations else 0,
+            "longest": round(longest, 3),
+            "segments": segments,
+        }
+        # Persist the breakdown before the gate so a failed job still exposes *why*.
+        (report_dir / "freeze.json").write_text(json.dumps(freeze_summary, indent=2) + "\n", encoding="utf-8")
+        logger.info(
+            "verify.freezedetect.done video=%s freezes=%d freeze_total=%.3fs freeze_avg=%.3fs freeze_longest=%.3fs",
+            video_path,
+            freeze_summary["count"],
+            freeze_summary["total"],
+            freeze_summary["average"],
+            freeze_summary["longest"],
+        )
         total_allowed = max(freeze_floor_seconds, duration * max_freeze_ratio)
         reasons: list[str] = []
         if freeze_summary["total"] > total_allowed:
@@ -166,27 +171,26 @@ def verify_mp4(
             quality_warnings.append(message)
             logger.warning("verify.freeze.warning video=%s %s", video_path, message)
 
-    snapshot_dir = report_dir / "snapshots"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    timestamps = sorted(
-        set(
-            [
-                10.0,
-                max(1.0, duration * 0.25),
-                max(1.0, duration * 0.5),
-                max(1.0, duration * 0.75),
-                max(1.0, duration * 0.9),
-            ]
+        snapshot_dir = report_dir / "snapshots"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        timestamps = sorted(
+            set(
+                [
+                    10.0,
+                    max(1.0, duration * 0.25),
+                    max(1.0, duration * 0.5),
+                    max(1.0, duration * 0.75),
+                    max(1.0, duration * 0.9),
+                ]
+            )
         )
-    )
-    snapshots: list[str] = []
-    for index, timestamp in enumerate(timestamps, start=1):
-        if timestamp >= duration:
-            continue
-        out = snapshot_dir / f"check_{index:02d}_{int(timestamp):04d}.png"
-        extract_frame(runner, video_path, timestamp, out)
-        snapshots.append(str(out))
-        logger.info("verify.snapshot.done video=%s timestamp=%.3fs path=%s", video_path, timestamp, out)
+        for index, timestamp in enumerate(timestamps, start=1):
+            if timestamp >= duration:
+                continue
+            out = snapshot_dir / f"check_{index:02d}_{int(timestamp):04d}.png"
+            extract_frame(runner, video_path, timestamp, out)
+            snapshots.append(str(out))
+            logger.info("verify.snapshot.done video=%s timestamp=%.3fs path=%s", video_path, timestamp, out)
 
     report = {
         "video": str(video_path),

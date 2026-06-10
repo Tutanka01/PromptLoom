@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -54,23 +55,58 @@ class CommandRunner:
             self.timeout_seconds,
             " ".join(args),
         )
-        result = subprocess.run(
-            args,
-            cwd=cwd,
-            env=command_env,
-            text=True,
-            capture_output=True,
-            timeout=self.timeout_seconds,
+        # Stream both pipes into the log file AS THE COMMAND RUNS, so a long
+        # render can be followed with `tail -f` instead of producing its log
+        # only after completion. stdout/stderr are still captured separately —
+        # verify parses ffprobe stdout and freezedetect stderr.
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        log_lock = threading.Lock()
+        with log.open("w", encoding="utf-8") as log_file:
+            log_file.write("$ " + " ".join(args) + "\n\n")
+            log_file.flush()
+
+            process = subprocess.Popen(
+                args,
+                cwd=cwd,
+                env=command_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            def _pump(stream, sink: list[str], prefix: str) -> None:
+                for line in iter(stream.readline, ""):
+                    sink.append(line)
+                    with log_lock:
+                        log_file.write(prefix + line)
+                        log_file.flush()
+                stream.close()
+
+            readers = [
+                threading.Thread(target=_pump, args=(process.stdout, stdout_lines, ""), daemon=True),
+                threading.Thread(target=_pump, args=(process.stderr, stderr_lines, ""), daemon=True),
+            ]
+            for reader in readers:
+                reader.start()
+            try:
+                returncode = process.wait(timeout=self.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                for reader in readers:
+                    reader.join(timeout=5)
+                raise
+            for reader in readers:
+                reader.join(timeout=10)
+
+        result = subprocess.CompletedProcess(
+            args=args,
+            returncode=returncode,
+            stdout="".join(stdout_lines),
+            stderr="".join(stderr_lines),
         )
         elapsed = time.monotonic() - started
-        log.write_text(
-            "$ " + " ".join(args) + "\n\n"
-            + "STDOUT\n"
-            + result.stdout
-            + "\nSTDERR\n"
-            + result.stderr,
-            encoding="utf-8",
-        )
         if result.returncode != 0:
             logger.error(
                 "command.failed name=%s returncode=%s elapsed=%.2fs log=%s",

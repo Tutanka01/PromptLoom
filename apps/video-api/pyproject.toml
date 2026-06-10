@@ -21,6 +21,9 @@ worker = [
   "kokoro>=0.9",
   "misaki[en,fr]>=0.9",
   "manim>=0.18,<0.20",
+  # num2words: spells out digits for the forced-alignment normalizer (align.py),
+  # so "64-bit" aligns as "sixty four bit" against the spoken audio.
+  "num2words>=0.5",
   "numpy>=1.26",
   "soundfile>=0.12",
   "torch>=2.2",

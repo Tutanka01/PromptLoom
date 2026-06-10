@@ -6,9 +6,16 @@ Base URL locale :
 http://localhost:8080
 ```
 
+## Authentification (optionnelle)
+
+Si `VIDEO_API_KEYS` est defini (liste de cles separees par des virgules), tous
+les endpoints `/v1/*` exigent l'en-tete `X-API-Key`. Sans cette variable,
+l'API reste ouverte (comportement historique). `/healthz` reste toujours
+ouvert pour les probes.
+
 ## `GET /healthz`
 
-Verifie que l'API repond.
+Verifie l'API ET ses dependances (ping Postgres + Redis).
 
 ```bash
 curl http://localhost:8080/healthz
@@ -17,8 +24,10 @@ curl http://localhost:8080/healthz
 Reponse :
 
 ```json
-{"status":"ok"}
+{"status":"ok","checks":{"database":"ok","redis":"ok"}}
 ```
+
+HTTP `503` avec `"status":"degraded"` si une dependance ne repond pas.
 
 ## `POST /v1/videos`
 
@@ -51,8 +60,13 @@ Champs :
 - `theme` optionnel, aide a classer le job.
 - `language` vaut actuellement `en`.
 - `target_duration_seconds` optionnel, entre 45 et 900 secondes. S'il est absent, l'API vise 240 secondes et verifie que le rendu final n'est pas une video courte.
-- `quality_profile` vaut actuellement `final`.
-- `callback_url` est reserve pour une evolution future.
+- `quality_profile` : `draft` (iteration rapide : voix Kokoro, rendu demi-resolution,
+  pas de revue visuelle), `standard` (defaut, production), `high` (standard + revue
+  visuelle forcee si `VIDEO_API_VISION_MODEL` est defini + gel fatal). `final` est
+  l'ancien nom, alias de `standard`.
+- `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
+  (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
+  dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
 
 ### Reponse
 
@@ -100,6 +114,35 @@ Quand la video est prete :
   "download_url": "/v1/videos/<job_id>/download",
   "report_url": "/v1/videos/<job_id>/report"
 }
+```
+
+## `GET /v1/videos`
+
+Liste les jobs (tries du plus recent au plus ancien).
+
+```bash
+curl 'http://localhost:8080/v1/videos?status=completed&limit=20&offset=0'
+```
+
+## `DELETE /v1/videos/{job_id}`
+
+Annule un job en file ou en cours. Le worker s'arrete a la prochaine frontiere
+d'etape (une sous-commande longue finit son etape en cours). `409` si le job
+est deja terminal.
+
+```bash
+curl -X DELETE http://localhost:8080/v1/videos/<job_id>
+```
+
+## `GET /v1/videos/{job_id}/artifacts/{chemin}`
+
+Sert n'importe quel fichier du workspace du job (protection path-traversal) :
+`blueprint.json`, `logs/render-low.log`, `reports/final/freeze.json`,
+`reports/final/snapshots/check_01_0010.png`, ...
+
+```bash
+curl http://localhost:8080/v1/videos/<job_id>/artifacts/blueprint.json
+curl http://localhost:8080/v1/videos/<job_id>/artifacts/logs/render-final.log
 ```
 
 ## `GET /v1/videos/{job_id}/download`

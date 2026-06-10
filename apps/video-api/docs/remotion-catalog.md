@@ -95,18 +95,41 @@ domain gets its own flavored components. Other subjects would add their own
 (e.g. a molecule, a circuit symbol, a cell). Do not reach for these unless the
 topic is operating systems.
 
+## Narration-synced cues (`props.cues`) — automatic, read them if present
+
+After TTS, the pipeline force-aligns each scene's WAV (torchaudio MMS_FA,
+`pipeline/align.py`) and resolves the blueprint's `beats[].anchor` phrases into
+**`props.cues`: `(number | null)[]`** — one reveal ratio per visual item, in
+display order (`pipeline/beats.py`). Every multi-item palette scene consumes
+them via `cueOr(cues, i, fallback)` from `style/anim`, so item *i* appears
+exactly when its words are spoken; `null` falls back to the default spacing.
+Custom scenes should do the same when `props.cues` is present. Never hardcode
+absolute times: cues are ratios of the scene's padded duration.
+
 ## Scene transitions — automatic, do NOT author them
 
 `MainComposition` renders a **persistent `AmbientBackground`** behind every scene
-and each scene fades its own content in/out at its edges (`appear(p,0,0.06) *
-tailFade(p,0.93)`), so consecutive scenes cross-dissolve through the continuous
-background with **no hard cuts and no black frames**. Crucially this changes no
-scene's start/duration, so the per-segment voiceover muxed by `assemble_en.sh`
-stays in sync.
+and wraps each scene in a **`SceneFrame`** that owns the scene envelope: an
+entrance + exit animation (fade / rise / slide-left / slide-right / scale /
+wipe), cycled deterministically by scene index or forced via the blueprint's
+`scene.transition`. Scenes hand off through the continuous background with
+**no hard cuts and no black frames**. Crucially this changes no scene's
+start/duration, so the per-segment voiceover muxed by `assemble_en.sh` stays
+in sync.
 
 Do NOT use `@remotion/transitions`/`TransitionSeries` in a scene: it overlaps
 neighbouring scenes, which shortens the timeline and desynchronises the audio.
-Just fade your own content in at the start and out near `p=1` with `tailFade(p)`.
+And do NOT fade your whole scene in/out yourself — SceneFrame already does it;
+just keep your last beat settled before `p≈0.9`.
+
+## Icons (`catalog/Icon.tsx`)
+
+`<Icon name="cpu" size={32} color={...} />` renders an allow-listed lucide
+icon. The blueprint can attach icons where components support them:
+`BulletScene props.icons` (array parallel to bullets), `DiagramScene
+nodes[].icon`, `FlowScene stages[].icon`. Unknown names are dropped by the
+pipeline (`ICON_NAMES` in `pipeline/remotion_blueprint.py` mirrors the TSX
+allow-list; a test enforces parity).
 
 ## Reference (study before authoring)
 

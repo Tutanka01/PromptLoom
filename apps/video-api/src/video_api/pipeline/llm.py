@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from pydantic import ValidationError
@@ -599,6 +600,31 @@ def fake_blueprint(
         scenes=scenes,
     )
 
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _rescale_outline_durations(outline_scenes: list[dict], target: int) -> None:
+    """Scale planned scene durations into the blueprint's accepted window.
+
+    The Pydantic gate rejects a plan outside [0.75, 1.25] x target; fixing it
+    here avoids burning a whole repair round on simple arithmetic drift.
+    """
+    planned = sum(int(sc["duration_seconds"]) for sc in outline_scenes)
+    if planned <= 0:
+        return
+    lower = max(45, int(target * 0.8))
+    upper = int(target * 1.2)
+    if lower <= planned <= upper:
+        return
+    factor = target / planned
+    for sc in outline_scenes:
+        sc["duration_seconds"] = max(12, min(90, round(sc["duration_seconds"] * factor)))
+
+
 class LLMClient:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -773,6 +799,20 @@ class LLMClient:
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required unless VIDEO_API_FAKE_LLM=1")
         client = self._build_client()
+        if self.settings.blueprint_two_pass:
+            try:
+                return self._generate_remotion_two_pass(client, prompt, theme, effective_target)
+            except Exception as exc:
+                logger.warning(
+                    "llm.remotion.two_pass.failed error=%s — falling back to single-pass", exc
+                )
+        return self._generate_remotion_single_pass(client, prompt, theme, effective_target)
+
+    def _generate_remotion_single_pass(
+        self, client: Any, prompt: str, theme: str | None, effective_target: int
+    ) -> "RemotionBlueprint":
+        from video_api.pipeline import remotion_blueprint as rb
+
         logger.info(
             "llm.remotion.request.start model=%s base_url=%s prompt_chars=%d theme=%s",
             self.settings.openai_model,
@@ -802,6 +842,277 @@ class LLMClient:
         except ValidationError as exc:
             logger.warning("llm.remotion_blueprint.invalid errors=%s", exc)
             return self.repair_remotion_blueprint(prompt, data, str(exc))
+
+    # ------------------------------------------------------------------ 2-pass
+    def _generate_remotion_two_pass(
+        self, client: Any, prompt: str, theme: str | None, effective_target: int
+    ) -> "RemotionBlueprint":
+        """Outline pass (structure + pedagogy), then one focused call per scene.
+
+        Each scene call writes narration + complete props + verbatim beat
+        anchors and is STRICTLY validated (no placeholder props, anchors must
+        exist in the narration); failures get targeted retries. Only after
+        retries does the lenient normalisation fill gaps, recorded as
+        degradations in the blueprint.
+        """
+        from video_api.pipeline import remotion_blueprint as rb
+
+        logger.info(
+            "llm.remotion.outline.start model=%s prompt_chars=%d theme=%s",
+            self.settings.openai_model,
+            len(prompt),
+            theme,
+        )
+        outline_user = {
+            "prompt": prompt,
+            "theme": theme or "general-stem",
+            "target_duration_seconds": effective_target,
+            "duration_policy": self._duration_policy(effective_target),
+        }
+        content = self._complete(
+            client,
+            [
+                {"role": "system", "content": rb.REMOTION_OUTLINE_PROMPT},
+                {"role": "user", "content": json.dumps(outline_user, ensure_ascii=True)},
+            ],
+            temperature=self.settings.llm_temperature,
+            json_mode=True,
+        )
+        outline = _extract_json_object(content)
+        if not isinstance(outline, dict):
+            raise ValueError("outline pass did not return a JSON object")
+        outline_scenes = [s for s in (outline.get("scenes") or []) if isinstance(s, dict)]
+        if len(outline_scenes) < 3:
+            raise ValueError(f"outline pass returned {len(outline_scenes)} scenes (< 3)")
+        for index, sc in enumerate(outline_scenes, start=1):
+            sc["key"] = rb._normalise_key(sc.get("key"), index)
+            sc["component"] = rb._normalise_component(sc.get("component"))
+            sc["duration_seconds"] = max(12, min(90, int(_safe_int(sc.get("duration_seconds"), 30))))
+        _rescale_outline_durations(outline_scenes, effective_target)
+        logger.info(
+            "llm.remotion.outline.done scenes=%d components=%s",
+            len(outline_scenes),
+            ",".join(sc["component"] for sc in outline_scenes),
+        )
+
+        degradations: list[str] = []
+        scenes = self._write_remotion_scenes(client, prompt, outline, outline_scenes, degradations)
+
+        data: dict[str, Any] = {
+            key: outline.get(key)
+            for key in (
+                "title", "theme", "slug", "subject_area", "difficulty",
+                "audience", "teaching_goal", "learning_objectives", "style_notes",
+            )
+        }
+        data["target_duration_seconds"] = effective_target
+        data["scenes"] = scenes
+        data["degradations"] = degradations
+        data = rb.normalize_remotion_blueprint(data, effective_target)
+        try:
+            return RemotionBlueprint.model_validate(data)
+        except ValidationError as exc:
+            logger.warning("llm.remotion.two_pass.invalid errors=%s", exc)
+            return self.repair_remotion_blueprint(prompt, data, str(exc))
+
+    def _write_remotion_scenes(
+        self,
+        client: Any,
+        prompt: str,
+        outline: dict,
+        outline_scenes: list[dict],
+        degradations: list[str],
+        only_keys: set[str] | None = None,
+        feedback_by_key: dict[str, str] | None = None,
+        previous_by_key: dict[str, dict] | None = None,
+    ) -> list[dict]:
+        """Write scenes in parallel (pass 2). With *only_keys*, rewrite just those
+        scenes — used by the scene-level visual-review repair, where *feedback_by_key*
+        carries the reviewer's findings and *previous_by_key* the failing version."""
+        from video_api.pipeline import remotion_blueprint as rb
+
+        compact = [
+            {
+                "key": sc["key"],
+                "title": sc.get("title") or "",
+                "component": sc["component"],
+                "goal": str(sc.get("goal") or "")[:240],
+            }
+            for sc in outline_scenes
+        ]
+        video_meta = {
+            "title": outline.get("title") or "",
+            "teaching_goal": outline.get("teaching_goal") or "",
+            "audience": outline.get("audience") or "",
+            "style_notes": outline.get("style_notes") or "",
+            "user_prompt": prompt,
+        }
+
+        def write_scene(item: tuple[int, dict]) -> dict:
+            index, sc = item
+            duration = int(sc["duration_seconds"])
+            min_words = max(25, round(duration * timing.ESTIMATION_WPM / 60))
+            context: dict[str, Any] = {
+                "video": video_meta,
+                "outline": compact,
+                "scene": {
+                    "key": sc["key"],
+                    "title": sc.get("title") or "",
+                    "component": sc["component"],
+                    "goal": sc.get("goal") or "",
+                    "visual_idea": sc.get("visual_idea") or "",
+                    "duration_seconds": duration,
+                },
+                "previous_scene": compact[index - 1] if index > 0 else None,
+                "next_scene": compact[index + 1] if index + 1 < len(compact) else None,
+                "word_budget": {
+                    "min_words": min_words,
+                    "speaking_rate_wpm": timing.ESTIMATION_WPM,
+                },
+            }
+            if previous_by_key and sc["key"] in previous_by_key:
+                context["previous_version"] = previous_by_key[sc["key"]]
+            scene_dict: dict[str, Any] = {}
+            errors: list[str] = []
+            if feedback_by_key and sc["key"] in feedback_by_key:
+                errors = [f"visual review feedback: {feedback_by_key[sc['key']]}"]
+            for attempt in range(self.settings.blueprint_scene_attempts):
+                request = dict(context)
+                if errors:
+                    request["previous_attempt_errors"] = errors
+                try:
+                    content = self._complete(
+                        client,
+                        [
+                            {"role": "system", "content": rb.REMOTION_SCENE_PROMPT},
+                            {"role": "user", "content": json.dumps(request, ensure_ascii=True)},
+                        ],
+                        temperature=self.settings.llm_temperature,
+                        json_mode=True,
+                    )
+                    payload = _extract_json_object(content)
+                except Exception as exc:
+                    errors = [f"scene call failed: {exc}"]
+                    logger.warning(
+                        "llm.remotion.scene.attempt_failed key=%s attempt=%d error=%s",
+                        sc["key"], attempt, exc,
+                    )
+                    continue
+                if not isinstance(payload, dict):
+                    errors = ["response was not a JSON object"]
+                    continue
+                scene_dict = {
+                    "key": sc["key"],
+                    "title": sc.get("title") or f"Scene {index + 1}",
+                    "component": sc["component"],
+                    "duration_seconds": duration,
+                    "narration": str(
+                        payload.get("narration") or payload.get("text") or payload.get("voiceover") or ""
+                    ),
+                    "props": payload.get("props") if isinstance(payload.get("props"), dict) else {},
+                    "beats": payload.get("beats") or [],
+                    "visual_intent": str(sc.get("visual_idea") or "")[:600],
+                }
+                errors = rb.validate_scene_payload(scene_dict)
+                words = len(scene_dict["narration"].split())
+                if words < round(min_words * 0.7):
+                    errors.append(
+                        f"narration has {words} words; this {duration}s scene needs at least "
+                        f"{min_words} words of spoken text"
+                    )
+                if not errors:
+                    logger.info("llm.remotion.scene.done key=%s attempt=%d words=%d", sc["key"], attempt, words)
+                    return scene_dict
+                logger.warning(
+                    "llm.remotion.scene.invalid key=%s attempt=%d errors=%s",
+                    sc["key"], attempt, "; ".join(errors)[:300],
+                )
+            if scene_dict:
+                degradations.append(
+                    f"{sc['key']}: failed strict validation after "
+                    f"{self.settings.blueprint_scene_attempts} attempts ({'; '.join(errors)[:200]})"
+                )
+                return scene_dict
+            degradations.append(f"{sc['key']}: scene pass produced no usable payload")
+            return {
+                "key": sc["key"],
+                "title": sc.get("title") or f"Scene {index + 1}",
+                "component": sc["component"],
+                "duration_seconds": duration,
+                "narration": str(sc.get("goal") or "") + " " + str(sc.get("visual_idea") or ""),
+                "props": {},
+                "beats": [],
+                "visual_intent": str(sc.get("visual_idea") or "")[:600],
+            }
+
+        targets = [
+            (index, sc)
+            for index, sc in enumerate(outline_scenes)
+            if only_keys is None or sc["key"] in only_keys
+        ]
+        with ThreadPoolExecutor(max_workers=self.settings.llm_parallel) as pool:
+            return list(pool.map(write_scene, targets))
+
+    def rewrite_remotion_scenes(
+        self, blueprint: "RemotionBlueprint", feedback_by_key: dict[str, str]
+    ) -> "RemotionBlueprint":
+        """Rewrite ONLY the scenes flagged by the visual review, keeping the rest
+        of the blueprint untouched. Unchanged scenes keep their narration, so the
+        TTS cache reuses their WAVs on the next attempt."""
+        from video_api.pipeline import remotion_blueprint as rb
+
+        if not feedback_by_key or self.settings.fake_llm:
+            return blueprint
+        client = self._build_client()
+        outline_scenes = [
+            {
+                "key": scene.key,
+                "title": scene.title,
+                "component": scene.component,
+                "duration_seconds": scene.duration_seconds,
+                "goal": scene.visual_intent or scene.title,
+                "visual_idea": scene.visual_intent,
+            }
+            for scene in blueprint.scenes
+        ]
+        outline = {
+            "title": blueprint.title,
+            "teaching_goal": blueprint.teaching_goal,
+            "audience": blueprint.audience,
+            "style_notes": blueprint.style_notes,
+        }
+        previous_by_key = {
+            scene.key: {
+                "narration": scene.narration,
+                "props": scene.props,
+                "beats": [beat.model_dump() for beat in scene.beats],
+            }
+            for scene in blueprint.scenes
+            if scene.key in feedback_by_key
+        }
+        degradations = list(blueprint.degradations)
+        rewritten = self._write_remotion_scenes(
+            client,
+            blueprint.teaching_goal,
+            outline,
+            outline_scenes,
+            degradations,
+            only_keys=set(feedback_by_key),
+            feedback_by_key=feedback_by_key,
+            previous_by_key=previous_by_key,
+        )
+        rewritten_by_key = {scene["key"]: scene for scene in rewritten}
+        scenes: list[dict] = []
+        for scene in blueprint.scenes:
+            if scene.key in rewritten_by_key:
+                scenes.append(rewritten_by_key[scene.key])
+            else:
+                scenes.append(scene.model_dump())
+        data = blueprint.model_dump()
+        data["scenes"] = scenes
+        data["degradations"] = degradations
+        data = rb.normalize_remotion_blueprint(data, blueprint.target_duration_seconds)
+        return RemotionBlueprint.model_validate(data)
 
     def repair_remotion_blueprint(self, prompt: str, previous: Any, error_report: str) -> "RemotionBlueprint":
         from video_api.pipeline import remotion_blueprint as rb

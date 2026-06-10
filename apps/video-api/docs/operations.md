@@ -184,6 +184,44 @@ L'image Docker embarque deja Node 20 + Chrome headless. Detail complet :
 image, donc apres un edit du `Dockerfile` rebuild explicitement (`docker compose ...
 build worker api test`).
 
+### Synchro narration <-> visuel (Remotion)
+
+```text
+VIDEO_API_ALIGN_ENABLED=1         # alignement force mot a mot (torchaudio MMS_FA)
+VIDEO_API_ALIGN_DEVICE=auto       # auto | cpu | cuda
+```
+
+Apres le TTS, le worker aligne chaque WAV sur sa narration et resout les
+`beats[].anchor` du blueprint en `props.cues` : chaque item visuel apparait
+quand ses mots sont prononces. Non fatal : sans alignement, les scenes gardent
+leurs timings par defaut. Le cache (`audio/en/cache.json`) evite de realigner
+les segments inchanges.
+
+### Generation LLM
+
+```text
+VIDEO_API_BLUEPRINT_TWO_PASS=1    # outline puis 1 appel par scene en parallele
+VIDEO_API_BLUEPRINT_SCENE_ATTEMPTS=2  # retries cibles par scene invalide
+VIDEO_API_LLM_PARALLEL=3          # appels LLM concurrents (scene coders + pass 2)
+```
+
+### Musique de fond (optionnelle)
+
+```text
+VIDEO_API_MUSIC_FILE=             # chemin d'un fichier audio visible du worker
+VIDEO_API_MUSIC_DB=-26            # niveau de base ; ducking automatique sous la voix
+```
+
+### API et exploitation
+
+```text
+VIDEO_API_KEYS=                   # cles API (separees par des virgules) ; vide = ouvert
+VIDEO_API_WEBHOOK_SECRET=         # signe les webhooks callback_url (HMAC-SHA256)
+VIDEO_API_TASK_TIME_LIMIT_SECONDS=10800  # plafond Celery par job (soft ; hard = +300s)
+VIDEO_API_STALE_JOB_HOURS=6       # reaper au demarrage de l'API (jobs figes -> failed_stale)
+VIDEO_API_JOB_TTL_DAYS=0          # GC des workspaces des jobs terminaux ; 0 = off
+```
+
 ## Volumes
 
 ```text

@@ -31,11 +31,11 @@ REMOTION_DIR = REPO_ROOT / "apps" / "video-api" / "remotion"
 # Custom scene that follows the prompt fails `tsc` and silently falls back to a
 # BulletScene — which is exactly the bug this guards against.
 _PROMISED_LIB_EXPORTS = [
-    "AbsoluteFill", "tailFade", "colors", "mx", "my",
+    "AbsoluteFill", "tailFade", "cueOr", "colors", "mx", "my",
     "AmbientBackground", "MathFormula", "CodeBlock", "Plot",
     "TitleBar", "Card", "Arrow", "Caption", "TextReveal", "BlurReveal",
     "MemoryGrid", "FlowToken", "BarChart", "Counter", "Zone", "Terminal",
-    "KernelBadge", "HardwareBox",
+    "KernelBadge", "HardwareBox", "Icon",
 ]
 
 

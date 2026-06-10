@@ -40,6 +40,7 @@ export { FlowToken } from "./catalog/FlowToken";
 export { BarChart } from "./catalog/BarChart";
 export type { Bar } from "./catalog/BarChart";
 export { Counter } from "./catalog/Counter";
+export { Icon, ICON_NAMES } from "./catalog/Icon";
 
 // --- Layout primitives -----------------------------------------------------
 export {
@@ -73,4 +74,4 @@ export {
 } from "./style/tokens";
 
 // --- Beat / cue animation helpers (narration-driven progress p in [0,1]) ---
-export { beat, appear, dimAt, tailFade } from "./style/anim";
+export { beat, appear, dimAt, tailFade, cueOr, lastCue } from "./style/anim";

@@ -67,7 +67,11 @@ class VideoCreateRequest(BaseModel):
     theme: str | None = Field(default=None, max_length=80)
     language: Literal["en"] = "en"
     target_duration_seconds: int | None = Field(default=None, ge=45, le=900)
-    quality_profile: Literal["final"] = "final"
+    # draft    = fast iteration: Kokoro voice, half-res render, no visual review.
+    # standard = production defaults (Chatterbox, full-res final render).
+    # high     = standard + visual review forced on (needs VIDEO_API_VISION_MODEL).
+    # "final" is the legacy name, kept as an alias of standard.
+    quality_profile: Literal["draft", "standard", "high", "final"] = "standard"
     callback_url: str | None = None
 
 
@@ -80,6 +84,7 @@ class VideoCreateResponse(BaseModel):
 class VideoStatusResponse(BaseModel):
     job_id: str
     status: str
+    quality_profile: str | None = None
     progress: int
     current_step: str | None = None
     error_message: str | None = None
@@ -305,6 +310,22 @@ RemotionComponent = Literal[
 ]
 
 
+RemotionTransition = Literal["auto", "fade", "rise", "slide-left", "scale", "slide-right", "wipe"]
+
+
+class RemotionBeat(BaseModel):
+    """A narration anchor marking when the i-th visual item should appear.
+
+    ``anchor`` is a short phrase copied verbatim from the scene's narration.
+    After TTS, pipeline/align.py + pipeline/beats.py locate it in the word-level
+    alignment and turn it into a cue ratio consumed by the React components
+    (``props.cues``), so each item reveals exactly when its words are spoken.
+    """
+
+    anchor: str = Field(min_length=3, max_length=80)
+    note: str = Field(default="", max_length=120)
+
+
 class RemotionScene(BaseModel):
     key: str
     title: str = Field(min_length=2, max_length=80)
@@ -314,6 +335,11 @@ class RemotionScene(BaseModel):
     duration_seconds: int = Field(default=30, ge=12, le=90)
     component: RemotionComponent = "BulletScene"
     props: dict[str, Any] = Field(default_factory=dict)
+    # Narration anchors, one per visual item in display order. Optional: empty
+    # means the component keeps its default evenly-spaced timings.
+    beats: list[RemotionBeat] = Field(default_factory=list, max_length=10)
+    # Scene-to-scene hand-off style; "auto" cycles deterministically by index.
+    transition: RemotionTransition = "auto"
     # Concrete visual plan; only consumed when component == "Custom" (drives the
     # Remotion scene-coder). Harmless for palette scenes.
     visual_intent: str = Field(default="", max_length=600)
@@ -351,6 +377,11 @@ class RemotionBlueprint(BaseModel):
     )
     style_notes: str = Field(min_length=10, max_length=700)
     scenes: list[RemotionScene] = Field(min_length=3, max_length=14)
+    # Quality degradations recorded during generation (placeholder props that
+    # survived targeted retries, dropped anchors, ...). Empty on a clean
+    # blueprint; surfaced under `quality` in report.json so a "completed" job
+    # can be told apart from a quietly degraded one.
+    degradations: list[str] = Field(default_factory=list)
 
     @field_validator("slug")
     @classmethod

@@ -9,9 +9,10 @@ import { MemoryGrid, type MemoryCell } from "../../catalog/MemoryGrid";
 import { FlowToken } from "../../catalog/FlowToken";
 import { BarChart, type Bar } from "../../catalog/BarChart";
 import { Counter } from "../../catalog/Counter";
+import { Icon } from "../../catalog/Icon";
 import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
 import { colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
-import { appear, dimAt, tailFade } from "../../style/anim";
+import { appear, cueOr, dimAt, lastCue } from "../../style/anim";
 
 /**
  * Data-driven STEM scene templates. Each reads plain props (no code) so a
@@ -23,17 +24,20 @@ import { appear, dimAt, tailFade } from "../../style/anim";
  * Custom-scene barrel). Each scene fades its content IN at the start and OUT
  * near the end; the composition's persistent AmbientBackground shows through the
  * dip, so scenes cross-dissolve over a continuous background.
+ *
+ * `cues` (optional) holds narration-synced reveal ratios per visual item,
+ * resolved by the pipeline from the word-level alignment of the TTS audio
+ * (pipeline/beats.py). `null` entries fall back to the default even spacing.
  */
 
-type Base = { dur: number; accent?: string; title?: string; caption?: string };
+type Base = { dur: number; accent?: string; title?: string; caption?: string; cues?: (number | null)[] };
 
 const useP = (dur: number) => {
   const frame = useCurrentFrame();
   return { frame, p: frame / dur };
 };
-// Whole-scene envelope: dissolve in over the first ~6%, hold, dissolve out over
-// the last ~7%. Multiplying gives a clean cross-dissolve with the next scene.
-const envelope = (p: number) => appear(p, 0, 0.06) * tailFade(p, 0.93);
+// The scene-to-scene envelope (fade/slide/wipe in and out) is owned by the
+// composition's SceneFrame — scenes only animate their own content.
 
 const Shell: React.FC<Base & { children: React.ReactNode; accentDefault?: string }> = ({
   dur,
@@ -46,7 +50,7 @@ const Shell: React.FC<Base & { children: React.ReactNode; accentDefault?: string
   const { p } = useP(dur);
   const ac = accent ?? accentDefault;
   return (
-    <AbsoluteFill style={{ opacity: envelope(p) }}>
+    <AbsoluteFill>
       <AmbientBackground accent={ac} />
       {title ? <TitleBar label={title} opacity={appear(p, 0, 0.08)} /> : null}
       {children}
@@ -61,7 +65,7 @@ const Shell: React.FC<Base & { children: React.ReactNode; accentDefault?: string
 export const TitleScene: React.FC<Base & { subtitle?: string }> = ({ dur, accent, title = "", subtitle }) => {
   const { frame, p } = useP(dur);
   return (
-    <AbsoluteFill style={{ opacity: envelope(p), alignItems: "center", justifyContent: "center" }}>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
       <AmbientBackground accent={accent ?? colors.purple} />
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 30 }}>
         <TextReveal text={title} fontSize={84} color={colors.text} staggerDelay={4} />
@@ -77,23 +81,28 @@ export const TitleScene: React.FC<Base & { subtitle?: string }> = ({ dur, accent
 };
 
 /** Title + staggered bullet points. Use for definitions, properties, steps. */
-export const BulletScene: React.FC<Base & { bullets: string[] }> = ({ dur, accent, title, caption, bullets }) => {
+export const BulletScene: React.FC<Base & { bullets: string[]; icons?: (string | null)[] }> = ({ dur, accent, title, caption, cues, bullets, icons }) => {
   const { p } = useP(dur);
   const ac = accent ?? colors.user;
   return (
     <Shell dur={dur} accent={ac} title={title} caption={caption}>
       <div style={{ position: "absolute", left: mx(-5.2), top: my(1.6), display: "flex", flexDirection: "column", gap: 34, width: mx(5.2) - mx(-5.2) }}>
         {bullets.slice(0, 6).map((b, i, arr) => {
-          const start = 0.12 + i * 0.12;
+          const start = cueOr(cues, i, 0.12 + i * 0.12);
           const enter = appear(p, start, start + 0.1);
           // Focus the bullet currently being spoken: once the NEXT bullet
           // appears, gently dim this one so attention follows the narration
           // while the whole list stays readable. The last bullet stays bright.
           const isLast = i === arr.length - 1;
-          const focus = isLast ? 1 : dimAt(p, start + 0.12, 0.6);
+          const focus = isLast ? 1 : dimAt(p, cueOr(cues, i + 1, start + 0.12), 0.6);
+          const icon = icons?.[i];
           return (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 22, opacity: enter * focus, transform: `translateX(${interpolate(enter, [0, 1], [-30, 0])}px)` }}>
-              <div style={{ width: 16, height: 16, borderRadius: 4, background: ac, flexShrink: 0, transform: "rotate(45deg)" }} />
+              {icon ? (
+                <Icon name={icon} size={34} color={ac} />
+              ) : (
+                <div style={{ width: 16, height: 16, borderRadius: 4, background: ac, flexShrink: 0, transform: "rotate(45deg)" }} />
+              )}
               <span style={{ color: colors.text, fontFamily: "Inter, sans-serif", fontSize: 38, fontWeight: 500 }}>{b}</span>
             </div>
           );
@@ -104,18 +113,18 @@ export const BulletScene: React.FC<Base & { bullets: string[] }> = ({ dur, accen
 };
 
 /** Title + up to 3 LaTeX formulas stepping in. Use for math/derivations. */
-export const FormulaScene: React.FC<Base & { formulas: string[] }> = ({ dur, accent, title, caption, formulas }) => {
+export const FormulaScene: React.FC<Base & { formulas: string[] }> = ({ dur, accent, title, caption, cues, formulas }) => {
   const { p } = useP(dur);
   return (
     <Shell dur={dur} accent={accent ?? colors.kernel} title={title} caption={caption} accentDefault={colors.kernel}>
       <div style={{ position: "absolute", left: 0, width: 1920, top: my(2.3), height: my(-2.5) - my(2.3), display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 40 }}>
         {formulas.slice(0, 3).map((tex, i, arr) => {
-          const start = 0.12 + i * 0.2;
+          const start = cueOr(cues, i, 0.12 + i * 0.2);
           const enter = appear(p, start, start + 0.12);
           // Dim each derivation step once the next one appears; the final line
           // (the result) stays bright — classic focus/dim for a derivation.
           const isLast = i === arr.length - 1;
-          const focus = isLast ? 1 : dimAt(p, 0.12 + (i + 1) * 0.2, 0.5);
+          const focus = isLast ? 1 : dimAt(p, cueOr(cues, i + 1, 0.12 + (i + 1) * 0.2), 0.5);
           return (
             <div key={i} style={{ opacity: enter * focus }}>
               <MathFormula tex={tex} fontSize={i === 0 ? 54 : 44} color={isLast ? (accent ?? colors.kernel) : colors.text} delay={Math.round(start * dur)} />
@@ -128,11 +137,12 @@ export const FormulaScene: React.FC<Base & { formulas: string[] }> = ({ dur, acc
 };
 
 /** Title + syntax-highlighted code revealed line by line. Use for CS/algorithms. */
-export const CodeScene: React.FC<Base & { code: string; lang?: string; codeTitle?: string }> = ({ dur, accent, title, caption, code, lang = "python", codeTitle }) => {
+export const CodeScene: React.FC<Base & { code: string; lang?: string; codeTitle?: string }> = ({ dur, accent, title, caption, cues, code, lang = "python", codeTitle }) => {
+  const startP = cueOr(cues, 0, 0.12);
   return (
     <Shell dur={dur} accent={accent ?? colors.purple} title={title} caption={caption} accentDefault={colors.purple}>
       <div style={{ position: "absolute", left: 0, width: 1920, top: my(1.4), display: "flex", justifyContent: "center" }}>
-        <CodeBlock code={code} lang={lang} title={codeTitle} startAt={Math.round(0.12 * dur)} lineReveal={Math.max(4, Math.round(0.05 * dur))} fontSize={30} accent={accent ?? colors.purple} />
+        <CodeBlock code={code} lang={lang} title={codeTitle} startAt={Math.round(startP * dur)} lineReveal={Math.max(4, Math.round(0.05 * dur))} fontSize={30} accent={accent ?? colors.purple} />
       </div>
     </Shell>
   );
@@ -150,9 +160,12 @@ export const PlotScene: React.FC<
     area?: boolean;
     color?: string;
   }
-> = ({ dur, accent, title, caption, points, xRange, yRange, xLabel, yLabel, sweep = false, area = false, color }) => {
+> = ({ dur, accent, title, caption, cues, points, xRange, yRange, xLabel, yLabel, sweep = false, area = false, color }) => {
   const { p } = useP(dur);
-  const draw = interpolate(p, [0.12, 0.45], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // cues[0] = curve drawn while spoken; cues[1] = sweep/area while spoken.
+  const c0 = cueOr(cues, 0, 0.12);
+  const c1 = Math.max(c0 + 0.1, cueOr(cues, 1, 0.5));
+  const draw = interpolate(p, [c0, c0 + 0.33], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   // build an interpolating fn from points
   const fn = (x: number) => {
     if (points.length === 0) return 0;
@@ -167,8 +180,8 @@ export const PlotScene: React.FC<
     }
     return points[points.length - 1][1];
   };
-  const sweepX = sweep ? interpolate(p, [0.5, 0.9], [xRange[0], xRange[1]], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : null;
-  const areaTo = area ? interpolate(p, [0.5, 0.85], [xRange[0], xRange[1]], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : null;
+  const sweepX = sweep ? interpolate(p, [c1, Math.min(0.95, c1 + 0.4)], [xRange[0], xRange[1]], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : null;
+  const areaTo = area ? interpolate(p, [c1, Math.min(0.92, c1 + 0.35)], [xRange[0], xRange[1]], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : null;
   return (
     <Shell dur={dur} accent={accent ?? colors.success} title={title} caption={caption} accentDefault={colors.success}>
       <div style={{ position: "absolute", left: 0, width: 1920, top: my(1.7), display: "flex", justifyContent: "center" }}>
@@ -194,13 +207,17 @@ export const PlotScene: React.FC<
 /** General node-edge diagram (systems, processes, relationships). x,y in Manim units. */
 export const DiagramScene: React.FC<
   Base & {
-    nodes: { id: string; label: string; x: number; y: number; color?: string }[];
+    nodes: { id: string; label: string; x: number; y: number; color?: string; icon?: string }[];
     edges: { from: string; to: string; color?: string; label?: string }[];
   }
-> = ({ dur, accent, title, caption, nodes, edges }) => {
+> = ({ dur, accent, title, caption, cues, nodes, edges }) => {
   const { p } = useP(dur);
   const pos: Record<string, { x: number; y: number }> = {};
-  nodes.forEach((n) => (pos[n.id] = { x: n.x, y: n.y }));
+  const nodeStart: Record<string, number> = {};
+  nodes.forEach((n, i) => {
+    pos[n.id] = { x: n.x, y: n.y };
+    nodeStart[n.id] = cueOr(cues, i, 0.12 + i * 0.08);
+  });
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   return (
@@ -209,16 +226,26 @@ export const DiagramScene: React.FC<
         const a = pos[e.from];
         const b = pos[e.to];
         if (!a || !b) return null;
-        const start = 0.3 + i * 0.06;
+        // An edge never draws toward a node that hasn't appeared yet (cues can
+        // reorder node reveals relative to the default grid).
+        const start = Math.max(0.3 + i * 0.06, (nodeStart[e.to] ?? 0) + 0.04);
         const prog = interpolate(p, [start, start + 0.1], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
         return <Arrow key={i} from={[a.x, a.y]} to={[b.x, b.y]} color={e.color ?? colors.muted} width={3} progress={prog} />;
       })}
-      {nodes.map((n, i) => {
-        const s = spring({ frame: frame - Math.round((0.12 + i * 0.08) * dur), fps, config: { damping: 14, stiffness: 120 } });
+      {nodes.map((n) => {
+        const start = nodeStart[n.id];
+        const s = spring({ frame: frame - Math.round(start * dur), fps, config: { damping: 14, stiffness: 120 } });
         return (
           <div key={n.id} style={{ transform: `scale(${s})`, transformOrigin: `${mx(n.x)}px ${my(n.y)}px` }}>
-            <Card x={n.x} y={n.y} w={2.2} h={1.0} accent={n.color ?? colors.user} opacity={interpolate(p, [0.1 + i * 0.08, 0.18 + i * 0.08], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} fontPx={26}>
-              {n.label}
+            <Card x={n.x} y={n.y} w={2.2} h={1.0} accent={n.color ?? colors.user} opacity={interpolate(p, [start, start + 0.08], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} fontPx={26}>
+              {n.icon ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                  <Icon name={n.icon} size={26} color={n.color ?? colors.user} />
+                  {n.label}
+                </span>
+              ) : (
+                n.label
+              )}
             </Card>
           </div>
         );
@@ -235,33 +262,39 @@ export const ComparisonScene: React.FC<
     left: { label: string; items: string[] };
     right: { label: string; items: string[] };
   }
-> = ({ dur, accent, title, caption, left, right }) => {
+> = ({ dur, accent, title, caption, cues, left, right }) => {
   const { p } = useP(dur);
-  const column = (side: { label: string; items: string[] }, cx: number, color: string, base: number) => (
-    <>
-      <Zone x={cx} y={-0.45} w={5.7} h={4.1} color={color} fill={`${color}12`} opacity={appear(p, base, base + 0.1)} />
-      {/* Header centered over THIS column (not the full screen). */}
-      <div style={{ position: "absolute", left: mx(cx) - mu(2.85), top: my(2.05), width: mu(5.7), textAlign: "center", opacity: appear(p, base, base + 0.1) }}>
-        <span style={{ color, fontFamily: fonts.sans, fontSize: 31, fontWeight: 700 }}>{side.label}</span>
-      </div>
-      <div style={{ position: "absolute", left: mx(cx) - mu(2.4), top: my(1.15), width: mu(4.8), display: "flex", flexDirection: "column", gap: 24 }}>
-        {(side.items ?? []).slice(0, 5).map((it, i) => {
-          const start = base + 0.14 + i * 0.1;
-          const op = appear(p, start, start + 0.1);
-          return (
-            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 14, opacity: op }}>
-              <div style={{ width: 12, height: 12, marginTop: 9, borderRadius: 3, background: color, flexShrink: 0, transform: "rotate(45deg)" }} />
-              <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 29, fontWeight: 500, lineHeight: 1.25 }}>{it}</span>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
+  // Cue order matches the blueprint contract: all left items, then all right
+  // items. Each column's zone/header leads its first cued item slightly.
+  const column = (side: { label: string; items: string[] }, cx: number, color: string, base: number, offset: number) => {
+    const firstCue = cues?.[offset];
+    const zoneStart = firstCue != null ? Math.max(0.03, firstCue - 0.08) : base;
+    return (
+      <>
+        <Zone x={cx} y={-0.45} w={5.7} h={4.1} color={color} fill={`${color}12`} opacity={appear(p, zoneStart, zoneStart + 0.1)} />
+        {/* Header centered over THIS column (not the full screen). */}
+        <div style={{ position: "absolute", left: mx(cx) - mu(2.85), top: my(2.05), width: mu(5.7), textAlign: "center", opacity: appear(p, zoneStart, zoneStart + 0.1) }}>
+          <span style={{ color, fontFamily: fonts.sans, fontSize: 31, fontWeight: 700 }}>{side.label}</span>
+        </div>
+        <div style={{ position: "absolute", left: mx(cx) - mu(2.4), top: my(1.15), width: mu(4.8), display: "flex", flexDirection: "column", gap: 24 }}>
+          {(side.items ?? []).slice(0, 5).map((it, i) => {
+            const start = cueOr(cues, offset + i, base + 0.14 + i * 0.1);
+            const op = appear(p, start, start + 0.1);
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 14, opacity: op }}>
+                <div style={{ width: 12, height: 12, marginTop: 9, borderRadius: 3, background: color, flexShrink: 0, transform: "rotate(45deg)" }} />
+                <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 29, fontWeight: 500, lineHeight: 1.25 }}>{it}</span>
+              </div>
+            );
+          })}
+        </div>
+      </>
+    );
+  };
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
-      {column(left, -3.35, accent ?? colors.user, 0.1)}
-      {column(right, 3.35, colors.kernel, 0.22)}
+      {column(left, -3.35, accent ?? colors.user, 0.1, 0)}
+      {column(right, 3.35, colors.kernel, 0.22, (left.items ?? []).slice(0, 5).length)}
     </Shell>
   );
 };
@@ -269,7 +302,7 @@ export const ComparisonScene: React.FC<
 /** Stacked system layers (app -> syscall -> kernel -> hardware), top to bottom. */
 export const LayeredSystemScene: React.FC<
   Base & { layers: { label: string; sub?: string; color?: string }[] }
-> = ({ dur, accent, title, caption, layers }) => {
+> = ({ dur, accent, title, caption, cues, layers }) => {
   const { p } = useP(dur);
   const items = (layers ?? []).slice(0, 5);
   const n = Math.max(1, items.length);
@@ -281,7 +314,7 @@ export const LayeredSystemScene: React.FC<
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
       {items.map((layer, i) => {
         const cy = top - bandH / 2 - i * (bandH + gap);
-        const start = 0.12 + i * 0.12;
+        const start = cueOr(cues, i, 0.12 + i * 0.12);
         const op = appear(p, start, start + 0.12);
         const color = layer.color ?? LAYER_COLORS[i % LAYER_COLORS.length];
         return (
@@ -304,7 +337,7 @@ export const LayeredSystemScene: React.FC<
 /** Left-to-right sequence of steps along a baseline (process / lifecycle). */
 export const TimelineScene: React.FC<
   Base & { steps: { label: string; sub?: string }[] }
-> = ({ dur, accent, title, caption, steps }) => {
+> = ({ dur, accent, title, caption, cues, steps }) => {
   const { p } = useP(dur);
   const items = (steps ?? []).slice(0, 5);
   const n = Math.max(1, items.length);
@@ -317,9 +350,9 @@ export const TimelineScene: React.FC<
       <Arrow from={[x0 - 0.5, 0]} to={[x1 + 0.5, 0]} color={colors.edge} width={3} progress={appear(p, 0.1, 0.3)} />
       {items.map((step, i) => {
         const cx = n > 1 ? x0 + i * span : 0;
-        const start = 0.2 + i * 0.14;
+        const start = cueOr(cues, i, 0.2 + i * 0.14);
         const op = appear(p, start, start + 0.12);
-        const focus = i === items.length - 1 ? 1 : dimAt(p, start + 0.14, 0.55);
+        const focus = i === items.length - 1 ? 1 : dimAt(p, cueOr(cues, i + 1, start + 0.14), 0.55);
         return (
           <React.Fragment key={i}>
             <div style={{ opacity: op * focus }}>
@@ -342,14 +375,18 @@ export const TerminalScene: React.FC<Base & { command: string; output?: string }
   accent,
   title,
   caption,
+  cues,
   command,
   output,
 }) => {
   const { p } = useP(dur);
-  const typed = interpolate(p, [0.12, 0.5], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // cues[0] = command typed while spoken; cues[1] = output revealed while spoken.
+  const c0 = cueOr(cues, 0, 0.12);
+  const c1 = Math.max(c0 + 0.12, cueOr(cues, 1, 0.55));
+  const typed = interpolate(p, [c0, c0 + 0.38], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
-      <Terminal x={0} y={1.15} w={11} h={1.1} text={`$ ${command}`} typed={typed} opacity={appear(p, 0.06, 0.16)} />
+      <Terminal x={0} y={1.15} w={11} h={1.1} text={`$ ${command}`} typed={typed} opacity={appear(p, Math.max(0.03, c0 - 0.06), c0 + 0.04)} />
       {output ? (
         <div
           style={{
@@ -357,7 +394,7 @@ export const TerminalScene: React.FC<Base & { command: string; output?: string }
             left: mx(-5.5),
             top: my(0.2),
             width: mu(11),
-            opacity: appear(p, 0.55, 0.7),
+            opacity: appear(p, c1, c1 + 0.15),
             fontFamily: fonts.mono,
             fontSize: 26,
             lineHeight: 1.5,
@@ -373,18 +410,21 @@ export const TerminalScene: React.FC<Base & { command: string; output?: string }
 };
 
 /** A grid of labelled cells: memory, page tables, registers, stack frames. */
-export const MemoryScene: React.FC<Base & { cells: MemoryCell[]; cols?: number }> = ({ dur, accent, title, caption, cells, cols }) => {
+export const MemoryScene: React.FC<Base & { cells: MemoryCell[]; cols?: number }> = ({ dur, accent, title, caption, cues, cells, cols }) => {
   const { p } = useP(dur);
   const ac = accent ?? colors.user;
+  // The grid reveals progressively from the first spoken cue to the last.
+  const c0 = cueOr(cues, 0, 0.12);
+  const cEnd = Math.max(c0 + 0.15, lastCue(cues, 0.7));
   return (
     <Shell dur={dur} accent={ac} title={title} caption={caption}>
-      <MemoryGrid cells={cells} cols={cols ?? 4} x={0} y={0.1} reveal={appear(p, 0.12, 0.7)} accent={ac} />
+      <MemoryGrid cells={cells} cols={cols ?? 4} x={0} y={0.1} reveal={appear(p, c0, cEnd)} accent={ac} />
     </Shell>
   );
 };
 
 /** A packet travelling left-to-right through a row of stages (data flow / syscall path). */
-export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string }[] }> = ({ dur, accent, title, caption, stages }) => {
+export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string; icon?: string }[] }> = ({ dur, accent, title, caption, cues, stages }) => {
   const { p } = useP(dur);
   const items = (stages ?? []).slice(0, 5);
   const n = Math.max(1, items.length);
@@ -394,7 +434,11 @@ export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string 
   const span = n > 1 ? (x1 - x0) / (n - 1) : 0;
   const xs = items.map((_, i) => (n > 1 ? x0 + i * span : 0));
   const y = 0.2;
-  const travel = appear(p, 0.22, 0.9); // 0..1 across the whole row
+  // The token's journey spans first-cue -> last-cue, so it sits on the stage
+  // currently being narrated instead of sweeping at a fixed pace.
+  const t0 = cueOr(cues, 0, 0.22);
+  const t1 = Math.max(t0 + 0.2, lastCue(cues, 0.9));
+  const travel = appear(p, t0, t1); // 0..1 across the whole row
   const segF = travel * (n - 1);
   const seg = Math.max(0, Math.min(n - 2, Math.floor(segF)));
   const segP = n > 1 ? segF - seg : 0;
@@ -409,7 +453,16 @@ export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string 
         return (
           <React.Fragment key={i}>
             <div style={{ opacity: op }}>
-              <Card x={xs[i]} y={y} w={2.0} h={1.0} accent={ac} glow={i === active ? 0.85 : 0} fontPx={24}>{st.label}</Card>
+              <Card x={xs[i]} y={y} w={2.0} h={1.0} accent={ac} glow={i === active ? 0.85 : 0} fontPx={24}>
+                {st.icon ? (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    <Icon name={st.icon} size={24} color={ac} />
+                    {st.label}
+                  </span>
+                ) : (
+                  st.label
+                )}
+              </Card>
             </div>
             {st.sub ? <Caption x={xs[i]} y={y - 0.95} label={st.sub} color={colors.muted} size={20} width={2.6} opacity={op} /> : null}
           </React.Fragment>
@@ -421,12 +474,14 @@ export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string 
 };
 
 /** Animated bar chart for quantities / benchmarks / comparisons. */
-export const BarChartScene: React.FC<Base & { bars: Bar[] }> = ({ dur, accent, title, caption, bars }) => {
+export const BarChartScene: React.FC<Base & { bars: Bar[] }> = ({ dur, accent, title, caption, cues, bars }) => {
   const { p } = useP(dur);
+  const c0 = cueOr(cues, 0, 0.15);
+  const cEnd = Math.max(c0 + 0.2, lastCue(cues, 0.6));
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
       <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(1.9), display: "flex", justifyContent: "center" }}>
-        <BarChart bars={bars} grow={appear(p, 0.15, 0.6)} />
+        <BarChart bars={bars} grow={appear(p, c0, cEnd)} />
       </div>
     </Shell>
   );

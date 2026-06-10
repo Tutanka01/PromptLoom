@@ -48,6 +48,15 @@ services:
       VIDEO_API_RENDER_FPS: ${VIDEO_API_RENDER_FPS:-30}
       VIDEO_API_REMOTION_CONCURRENCY: ${VIDEO_API_REMOTION_CONCURRENCY:-75%}
       VIDEO_API_RENDER_X264_PRESET: ${VIDEO_API_RENDER_X264_PRESET:-faster}
+      # Word-level forced alignment (Remotion): narration-synced visual cues.
+      VIDEO_API_ALIGN_ENABLED: ${VIDEO_API_ALIGN_ENABLED:-1}
+      VIDEO_API_ALIGN_DEVICE: ${VIDEO_API_ALIGN_DEVICE:-auto}
+      # Per-scene LLM parallelism (scene coders / per-scene blueprint passes).
+      VIDEO_API_LLM_PARALLEL: ${VIDEO_API_LLM_PARALLEL:-3}
+      # Optional background music (file path visible from the worker + base dB),
+      # looped and sidechain-ducked under the voice by assemble_en.sh.
+      VIDEO_API_MUSIC_FILE: ${VIDEO_API_MUSIC_FILE:-}
+      VIDEO_API_MUSIC_DB: ${VIDEO_API_MUSIC_DB:--26}
       MANIM_USE_UV: "0"
     command: celery -A video_api.celery_app worker --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
     volumes:
