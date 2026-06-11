@@ -3,49 +3,39 @@ from __future__ import annotations
 import re
 
 
-# ISO-ish language codes for European deployment. The list intentionally covers
-# EU languages plus common European non-EU languages so the API can accept a
-# broad "spoken in Europe" request while still rejecting typos early.
+# ISO-ish language codes supported by MOSS-TTS v1.5. The video API can receive a
+# prompt in any language, but the requested output language must be one the TTS
+# engine can actually speak reliably.
 SUPPORTED_LANGUAGES: dict[str, str] = {
+    "zh": "Chinese",
+    "yue": "Cantonese",
     "en": "English",
-    "fr": "French",
-    "es": "Spanish",
-    "it": "Italian",
-    "pt": "Portuguese",
+    "ar": "Arabic",
+    "cs": "Czech",
+    "da": "Danish",
     "de": "German",
     "nl": "Dutch",
-    "ro": "Romanian",
-    "pl": "Polish",
-    "cs": "Czech",
-    "sk": "Slovak",
-    "sl": "Slovenian",
-    "hr": "Croatian",
-    "hu": "Hungarian",
-    "bg": "Bulgarian",
-    "el": "Greek",
-    "da": "Danish",
-    "sv": "Swedish",
-    "no": "Norwegian",
-    "nb": "Norwegian Bokmal",
-    "nn": "Norwegian Nynorsk",
+    "es": "Spanish",
+    "fr": "French",
     "fi": "Finnish",
-    "et": "Estonian",
-    "lv": "Latvian",
-    "lt": "Lithuanian",
-    "ga": "Irish",
-    "mt": "Maltese",
-    "is": "Icelandic",
-    "sq": "Albanian",
+    "el": "Greek",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "hu": "Hungarian",
+    "it": "Italian",
     "mk": "Macedonian",
-    "sr": "Serbian",
-    "bs": "Bosnian",
-    "uk": "Ukrainian",
+    "ms": "Malay",
+    "fa": "Persian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ro": "Romanian",
     "ru": "Russian",
-    "ca": "Catalan",
-    "eu": "Basque",
-    "gl": "Galician",
-    "cy": "Welsh",
+    "sw": "Swahili",
+    "sv": "Swedish",
+    "tl": "Tagalog",
+    "th": "Thai",
     "tr": "Turkish",
+    "vi": "Vietnamese",
 }
 
 LANGUAGE_ALIASES = {
@@ -67,7 +57,9 @@ LANGUAGE_ALIASES = {
     "dutch": "nl",
     "polish": "pl",
     "greek": "el",
-    "ukrainian": "uk",
+    "swedish": "sv",
+    "czech": "cs",
+    "turkish": "tr",
 }
 
 
@@ -80,8 +72,6 @@ def normalize_language(value: str | None) -> str:
     if alias_key in LANGUAGE_ALIASES:
         return LANGUAGE_ALIASES[alias_key]
     code = lower.split("-", 1)[0]
-    if code in {"nor"}:
-        code = "no"
     if code not in SUPPORTED_LANGUAGES:
         supported = ", ".join(sorted(SUPPORTED_LANGUAGES))
         raise ValueError(f"unsupported language {value!r}; supported codes: {supported}")

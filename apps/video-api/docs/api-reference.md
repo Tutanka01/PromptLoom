@@ -53,33 +53,63 @@ curl -X POST http://localhost:8080/v1/videos \
 
 ```json
 {
-  "prompt": "Make a short video explaining derivatives intuitively",
-  "theme": "math",
-  "language": "en",
+  "prompt": "Explique intuitivement ce qu est un appel systeme Linux",
+  "theme": "linux-fondamentaux",
+  "language": "it",
   "target_duration_seconds": 240,
-  "quality_profile": "final",
+  "quality_profile": "standard",
   "callback_url": null
 }
 ```
 
 Champs :
 
-- `prompt` obligatoire, entre 10 et 4000 caracteres.
-- `theme` optionnel, aide a classer le job.
-- `language` optionnel, defaut `en`. Codes supportes pour les langues parlees en Europe :
-  `en`, `fr`, `es`, `it`, `pt`, `de`, `nl`, `ro`, `pl`, `cs`, `sk`, `sl`, `hr`,
-  `hu`, `bg`, `el`, `da`, `sv`, `no`, `fi`, `et`, `lv`, `lt`, `ga`, `mt`, `is`,
-  `sq`, `mk`, `sr`, `bs`, `uk`, `ru`, `ca`, `eu`, `gl`, `cy`, `tr`. La narration
+- `prompt` obligatoire, entre 10 et 4000 caracteres. Il peut etre ecrit dans
+  n'importe quelle langue. Ce n'est pas lui qui choisit la langue finale de la
+  video ; c'est le champ `language`.
+- `theme` optionnel, aide a classer le job et a nommer les artefacts. Exemples :
+  `math`, `cs`, `linux-fondamentaux`, `physics`.
+- `language` optionnel, defaut `en`. C'est la langue de sortie : narration TTS,
+  texte visible, labels et beats. Codes supportes par MOSS-TTS v1.5 :
+  `zh`, `yue`, `en`, `ar`, `cs`, `da`, `de`, `nl`, `es`, `fr`, `fi`, `el`,
+  `he`, `hi`, `hu`, `it`, `ja`, `ko`, `mk`, `ms`, `fa`, `pl`, `pt`, `ro`,
+  `ru`, `sw`, `sv`, `tl`, `th`, `tr`, `vi`. Pour les langues europeennes, cela
+  couvre notamment anglais, francais, espagnol, italien, portugais, allemand,
+  neerlandais, roumain, polonais, tcheque, danois, suedois, finnois, grec,
+  hongrois, macedonien, russe et turc. La narration
   et les textes visibles sont generes dans cette langue, meme si le prompt est dans
-  une autre langue.
-- `target_duration_seconds` optionnel, entre 45 et 900 secondes. S'il est absent, l'API vise 240 secondes et verifie que le rendu final n'est pas une video courte.
-- `quality_profile` : `draft` (iteration rapide : voix Kokoro, rendu demi-resolution,
-  pas de revue visuelle), `standard` (defaut, production), `high` (standard + revue
-  visuelle forcee si `VIDEO_API_VISION_MODEL` est defini + gel fatal). `final` est
-  l'ancien nom, alias de `standard`.
+  une autre langue. Les tags regionaux comme `fr-FR` ou `it-IT` sont normalises en
+  `fr` et `it`.
+- `target_duration_seconds` optionnel, entre 45 et 900 secondes. C'est une cible
+  pedagogique pour le LLM, pas une duree garantie a l'image pres : le pipeline
+  ecrit assez de narration pour s'approcher de cette duree, puis la duree reelle
+  vient des WAV generes et de `audio/en/durations.json`. S'il est absent, l'API
+  vise 240 secondes et rejette les rendus anormalement courts.
+- `quality_profile` optionnel, defaut `standard` :
+  `draft` = iteration rapide, force Kokoro, rendu demi-resolution, pas de revue
+  visuelle. A utiliser surtout pour EN/FR ; pour italien, espagnol, roumain, etc.,
+  prefere `standard` avec `VIDEO_API_VOICE_ENGINE=moss`.
+  `standard` = profil de production avec les reglages voix/rendu configures.
+  `high` = `standard` + revue visuelle forcee si `VIDEO_API_VISION_MODEL` est defini
+  + controle de gel fatal.
+  `final` = ancien nom, alias de `standard`.
 - `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
   (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
   dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
+
+Exemple conseille pour une video italienne avec un prompt francais :
+
+```bash
+curl -X POST http://localhost:8080/v1/videos \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt": "Explique pourquoi un programme utilisateur Linux passe par un appel systeme pour lire un fichier",
+    "theme": "linux-fondamentaux",
+    "language": "it",
+    "target_duration_seconds": 240,
+    "quality_profile": "standard"
+  }'
+```
 
 ### Reponse
 

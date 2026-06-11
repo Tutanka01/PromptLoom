@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -258,6 +259,47 @@ def _write_audio_result(result, wav_path: Path, fallback_sample_rate: int = 2400
     sf.write(str(wav_path), audio, sample_rate)
 
 
+MOSS_LANGUAGE_NAMES = {
+    "zh": "Chinese",
+    "yue": "Cantonese",
+    "en": "English",
+    "ar": "Arabic",
+    "cs": "Czech",
+    "da": "Danish",
+    "de": "German",
+    "nl": "Dutch",
+    "es": "Spanish",
+    "fr": "French",
+    "fi": "Finnish",
+    "el": "Greek",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "hu": "Hungarian",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "mk": "Macedonian",
+    "ms": "Malay",
+    "fa": "Persian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ro": "Romanian",
+    "ru": "Russian",
+    "sw": "Swahili",
+    "sv": "Swedish",
+    "tl": "Tagalog",
+    "th": "Thai",
+    "tr": "Turkish",
+    "vi": "Vietnamese",
+}
+
+
+def _moss_language_name(language: str) -> str:
+    language = (language or "").strip()
+    code = language.lower().replace("_", "-").split("-", 1)[0]
+    return MOSS_LANGUAGE_NAMES.get(code, language or "English")
+
+
 class _FormatDict(dict):
     def __missing__(self, key: str) -> str:
         return ""
@@ -293,40 +335,75 @@ def _run_moss_command_template(
         raise RuntimeError(f"MOSS command did not write expected WAV: {wav_path}")
 
 
-def _call_moss_pipeline(pipe, text: str, language: str, voice: str, reference_audio: str, reference_text: str):
-    kwargs = {}
-    if language:
-        kwargs["language"] = language
-    if voice:
-        kwargs["voice"] = voice
-    if reference_audio:
-        kwargs["reference_audio"] = reference_audio
-    if reference_text:
-        kwargs["reference_text"] = reference_text
-    try:
-        return pipe(text, **kwargs)
-    except TypeError:
-        try:
-            return pipe(text, generate_kwargs=kwargs)
-        except TypeError:
-            return pipe(text)
+def _resolve_moss_attn_implementation(device: str, dtype) -> str:
+    import torch
+
+    if (
+        device == "cuda"
+        and importlib.util.find_spec("flash_attn") is not None
+        and dtype in {torch.float16, torch.bfloat16}
+    ):
+        major, _ = torch.cuda.get_device_capability()
+        if major >= 8:
+            return "flash_attention_2"
+    if device == "cuda":
+        return "sdpa"
+    return "eager"
 
 
-def _load_moss_pipeline(model_id: str, device: str):
-    from transformers import pipeline
+def _load_moss_generator(model_id: str, device: str):
+    import torch
+    from transformers import AutoModel, AutoProcessor
 
     if device == "cuda":
-        device_arg = 0
-    elif device == "cpu":
-        device_arg = -1
-    else:
-        device_arg = device
-    return pipeline(
-        "text-to-speech",
-        model=model_id,
+        torch.backends.cuda.enable_cudnn_sdp(False)
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(True)
+    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    attn_implementation = _resolve_moss_attn_implementation(device, dtype)
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+    processor.audio_tokenizer = processor.audio_tokenizer.to(device)
+    model = AutoModel.from_pretrained(
+        model_id,
         trust_remote_code=True,
-        device=device_arg,
-    )
+        attn_implementation=attn_implementation,
+        torch_dtype=dtype,
+    ).to(device)
+    model.eval()
+    print(f"[INFO] MOSS attn_implementation={attn_implementation}")
+    return processor, model
+
+
+def _generate_moss_audio(
+    processor,
+    model,
+    text: str,
+    language: str,
+    reference_audio: str,
+    wav_path: Path,
+) -> None:
+    import torch
+    import torchaudio
+
+    device = next(model.parameters()).device
+    language_name = _moss_language_name(language)
+    reference = [reference_audio] if reference_audio else None
+    conversation = [processor.build_user_message(text=text, language=language_name, reference=reference)]
+    with torch.no_grad():
+        batch = processor([conversation], mode="generation")
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        outputs = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=4096,
+        )
+        messages = [message for message in processor.decode(outputs) if message is not None]
+        if not messages or not messages[0].audio_codes_list:
+            raise RuntimeError("MOSS TTS returned no decoded audio.")
+        audio = messages[0].audio_codes_list[0]
+        torchaudio.save(str(wav_path), audio.unsqueeze(0), processor.model_config.sampling_rate)
 
 
 def generate_moss(
@@ -341,10 +418,10 @@ def generate_moss(
     force: bool,
 ) -> None:
     resolved_device = _select_torch_device(device)
-    pipe = None
+    generator = None
     if not command_template:
         print(f"Loading MOSS TTS model {model_id} on {resolved_device}")
-        pipe = _load_moss_pipeline(model_id, resolved_device)
+        generator = _load_moss_generator(model_id, resolved_device)
 
     for segment in segments:
         key = segment["key"]
@@ -366,8 +443,12 @@ def generate_moss(
                 reference_text=reference_text,
             )
         else:
-            result = _call_moss_pipeline(pipe, text, language, voice, reference_audio, reference_text)
-            _write_audio_result(result, wav_path)
+            processor, model = generator
+            if voice:
+                print("Warning: --moss-voice is not used by the native MOSS-TTS generator.")
+            if reference_text:
+                print("Warning: --moss-reference-text is not used by the native MOSS-TTS generator.")
+            _generate_moss_audio(processor, model, text, language, reference_audio, wav_path)
         write_mp3_from_wav(wav_path, mp3_path)
 
 

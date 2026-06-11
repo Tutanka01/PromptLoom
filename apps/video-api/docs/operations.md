@@ -123,7 +123,12 @@ VIDEO_API_VOICE_ENGINE=chatterbox
 VIDEO_API_VOICE_COMMAND=python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45
 ```
 
-Par defaut Docker utilise Chatterbox principal non-turbo. Pour utiliser un modele de
+Par defaut Docker utilise Chatterbox principal non-turbo. Le champ API `language`
+choisit la langue de sortie demandee au LLM et transmise au TTS. Pour les langues
+au-dela de EN/FR, utiliser `VIDEO_API_VOICE_ENGINE=moss` et eviter
+`quality_profile=draft`, car `draft` force Kokoro pour accelerer les iterations.
+
+Pour utiliser un modele de
 synthese vocale multilingue MOSS-TTS :
 
 ```text
