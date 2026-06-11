@@ -124,7 +124,33 @@ VIDEO_API_VOICE_COMMAND=python generate_voice_en.py --engine chatterbox --exagge
 ```
 
 Par defaut Docker utilise Chatterbox principal non-turbo. Pour utiliser un modele de
-synthese vocale expose par le meme endpoint OpenAI-compatible que le LLM :
+synthese vocale multilingue MOSS-TTS :
+
+```text
+VIDEO_API_VOICE_ENGINE=moss
+VIDEO_API_MOSS_TTS_MODEL=OpenMOSS-Team/MOSS-TTS-v1.5
+VIDEO_API_MOSS_TTS_DEVICE=auto       # auto | cpu | cuda | mps
+VIDEO_API_MOSS_TTS_VOICE=            # optionnel si le modele expose des voix nommees
+VIDEO_API_MOSS_TTS_REFERENCE_AUDIO=  # optionnel, zero-shot cloning si supporte
+VIDEO_API_MOSS_TTS_REFERENCE_TEXT=   # texte de la reference, si requis
+VIDEO_API_VOICE_TAIL_PADDING=0.45
+```
+
+La langue parlee vient du champ API `language` du job. Les fichiers restent
+nommes `segments_en.json` et `audio/en/...` pour compatibilite avec le pipeline
+existant, mais leur contenu narratif peut etre francais, espagnol, italien,
+roumain, anglais, etc. Si ton installation MOSS utilise une commande specifique,
+tu peux fournir une commande par segment :
+
+```text
+VIDEO_API_MOSS_TTS_COMMAND=python -m moss_tts --model {model} --language {language} --text-file {text_file} --output {output}
+```
+
+Placeholders disponibles : `{text_file}`, `{text_json}`, `{output}`, `{language}`,
+`{model}`, `{reference_audio}`, `{reference_text}`.
+
+Pour utiliser un modele de synthese vocale expose par le meme endpoint
+OpenAI-compatible que le LLM :
 
 ```text
 VIDEO_API_VOICE_ENGINE=openai

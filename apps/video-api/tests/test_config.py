@@ -27,6 +27,26 @@ def test_settings_reads_openai_tts_environment(monkeypatch):
     assert settings.openai_tts_speed == 0.95
 
 
+def test_settings_reads_moss_tts_environment(monkeypatch):
+    monkeypatch.setenv("VIDEO_API_VOICE_ENGINE", "moss")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_MODEL", "OpenMOSS-Team/MOSS-TTS-v1.5")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_VOICE", "speaker-a")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", "/data/ref.wav")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", "Reference text")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_DEVICE", "cpu")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_COMMAND", "python -m moss_tts --output {output}")
+
+    settings = Settings()
+
+    assert settings.voice_engine == "moss"
+    assert settings.moss_tts_model == "OpenMOSS-Team/MOSS-TTS-v1.5"
+    assert settings.moss_tts_voice == "speaker-a"
+    assert settings.moss_tts_reference_audio == "/data/ref.wav"
+    assert settings.moss_tts_reference_text == "Reference text"
+    assert settings.moss_tts_device == "cpu"
+    assert settings.moss_tts_command == "python -m moss_tts --output {output}"
+
+
 def test_dotenv_loads_missing_values_without_overriding(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(

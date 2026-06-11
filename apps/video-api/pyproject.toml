@@ -28,6 +28,10 @@ worker = [
   "soundfile>=0.12",
   "torch>=2.2",
   "torchaudio>=2.2",
+  "accelerate>=0.33",
+  "huggingface-hub>=0.26",
+  "safetensors>=0.4",
+  "transformers>=4.46",
 ]
 test = [
   "pytest>=8.3,<9",

@@ -51,6 +51,30 @@ def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str,
             ],
             None,
         )
+    if engine in {"moss", "moss-tts", "moss_tts"}:
+        return (
+            [
+                "python",
+                "generate_voice_en.py",
+                "--engine",
+                "moss",
+                "--moss-model",
+                settings.moss_tts_model,
+                "--moss-language",
+                settings.voice_language,
+                "--tail-padding",
+                f"{settings.voice_tail_padding:.3f}",
+            ],
+            {
+                "VIDEO_API_MOSS_TTS_MODEL": settings.moss_tts_model,
+                "VIDEO_API_MOSS_TTS_LANGUAGE": settings.voice_language,
+                "VIDEO_API_MOSS_TTS_VOICE": settings.moss_tts_voice,
+                "VIDEO_API_MOSS_TTS_REFERENCE_AUDIO": settings.moss_tts_reference_audio,
+                "VIDEO_API_MOSS_TTS_REFERENCE_TEXT": settings.moss_tts_reference_text,
+                "VIDEO_API_MOSS_TTS_DEVICE": settings.moss_tts_device,
+                "VIDEO_API_MOSS_TTS_COMMAND": settings.moss_tts_command,
+            },
+        )
     if engine in {"openai", "openai-compatible", "openai_compatible"}:
         return (
             [
@@ -72,7 +96,7 @@ def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str,
         )
     raise ValueError(
         "Unsupported VIDEO_API_VOICE_ENGINE="
-        f"{settings.voice_engine!r}; expected 'chatterbox', 'kokoro' or 'openai'."
+        f"{settings.voice_engine!r}; expected 'chatterbox', 'kokoro', 'moss' or 'openai'."
     )
 
 

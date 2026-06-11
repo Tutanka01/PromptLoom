@@ -4,6 +4,7 @@ import json
 import logging
 import time
 import traceback
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +139,10 @@ class VideoPipeline:
             if job is None:
                 raise RuntimeError(f"job not found: {job_id}")
             self._apply_profile(getattr(job, "quality_profile", None))
+            self.settings = dataclasses.replace(self.settings, voice_language=job.language or "en")
+            self.llm = LLMClient(self.settings)
+            self.engine = make_engine(self.settings, self.llm)
+            self.visual_reviewer = VisualReviewer(self.settings)
             workspace = job_root(self.settings.jobs_root, job_id)
             workspace.mkdir(parents=True, exist_ok=True)
             logs_dir = workspace / "logs"
@@ -218,6 +223,7 @@ class VideoPipeline:
                         job.prompt,
                         job.theme,
                         job.target_duration_seconds,
+                        job.language,
                     )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
@@ -248,6 +254,7 @@ class VideoPipeline:
                             job.prompt,
                             blueprint_data or {},
                             repair_hint,
+                            job.language,
                         )
                 blueprint_data = blueprint.model_dump()
                 (workspace / "blueprint.json").write_text(
@@ -285,7 +292,11 @@ class VideoPipeline:
                     "job.voice.start job_id=%s engine=%s model=%s",
                     job.id,
                     self.settings.voice_engine,
-                    self.settings.openai_tts_model if self.settings.voice_engine.strip().lower() == "openai" else "",
+                    self.settings.openai_tts_model
+                    if self.settings.voice_engine.strip().lower() == "openai"
+                    else self.settings.moss_tts_model
+                    if self.settings.voice_engine.strip().lower() in {"moss", "moss-tts", "moss_tts"}
+                    else "",
                 )
                 runner.run(voice_args, cwd=video_dir, log_name="voice.log", env=voice_env)
                 logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)

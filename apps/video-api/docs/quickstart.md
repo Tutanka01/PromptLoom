@@ -60,6 +60,14 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math"}'
 ```
 
+Pour demander une video dans une autre langue, ajoute `language` :
+
+```bash
+curl -X POST http://localhost:8080/v1/videos \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Explique ce qu est un syscall Linux","theme":"cs","language":"fr"}'
+```
+
 Reponse :
 
 ```json

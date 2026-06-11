@@ -41,6 +41,14 @@ curl -X POST http://localhost:8080/v1/videos \
   -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math"}'
 ```
 
+Exemple multilingue :
+
+```bash
+curl -X POST http://localhost:8080/v1/videos \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Explique les appels systeme Linux","theme":"cs","language":"fr"}'
+```
+
 ### Corps JSON
 
 ```json
@@ -58,7 +66,12 @@ Champs :
 
 - `prompt` obligatoire, entre 10 et 4000 caracteres.
 - `theme` optionnel, aide a classer le job.
-- `language` vaut actuellement `en`.
+- `language` optionnel, defaut `en`. Codes supportes pour les langues parlees en Europe :
+  `en`, `fr`, `es`, `it`, `pt`, `de`, `nl`, `ro`, `pl`, `cs`, `sk`, `sl`, `hr`,
+  `hu`, `bg`, `el`, `da`, `sv`, `no`, `fi`, `et`, `lv`, `lt`, `ga`, `mt`, `is`,
+  `sq`, `mk`, `sr`, `bs`, `uk`, `ru`, `ca`, `eu`, `gl`, `cy`, `tr`. La narration
+  et les textes visibles sont generes dans cette langue, meme si le prompt est dans
+  une autre langue.
 - `target_duration_seconds` optionnel, entre 45 et 900 secondes. S'il est absent, l'API vise 240 secondes et verifie que le rendu final n'est pas une video courte.
 - `quality_profile` : `draft` (iteration rapide : voix Kokoro, rendu demi-resolution,
   pas de revue visuelle), `standard` (defaut, production), `high` (standard + revue

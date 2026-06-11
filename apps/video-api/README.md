@@ -26,7 +26,7 @@ Submit a job:
 ```bash
 curl -X POST http://localhost:8080/v1/videos \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math"}'
+  -d '{"prompt":"Make a short video explaining derivatives intuitively","theme":"math","language":"en"}'
 ```
 
 Poll:

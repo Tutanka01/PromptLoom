@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from video_api import timing
 from video_api.config import Settings
+from video_api.languages import language_name, normalize_language
 from video_api.schemas import BeatSpec, RemotionBlueprint, SceneSpec, VideoBlueprint
 
 
@@ -20,13 +21,14 @@ SYSTEM_PROMPT = """You produce high-quality STEM educational explainer videos.
 Return ONLY a single valid JSON object. No prose, no markdown, no code fences.
 The JSON must describe a complete 3-5 minute video blueprint by default.
 Every scene must have a key like Scene1_HookEN, Scene2_CoreIdeaEN.
+Scene keys keep the EN suffix for renderer compatibility even when the spoken language is not English.
 For a 3-5 minute target, produce 8 to 12 scenes with enough narration to actually fill the duration.
 Each scene must include duration_seconds, one approved visual primitive, narration text, and 5 to 7 concrete beats unless the scene is very short.
 Each beat has: at (a ratio), text_hint (the spoken idea), visual_action (an instruction to the renderer), and label.
 label is the SHORT on-screen text that will literally be drawn on a card (<= 40 chars, no trailing period, e.g. "average rate", "let h approach 0"). Never put an instruction like "Reveal the card" in label.
 Beat at values must be normalized ratios between 0.0 and 1.0 inside that scene, not seconds or global timestamps.
 The voice and image must explain the same idea at the same time.
-Plan the explanation from intuition, to mechanism, to transfer or recap. Use precise academic language, but introduce terms before relying on them.
+Plan the explanation from intuition, to mechanism, to transfer or recap. Use precise academic language in the requested output language, but introduce terms before relying on them.
 You are planning a blueprint; a separate expert step then authors real, bespoke Manim code for each scene (it can use LaTeX equations, plotted axes/graphs, code blocks, labelled diagrams). So describe CONCRETE, topic-specific visuals, and make scenes look different from one another — avoid making every scene a row of generic cards.
 The `layout` field is a SUGGESTED composition family, not a hard constraint: pick the closest of
 concept_map, process_flow, layered_system, timeline, equation_transform,
@@ -698,8 +700,11 @@ class LLMClient:
         prompt: str,
         theme: str | None,
         target_duration_seconds: int | None,
+        language: str = "en",
     ) -> VideoBlueprint:
         effective_target = target_duration_seconds or self.settings.default_target_duration_seconds
+        language = normalize_language(language)
+        target_language_name = language_name(language)
         if self.settings.fake_llm:
             logger.info("llm.fake_blueprint.start prompt_chars=%d theme=%s", len(prompt), theme)
             return fake_blueprint(prompt, theme, effective_target)
@@ -722,6 +727,13 @@ class LLMClient:
         user_prompt = {
             "prompt": prompt,
             "theme": theme or "general-stem",
+            "output_language": language,
+            "output_language_name": target_language_name,
+            "language_rules": (
+                f"The user prompt can be in any language, but write all spoken narration "
+                f"(`text`), beat text_hint values, and short on-screen labels in {target_language_name}. "
+                "Keep technical JSON keys and scene keys unchanged; keys must still look like Scene1_HookEN."
+            ),
             "target_duration_seconds": effective_target,
             "generation_guidelines": _load_generation_guidelines(self.settings),
             "duration_policy": self._duration_policy(effective_target),
@@ -743,7 +755,7 @@ class LLMClient:
                         "title": "string",
                         "duration_seconds": "integer planned duration for this scene",
                         "layout": "one approved visual primitive string",
-                        "text": "English narration for this scene",
+                        "text": f"{target_language_name} narration for this scene",
                         "visual_intent": "concrete visual plan",
                         "beats": [
                             {
@@ -761,6 +773,8 @@ class LLMClient:
         few_shot_request = {
             "prompt": "Explain the derivative in calculus",
             "theme": "math",
+            "output_language": "en",
+            "output_language_name": "English",
             "target_duration_seconds": 240,
         }
         content = self._complete(
@@ -780,7 +794,7 @@ class LLMClient:
             return VideoBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.blueprint.invalid errors=%s", exc)
-            repaired = self.repair_blueprint(prompt, data, str(exc))
+            repaired = self.repair_blueprint(prompt, data, str(exc), language)
             return repaired
 
     def generate_remotion_blueprint(
@@ -788,11 +802,14 @@ class LLMClient:
         prompt: str,
         theme: str | None,
         target_duration_seconds: int | None,
+        language: str = "en",
     ) -> "RemotionBlueprint":
         """Generate a Remotion-engine blueprint (component palette + props)."""
         from video_api.pipeline import remotion_blueprint as rb
 
         effective_target = target_duration_seconds or self.settings.default_target_duration_seconds
+        language = normalize_language(language)
+        target_language_name = language_name(language)
         if self.settings.fake_llm:
             logger.info("llm.fake_remotion_blueprint.start prompt_chars=%d theme=%s", len(prompt), theme)
             return rb.fake_remotion_blueprint(prompt, theme, effective_target)
@@ -801,15 +818,25 @@ class LLMClient:
         client = self._build_client()
         if self.settings.blueprint_two_pass:
             try:
-                return self._generate_remotion_two_pass(client, prompt, theme, effective_target)
+                return self._generate_remotion_two_pass(
+                    client, prompt, theme, effective_target, language, target_language_name
+                )
             except Exception as exc:
                 logger.warning(
                     "llm.remotion.two_pass.failed error=%s — falling back to single-pass", exc
                 )
-        return self._generate_remotion_single_pass(client, prompt, theme, effective_target)
+        return self._generate_remotion_single_pass(
+            client, prompt, theme, effective_target, language, target_language_name
+        )
 
     def _generate_remotion_single_pass(
-        self, client: Any, prompt: str, theme: str | None, effective_target: int
+        self,
+        client: Any,
+        prompt: str,
+        theme: str | None,
+        effective_target: int,
+        language: str = "en",
+        target_language_name: str = "English",
     ) -> "RemotionBlueprint":
         from video_api.pipeline import remotion_blueprint as rb
 
@@ -823,6 +850,12 @@ class LLMClient:
         user_prompt = {
             "prompt": prompt,
             "theme": theme or "general-stem",
+            "output_language": language,
+            "output_language_name": target_language_name,
+            "language_rules": (
+                f"Write narration, labels, props text, and beat anchors in {target_language_name}. "
+                "Scene keys keep the EN suffix for renderer compatibility."
+            ),
             "target_duration_seconds": effective_target,
             "duration_policy": self._duration_policy(effective_target),
         }
@@ -841,11 +874,17 @@ class LLMClient:
             return RemotionBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.remotion_blueprint.invalid errors=%s", exc)
-            return self.repair_remotion_blueprint(prompt, data, str(exc))
+            return self.repair_remotion_blueprint(prompt, data, str(exc), language)
 
     # ------------------------------------------------------------------ 2-pass
     def _generate_remotion_two_pass(
-        self, client: Any, prompt: str, theme: str | None, effective_target: int
+        self,
+        client: Any,
+        prompt: str,
+        theme: str | None,
+        effective_target: int,
+        language: str = "en",
+        target_language_name: str = "English",
     ) -> "RemotionBlueprint":
         """Outline pass (structure + pedagogy), then one focused call per scene.
 
@@ -866,6 +905,12 @@ class LLMClient:
         outline_user = {
             "prompt": prompt,
             "theme": theme or "general-stem",
+            "output_language": language,
+            "output_language_name": target_language_name,
+            "language_rules": (
+                f"Write all human-facing outline text in {target_language_name}. "
+                "Scene keys keep the EN suffix for renderer compatibility."
+            ),
             "target_duration_seconds": effective_target,
             "duration_policy": self._duration_policy(effective_target),
         }
@@ -896,7 +941,15 @@ class LLMClient:
         )
 
         degradations: list[str] = []
-        scenes = self._write_remotion_scenes(client, prompt, outline, outline_scenes, degradations)
+        scenes = self._write_remotion_scenes(
+            client,
+            prompt,
+            outline,
+            outline_scenes,
+            degradations,
+            language=language,
+            target_language_name=target_language_name,
+        )
 
         data: dict[str, Any] = {
             key: outline.get(key)
@@ -913,7 +966,7 @@ class LLMClient:
             return RemotionBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.remotion.two_pass.invalid errors=%s", exc)
-            return self.repair_remotion_blueprint(prompt, data, str(exc))
+            return self.repair_remotion_blueprint(prompt, data, str(exc), language)
 
     def _write_remotion_scenes(
         self,
@@ -925,6 +978,8 @@ class LLMClient:
         only_keys: set[str] | None = None,
         feedback_by_key: dict[str, str] | None = None,
         previous_by_key: dict[str, dict] | None = None,
+        language: str = "en",
+        target_language_name: str = "English",
     ) -> list[dict]:
         """Write scenes in parallel (pass 2). With *only_keys*, rewrite just those
         scenes — used by the scene-level visual-review repair, where *feedback_by_key*
@@ -969,6 +1024,12 @@ class LLMClient:
                     "min_words": min_words,
                     "speaking_rate_wpm": timing.ESTIMATION_WPM,
                 },
+                "output_language": language,
+                "output_language_name": target_language_name,
+                "language_rules": (
+                    f"Write narration, props text, and beat anchors in {target_language_name}. "
+                    "The user prompt may be in another language. Keep JSON field names unchanged."
+                ),
             }
             if previous_by_key and sc["key"] in previous_by_key:
                 context["previous_version"] = previous_by_key[sc["key"]]
@@ -1114,7 +1175,9 @@ class LLMClient:
         data = rb.normalize_remotion_blueprint(data, blueprint.target_duration_seconds)
         return RemotionBlueprint.model_validate(data)
 
-    def repair_remotion_blueprint(self, prompt: str, previous: Any, error_report: str) -> "RemotionBlueprint":
+    def repair_remotion_blueprint(
+        self, prompt: str, previous: Any, error_report: str, language: str = "en"
+    ) -> "RemotionBlueprint":
         from video_api.pipeline import remotion_blueprint as rb
 
         if self.settings.fake_llm:
@@ -1140,6 +1203,12 @@ class LLMClient:
                             "original_prompt": prompt,
                             "previous": previous,
                             "errors": error_report,
+                            "output_language": normalize_language(language),
+                            "output_language_name": language_name(language),
+                            "language_rules": (
+                                f"Keep or rewrite all spoken narration and human-facing visual text in "
+                                f"{language_name(language)}. Scene keys still end in EN."
+                            ),
                             "duration_policy": self._duration_policy(target),
                             "repair_rules": (
                                 "Return the COMPLETE top-level object with fields title, theme, slug, "
@@ -1160,7 +1229,9 @@ class LLMClient:
         data = rb.normalize_remotion_blueprint(_extract_json_object(content), target)
         return RemotionBlueprint.model_validate(data)
 
-    def repair_blueprint(self, prompt: str, previous: Any, error_report: str) -> VideoBlueprint:
+    def repair_blueprint(
+        self, prompt: str, previous: Any, error_report: str, language: str = "en"
+    ) -> VideoBlueprint:
         if self.settings.fake_llm:
             logger.info("llm.fake_repair.start prompt_chars=%d", len(prompt))
             target = previous.get("target_duration_seconds") if isinstance(previous, dict) else None
@@ -1190,6 +1261,12 @@ class LLMClient:
                             "original_prompt": prompt,
                             "previous": previous,
                             "errors": error_report,
+                            "output_language": normalize_language(language),
+                            "output_language_name": language_name(language),
+                            "language_rules": (
+                                f"Keep or rewrite all spoken narration (`text`), beat hints, and labels in "
+                                f"{language_name(language)}. Scene keys still end in EN."
+                            ),
                             "generation_guidelines": _load_generation_guidelines(self.settings),
                             "approved_visual_primitives": VISUAL_PRIMITIVES,
                             "duration_policy": self._duration_policy(target),

@@ -48,3 +48,40 @@ def test_openai_voice_engine_uses_same_endpoint_without_logging_secret() -> None
         "VIDEO_API_OPENAI_TTS_SPEED": "0.9",
     }
 
+
+def test_moss_voice_engine_uses_job_language_and_model_env() -> None:
+    settings = Settings(
+        voice_engine="moss",
+        voice_language="fr",
+        moss_tts_model="OpenMOSS-Team/MOSS-TTS-v1.5",
+        moss_tts_voice="narrator",
+        moss_tts_reference_audio="/data/voice/ref.wav",
+        moss_tts_reference_text="Bonjour tout le monde.",
+        moss_tts_device="cpu",
+        moss_tts_command="python -m moss_tts --text-file {text_file} --output {output}",
+        voice_tail_padding=0.4,
+    )
+
+    args, env = voice_command_for_settings(settings)
+
+    assert args == [
+        "python",
+        "generate_voice_en.py",
+        "--engine",
+        "moss",
+        "--moss-model",
+        "OpenMOSS-Team/MOSS-TTS-v1.5",
+        "--moss-language",
+        "fr",
+        "--tail-padding",
+        "0.400",
+    ]
+    assert env == {
+        "VIDEO_API_MOSS_TTS_MODEL": "OpenMOSS-Team/MOSS-TTS-v1.5",
+        "VIDEO_API_MOSS_TTS_LANGUAGE": "fr",
+        "VIDEO_API_MOSS_TTS_VOICE": "narrator",
+        "VIDEO_API_MOSS_TTS_REFERENCE_AUDIO": "/data/voice/ref.wav",
+        "VIDEO_API_MOSS_TTS_REFERENCE_TEXT": "Bonjour tout le monde.",
+        "VIDEO_API_MOSS_TTS_DEVICE": "cpu",
+        "VIDEO_API_MOSS_TTS_COMMAND": "python -m moss_tts --text-file {text_file} --output {output}",
+    }

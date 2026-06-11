@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import shutil
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -204,6 +205,172 @@ def generate_openai(
         write_mp3_from_wav(wav_path, mp3_path)
 
 
+def _select_torch_device(requested: str) -> str:
+    import torch
+
+    requested = (requested or "auto").strip().lower()
+    if requested != "auto":
+        return requested
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _write_audio_result(result, wav_path: Path, fallback_sample_rate: int = 24000) -> None:
+    import numpy as np
+    import soundfile as sf
+    import torch
+
+    sample_rate = fallback_sample_rate
+    audio = result
+    if isinstance(result, dict):
+        sample_rate = int(
+            result.get("sampling_rate")
+            or result.get("sample_rate")
+            or result.get("sr")
+            or fallback_sample_rate
+        )
+        for field in ("audio", "wav", "waveform"):
+            if field in result and result[field] is not None:
+                audio = result[field]
+                break
+        else:
+            audio = None
+    elif isinstance(result, tuple) and len(result) == 2:
+        if isinstance(result[0], int):
+            sample_rate, audio = int(result[0]), result[1]
+        else:
+            audio, sample_rate = result[0], int(result[1])
+    if isinstance(audio, (str, Path)):
+        source = Path(audio)
+        if source.resolve() != wav_path.resolve():
+            shutil.copyfile(source, wav_path)
+        return
+    if audio is None:
+        raise RuntimeError("MOSS TTS returned no audio.")
+    if isinstance(audio, torch.Tensor):
+        audio = audio.detach().cpu().numpy()
+    audio = np.asarray(audio)
+    if audio.ndim > 1:
+        audio = np.squeeze(audio)
+    sf.write(str(wav_path), audio, sample_rate)
+
+
+class _FormatDict(dict):
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def _run_moss_command_template(
+    template: str,
+    *,
+    key: str,
+    text: str,
+    language: str,
+    model: str,
+    wav_path: Path,
+    reference_audio: str,
+    reference_text: str,
+) -> None:
+    text_file = OUT_DIR / f"{key}.txt"
+    text_file.write_text(text, encoding="utf-8")
+    values = _FormatDict(
+        key=key,
+        text=text,
+        text_json=json.dumps(text, ensure_ascii=False),
+        text_file=str(text_file),
+        language=language,
+        model=model,
+        output=str(wav_path),
+        reference_audio=reference_audio,
+        reference_text=reference_text,
+    )
+    command = shlex.split(template.format_map(values))
+    run(command)
+    if not wav_path.exists():
+        raise RuntimeError(f"MOSS command did not write expected WAV: {wav_path}")
+
+
+def _call_moss_pipeline(pipe, text: str, language: str, voice: str, reference_audio: str, reference_text: str):
+    kwargs = {}
+    if language:
+        kwargs["language"] = language
+    if voice:
+        kwargs["voice"] = voice
+    if reference_audio:
+        kwargs["reference_audio"] = reference_audio
+    if reference_text:
+        kwargs["reference_text"] = reference_text
+    try:
+        return pipe(text, **kwargs)
+    except TypeError:
+        try:
+            return pipe(text, generate_kwargs=kwargs)
+        except TypeError:
+            return pipe(text)
+
+
+def _load_moss_pipeline(model_id: str, device: str):
+    from transformers import pipeline
+
+    if device == "cuda":
+        device_arg = 0
+    elif device == "cpu":
+        device_arg = -1
+    else:
+        device_arg = device
+    return pipeline(
+        "text-to-speech",
+        model=model_id,
+        trust_remote_code=True,
+        device=device_arg,
+    )
+
+
+def generate_moss(
+    segments: list[dict],
+    model_id: str,
+    language: str,
+    voice: str,
+    reference_audio: str,
+    reference_text: str,
+    device: str,
+    command_template: str,
+    force: bool,
+) -> None:
+    resolved_device = _select_torch_device(device)
+    pipe = None
+    if not command_template:
+        print(f"Loading MOSS TTS model {model_id} on {resolved_device}")
+        pipe = _load_moss_pipeline(model_id, resolved_device)
+
+    for segment in segments:
+        key = segment["key"]
+        text = segment["text"]
+        if should_skip_existing(key, force):
+            continue
+        wav_path = OUT_DIR / f"{key}.wav"
+        mp3_path = OUT_DIR / f"{key}.mp3"
+        print(f"Generating MOSS TTS segment {key} language={language} model={model_id}")
+        if command_template:
+            _run_moss_command_template(
+                command_template,
+                key=key,
+                text=text,
+                language=language,
+                model=model_id,
+                wav_path=wav_path,
+                reference_audio=reference_audio,
+                reference_text=reference_text,
+            )
+        else:
+            result = _call_moss_pipeline(pipe, text, language, voice, reference_audio, reference_text)
+            _write_audio_result(result, wav_path)
+        write_mp3_from_wav(wav_path, mp3_path)
+
+
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
     durations = {}
     concat_lines = []
@@ -261,7 +428,7 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", choices=["kokoro", "chatterbox", "chatterbox-turbo", "openai"], default="chatterbox")
+    parser.add_argument("--engine", choices=["kokoro", "chatterbox", "chatterbox-turbo", "openai", "moss"], default="chatterbox")
     parser.add_argument("--kokoro-voice", default="af_bella")
     parser.add_argument("--kokoro-speed", type=float, default=0.92)
     parser.add_argument("--kokoro-lang", default="en", help="Spoken language for Kokoro: en or fr.")
@@ -269,6 +436,23 @@ def main() -> None:
     parser.add_argument("--cfg-weight", type=float, default=0.55)
     parser.add_argument("--temperature", type=float, default=0.55)
     parser.add_argument("--tail-padding", type=float, default=0.45)
+    parser.add_argument(
+        "--moss-model",
+        default=os.getenv("VIDEO_API_MOSS_TTS_MODEL", "OpenMOSS-Team/MOSS-TTS-v1.5"),
+    )
+    parser.add_argument("--moss-language", default=os.getenv("VIDEO_API_MOSS_TTS_LANGUAGE", "en"))
+    parser.add_argument("--moss-voice", default=os.getenv("VIDEO_API_MOSS_TTS_VOICE", ""))
+    parser.add_argument("--moss-reference-audio", default=os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", ""))
+    parser.add_argument("--moss-reference-text", default=os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", ""))
+    parser.add_argument("--moss-device", default=os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
+    parser.add_argument(
+        "--moss-command",
+        default=os.getenv("VIDEO_API_MOSS_TTS_COMMAND", ""),
+        help=(
+            "Optional per-segment command template. Placeholders: {text_file}, "
+            "{text_json}, {output}, {language}, {model}, {reference_audio}, {reference_text}."
+        ),
+    )
     parser.add_argument("--openai-base-url", default=os.getenv("OPENAI_BASE_URL", ""))
     parser.add_argument("--openai-api-key", default=os.getenv("OPENAI_API_KEY", ""))
     parser.add_argument(
@@ -301,7 +485,7 @@ def main() -> None:
         generate_chatterbox(segments, args.exaggeration, args.cfg_weight, args.temperature, args.force)
     elif args.engine == "chatterbox-turbo":
         generate_chatterbox_turbo(segments, args.exaggeration, args.cfg_weight, args.temperature, args.force)
-    else:
+    elif args.engine == "openai":
         generate_openai(
             segments,
             args.openai_base_url,
@@ -310,6 +494,18 @@ def main() -> None:
             args.openai_tts_voice,
             args.openai_tts_format,
             args.openai_tts_speed,
+            args.force,
+        )
+    else:
+        generate_moss(
+            segments,
+            args.moss_model,
+            args.moss_language,
+            args.moss_voice,
+            args.moss_reference_audio,
+            args.moss_reference_text,
+            args.moss_device,
+            args.moss_command,
             args.force,
         )
 

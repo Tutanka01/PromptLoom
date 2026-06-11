@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from video_api.pipeline.llm import fake_blueprint
-from video_api.schemas import VideoBlueprint
+from video_api.schemas import VideoBlueprint, VideoCreateRequest
 
 
 def test_fake_blueprint_validates() -> None:
@@ -30,3 +30,14 @@ def test_default_length_blueprints_need_enough_scenes() -> None:
     data = fake_blueprint("Explain derivatives").model_dump()
     with pytest.raises(ValidationError, match="at least 8 scenes"):
         VideoBlueprint.model_validate(data | {"scenes": data["scenes"][:3]})
+
+
+def test_video_create_request_normalizes_european_language_aliases() -> None:
+    request = VideoCreateRequest(prompt="Explique les syscalls Linux clairement", language="fr-FR")
+
+    assert request.language == "fr"
+
+
+def test_video_create_request_rejects_unknown_language() -> None:
+    with pytest.raises(ValidationError, match="unsupported language"):
+        VideoCreateRequest(prompt="Explain the kernel scheduler", language="zz")

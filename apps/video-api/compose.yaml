@@ -40,6 +40,13 @@ services:
       # language (en|fr) and the Kokoro voice id (e.g. af_bella EN, ff_siwis FR).
       VIDEO_API_VOICE_LANGUAGE: ${VIDEO_API_VOICE_LANGUAGE:-en}
       VIDEO_API_KOKORO_VOICE: ${VIDEO_API_KOKORO_VOICE:-af_bella}
+      # MOSS TTS engine knobs (used only when VIDEO_API_VOICE_ENGINE=moss).
+      VIDEO_API_MOSS_TTS_MODEL: ${VIDEO_API_MOSS_TTS_MODEL:-OpenMOSS-Team/MOSS-TTS-v1.5}
+      VIDEO_API_MOSS_TTS_VOICE: ${VIDEO_API_MOSS_TTS_VOICE:-}
+      VIDEO_API_MOSS_TTS_REFERENCE_AUDIO: ${VIDEO_API_MOSS_TTS_REFERENCE_AUDIO:-}
+      VIDEO_API_MOSS_TTS_REFERENCE_TEXT: ${VIDEO_API_MOSS_TTS_REFERENCE_TEXT:-}
+      VIDEO_API_MOSS_TTS_DEVICE: ${VIDEO_API_MOSS_TTS_DEVICE:-auto}
+      VIDEO_API_MOSS_TTS_COMMAND: ${VIDEO_API_MOSS_TTS_COMMAND:-}
       # manim (default) keeps the Python/Manim path; remotion switches to the
       # React/Remotion render engine (same TTS, assemble, verify).
       VIDEO_API_RENDER_ENGINE: ${VIDEO_API_RENDER_ENGINE:-manim}

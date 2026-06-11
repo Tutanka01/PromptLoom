@@ -31,9 +31,13 @@ class Engine(Protocol):
     # quality presets fix this (qh == 60); Remotion honors settings.render_fps.
     output_fps: float
 
-    def generate_blueprint(self, prompt: str, theme: str | None, target: int | None) -> Any: ...
+    def generate_blueprint(
+        self, prompt: str, theme: str | None, target: int | None, language: str = "en"
+    ) -> Any: ...
 
-    def repair_blueprint(self, prompt: str, previous: dict, hint: str) -> Any: ...
+    def repair_blueprint(
+        self, prompt: str, previous: dict, hint: str, language: str = "en"
+    ) -> Any: ...
 
     def materialize(self, blueprint: Any, workspace: Path) -> Path: ...
 
@@ -56,11 +60,15 @@ class ManimEngine:
         self.materializer = Materializer(settings)
         self.scene_coder = SceneCoder(settings)
 
-    def generate_blueprint(self, prompt: str, theme: str | None, target: int | None) -> Any:
-        return self.llm.generate_blueprint(prompt, theme, target)
+    def generate_blueprint(
+        self, prompt: str, theme: str | None, target: int | None, language: str = "en"
+    ) -> Any:
+        return self.llm.generate_blueprint(prompt, theme, target, language)
 
-    def repair_blueprint(self, prompt: str, previous: dict, hint: str) -> Any:
-        return self.llm.repair_blueprint(prompt, previous, hint)
+    def repair_blueprint(
+        self, prompt: str, previous: dict, hint: str, language: str = "en"
+    ) -> Any:
+        return self.llm.repair_blueprint(prompt, previous, hint, language)
 
     def materialize(self, blueprint: Any, workspace: Path) -> Path:
         return self.materializer.materialize(blueprint, workspace)
@@ -164,11 +172,15 @@ class RemotionEngine:
         # Remotion renders at the configured frame rate (default 30).
         self.output_fps = float(settings.render_fps)
 
-    def generate_blueprint(self, prompt: str, theme: str | None, target: int | None) -> Any:
-        return self.llm.generate_remotion_blueprint(prompt, theme, target)
+    def generate_blueprint(
+        self, prompt: str, theme: str | None, target: int | None, language: str = "en"
+    ) -> Any:
+        return self.llm.generate_remotion_blueprint(prompt, theme, target, language)
 
-    def repair_blueprint(self, prompt: str, previous: dict, hint: str) -> Any:
-        return self.llm.repair_remotion_blueprint(prompt, previous, hint)
+    def repair_blueprint(
+        self, prompt: str, previous: dict, hint: str, language: str = "en"
+    ) -> Any:
+        return self.llm.repair_remotion_blueprint(prompt, previous, hint, language)
 
     def repair_scenes(self, blueprint_data: dict, review: Any) -> Any | None:
         """Scene-level repair after a failed visual review: rewrite ONLY the

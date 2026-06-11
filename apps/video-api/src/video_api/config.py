@@ -236,6 +236,14 @@ class Settings:
         )
     )
     voice_tail_padding: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_VOICE_TAIL_PADDING", "0.45")))
+    moss_tts_model: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_MODEL", "OpenMOSS-Team/MOSS-TTS-v1.5")
+    )
+    moss_tts_voice: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_VOICE", ""))
+    moss_tts_reference_audio: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", ""))
+    moss_tts_reference_text: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", ""))
+    moss_tts_device: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
+    moss_tts_command: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_COMMAND", ""))
     openai_tts_model: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_MODEL") or os.getenv("OPENAI_TTS_MODEL", "tts-1")
     )

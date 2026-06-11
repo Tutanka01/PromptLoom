@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from video_api import timing
+from video_api.languages import normalize_language
 
 # ---------------------------------------------------------------------------
 # Visual review
@@ -65,7 +66,7 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 class VideoCreateRequest(BaseModel):
     prompt: str = Field(min_length=10, max_length=4000)
     theme: str | None = Field(default=None, max_length=80)
-    language: Literal["en"] = "en"
+    language: str = Field(default="en", min_length=2, max_length=12)
     target_duration_seconds: int | None = Field(default=None, ge=45, le=900)
     # draft    = fast iteration: Kokoro voice, half-res render, no visual review.
     # standard = production defaults (Chatterbox, full-res final render).
@@ -73,6 +74,11 @@ class VideoCreateRequest(BaseModel):
     # "final" is the legacy name, kept as an alias of standard.
     quality_profile: Literal["draft", "standard", "high", "final"] = "standard"
     callback_url: str | None = None
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, value: str) -> str:
+        return normalize_language(value)
 
 
 class VideoCreateResponse(BaseModel):
