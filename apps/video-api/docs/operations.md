@@ -135,6 +135,7 @@ synthese vocale multilingue MOSS-TTS :
 VIDEO_API_VOICE_ENGINE=moss
 VIDEO_API_MOSS_TTS_MODEL=OpenMOSS-Team/MOSS-TTS-v1.5
 VIDEO_API_MOSS_TTS_DEVICE=auto       # auto | cpu | cuda | mps
+VIDEO_API_MOSS_TTS_DTYPE=auto        # auto garde bf16 sur CPU/CUDA pour limiter la RAM
 VIDEO_API_MOSS_TTS_VOICE=            # optionnel si le modele expose des voix nommees
 VIDEO_API_MOSS_TTS_REFERENCE_AUDIO=  # optionnel, zero-shot cloning si supporte
 VIDEO_API_MOSS_TTS_REFERENCE_TEXT=   # texte de la reference, si requis

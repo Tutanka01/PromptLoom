@@ -219,44 +219,19 @@ def _select_torch_device(requested: str) -> str:
     return "cpu"
 
 
-def _write_audio_result(result, wav_path: Path, fallback_sample_rate: int = 24000) -> None:
-    import numpy as np
-    import soundfile as sf
+def _select_moss_dtype(requested: str, device: str):
     import torch
 
-    sample_rate = fallback_sample_rate
-    audio = result
-    if isinstance(result, dict):
-        sample_rate = int(
-            result.get("sampling_rate")
-            or result.get("sample_rate")
-            or result.get("sr")
-            or fallback_sample_rate
-        )
-        for field in ("audio", "wav", "waveform"):
-            if field in result and result[field] is not None:
-                audio = result[field]
-                break
-        else:
-            audio = None
-    elif isinstance(result, tuple) and len(result) == 2:
-        if isinstance(result[0], int):
-            sample_rate, audio = int(result[0]), result[1]
-        else:
-            audio, sample_rate = result[0], int(result[1])
-    if isinstance(audio, (str, Path)):
-        source = Path(audio)
-        if source.resolve() != wav_path.resolve():
-            shutil.copyfile(source, wav_path)
-        return
-    if audio is None:
-        raise RuntimeError("MOSS TTS returned no audio.")
-    if isinstance(audio, torch.Tensor):
-        audio = audio.detach().cpu().numpy()
-    audio = np.asarray(audio)
-    if audio.ndim > 1:
-        audio = np.squeeze(audio)
-    sf.write(str(wav_path), audio, sample_rate)
+    requested = (requested or "auto").strip().lower()
+    if requested in {"float32", "fp32"}:
+        return torch.float32
+    if requested in {"float16", "fp16"}:
+        return torch.float16
+    if requested in {"bfloat16", "bf16"}:
+        return torch.bfloat16
+    # The checkpoint is BF16. On CPU this avoids materializing the 8B params as
+    # fp32, which can double RAM usage and get the worker killed while loading.
+    return torch.bfloat16 if device in {"cpu", "cuda"} else torch.float32
 
 
 MOSS_LANGUAGE_NAMES = {
@@ -297,7 +272,10 @@ MOSS_LANGUAGE_NAMES = {
 def _moss_language_name(language: str) -> str:
     language = (language or "").strip()
     code = language.lower().replace("_", "-").split("-", 1)[0]
-    return MOSS_LANGUAGE_NAMES.get(code, language or "English")
+    if code not in MOSS_LANGUAGE_NAMES:
+        supported = ", ".join(sorted(MOSS_LANGUAGE_NAMES))
+        raise RuntimeError(f"MOSS-TTS does not support language {language!r}. Supported codes: {supported}")
+    return MOSS_LANGUAGE_NAMES[code]
 
 
 class _FormatDict(dict):
@@ -351,7 +329,7 @@ def _resolve_moss_attn_implementation(device: str, dtype) -> str:
     return "eager"
 
 
-def _load_moss_generator(model_id: str, device: str):
+def _load_moss_generator(model_id: str, device: str, dtype_name: str):
     import torch
     from transformers import AutoModel, AutoProcessor
 
@@ -360,8 +338,9 @@ def _load_moss_generator(model_id: str, device: str):
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(True)
         torch.backends.cuda.enable_math_sdp(True)
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
+    dtype = _select_moss_dtype(dtype_name, device)
     attn_implementation = _resolve_moss_attn_implementation(device, dtype)
+    print(f"[INFO] MOSS dtype={dtype} attn_implementation={attn_implementation}")
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
     processor.audio_tokenizer = processor.audio_tokenizer.to(device)
     model = AutoModel.from_pretrained(
@@ -369,9 +348,9 @@ def _load_moss_generator(model_id: str, device: str):
         trust_remote_code=True,
         attn_implementation=attn_implementation,
         torch_dtype=dtype,
+        low_cpu_mem_usage=True,
     ).to(device)
     model.eval()
-    print(f"[INFO] MOSS attn_implementation={attn_implementation}")
     return processor, model
 
 
@@ -414,6 +393,7 @@ def generate_moss(
     reference_audio: str,
     reference_text: str,
     device: str,
+    dtype: str,
     command_template: str,
     force: bool,
 ) -> None:
@@ -421,7 +401,7 @@ def generate_moss(
     generator = None
     if not command_template:
         print(f"Loading MOSS TTS model {model_id} on {resolved_device}")
-        generator = _load_moss_generator(model_id, resolved_device)
+        generator = _load_moss_generator(model_id, resolved_device, dtype)
 
     for segment in segments:
         key = segment["key"]
@@ -526,6 +506,7 @@ def main() -> None:
     parser.add_argument("--moss-reference-audio", default=os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", ""))
     parser.add_argument("--moss-reference-text", default=os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", ""))
     parser.add_argument("--moss-device", default=os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
+    parser.add_argument("--moss-dtype", default=os.getenv("VIDEO_API_MOSS_TTS_DTYPE", "auto"))
     parser.add_argument(
         "--moss-command",
         default=os.getenv("VIDEO_API_MOSS_TTS_COMMAND", ""),
@@ -586,6 +567,7 @@ def main() -> None:
             args.moss_reference_audio,
             args.moss_reference_text,
             args.moss_device,
+            args.moss_dtype,
             args.moss_command,
             args.force,
         )

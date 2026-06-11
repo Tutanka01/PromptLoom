@@ -34,6 +34,7 @@ def test_settings_reads_moss_tts_environment(monkeypatch):
     monkeypatch.setenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", "/data/ref.wav")
     monkeypatch.setenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", "Reference text")
     monkeypatch.setenv("VIDEO_API_MOSS_TTS_DEVICE", "cpu")
+    monkeypatch.setenv("VIDEO_API_MOSS_TTS_DTYPE", "bfloat16")
     monkeypatch.setenv("VIDEO_API_MOSS_TTS_COMMAND", "python -m moss_tts --output {output}")
 
     settings = Settings()
@@ -44,6 +45,7 @@ def test_settings_reads_moss_tts_environment(monkeypatch):
     assert settings.moss_tts_reference_audio == "/data/ref.wav"
     assert settings.moss_tts_reference_text == "Reference text"
     assert settings.moss_tts_device == "cpu"
+    assert settings.moss_tts_dtype == "bfloat16"
     assert settings.moss_tts_command == "python -m moss_tts --output {output}"
 
 

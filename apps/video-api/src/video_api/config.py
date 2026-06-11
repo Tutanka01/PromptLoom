@@ -243,6 +243,7 @@ class Settings:
     moss_tts_reference_audio: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", ""))
     moss_tts_reference_text: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", ""))
     moss_tts_device: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
+    moss_tts_dtype: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DTYPE", "auto"))
     moss_tts_command: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_COMMAND", ""))
     openai_tts_model: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_MODEL") or os.getenv("OPENAI_TTS_MODEL", "tts-1")

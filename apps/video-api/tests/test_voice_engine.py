@@ -58,6 +58,7 @@ def test_moss_voice_engine_uses_job_language_and_model_env() -> None:
         moss_tts_reference_audio="/data/voice/ref.wav",
         moss_tts_reference_text="Bonjour tout le monde.",
         moss_tts_device="cpu",
+        moss_tts_dtype="bfloat16",
         moss_tts_command="python -m moss_tts --text-file {text_file} --output {output}",
         voice_tail_padding=0.4,
     )
@@ -73,6 +74,8 @@ def test_moss_voice_engine_uses_job_language_and_model_env() -> None:
         "OpenMOSS-Team/MOSS-TTS-v1.5",
         "--moss-language",
         "fr",
+        "--moss-dtype",
+        "bfloat16",
         "--tail-padding",
         "0.400",
     ]
@@ -83,5 +86,6 @@ def test_moss_voice_engine_uses_job_language_and_model_env() -> None:
         "VIDEO_API_MOSS_TTS_REFERENCE_AUDIO": "/data/voice/ref.wav",
         "VIDEO_API_MOSS_TTS_REFERENCE_TEXT": "Bonjour tout le monde.",
         "VIDEO_API_MOSS_TTS_DEVICE": "cpu",
+        "VIDEO_API_MOSS_TTS_DTYPE": "bfloat16",
         "VIDEO_API_MOSS_TTS_COMMAND": "python -m moss_tts --text-file {text_file} --output {output}",
     }
