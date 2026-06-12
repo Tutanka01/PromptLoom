@@ -219,8 +219,8 @@ class MossEngine(BaseEngine):
         self._dtype_name = str(dtype)
 
     def _synthesize(self, text: str, language: str, reference: Path | None, out_path: Path) -> None:
+        import soundfile as sf
         import torch
-        import torchaudio
 
         processor, model = self._processor, self._model
         device = next(model.parameters()).device
@@ -242,14 +242,15 @@ class MossEngine(BaseEngine):
             if not messages or not messages[0].audio_codes_list:
                 raise RuntimeError("MOSS TTS returned no decoded audio.")
             audio = messages[0].audio_codes_list[0]
-            # PCM16 keeps the WAV readable by the stdlib `wave` duration probe
-            # and halves the size vs float32; downstream re-encodes anyway.
-            torchaudio.save(
+            # Written via soundfile, not torchaudio.save: torchaudio >= 2.9
+            # delegates saving to the optional `torchcodec` package, absent from
+            # the image. PCM16 keeps the WAV readable by the stdlib `wave`
+            # duration probe and halves the size vs float32.
+            sf.write(
                 str(out_path),
-                audio.unsqueeze(0).to(torch.float32).cpu(),
+                audio.to(torch.float32).cpu().numpy(),
                 processor.model_config.sampling_rate,
-                encoding="PCM_S",
-                bits_per_sample=16,
+                subtype="PCM_16",
             )
 
     def info(self) -> dict:

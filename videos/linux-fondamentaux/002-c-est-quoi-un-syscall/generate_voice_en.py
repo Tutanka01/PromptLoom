@@ -371,8 +371,8 @@ def _generate_moss_audio(
     reference_audio: str,
     wav_path: Path,
 ) -> None:
+    import soundfile as sf
     import torch
-    import torchaudio
 
     device = next(model.parameters()).device
     language_name = _moss_language_name(language)
@@ -391,7 +391,14 @@ def _generate_moss_audio(
         if not messages or not messages[0].audio_codes_list:
             raise RuntimeError("MOSS TTS returned no decoded audio.")
         audio = messages[0].audio_codes_list[0]
-        torchaudio.save(str(wav_path), audio.unsqueeze(0), processor.model_config.sampling_rate)
+        # soundfile instead of torchaudio.save: torchaudio >= 2.9 needs the
+        # optional `torchcodec` package to save, which is not installed.
+        sf.write(
+            str(wav_path),
+            audio.to(torch.float32).cpu().numpy(),
+            processor.model_config.sampling_rate,
+            subtype="PCM_16",
+        )
 
 
 def generate_moss(
