@@ -18,6 +18,13 @@ SEGMENTS_FILE = ROOT / "segments_en.json"
 OUT_DIR = ROOT / "audio" / "en"
 
 
+def bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def run(command: list[str]) -> None:
     print("+", " ".join(command))
     subprocess.run(command, check=True)
@@ -396,6 +403,7 @@ def generate_moss(
     dtype: str,
     command_template: str,
     force: bool,
+    consistent_voice: bool,
 ) -> None:
     resolved_device = _select_torch_device(device)
     generator = None
@@ -403,12 +411,24 @@ def generate_moss(
         print(f"Loading MOSS TTS model {model_id} on {resolved_device}")
         generator = _load_moss_generator(model_id, resolved_device, dtype)
 
+    anchor_reference_audio = reference_audio
+    if consistent_voice and anchor_reference_audio:
+        print(f"Using configured MOSS voice reference: {anchor_reference_audio}")
+    if consistent_voice and command_template and "{reference_audio}" not in command_template:
+        print(
+            "Warning: --moss-command does not include {reference_audio}; "
+            "automatic MOSS voice anchoring may have no effect."
+        )
+
     for segment in segments:
         key = segment["key"]
         text = segment["text"]
-        if should_skip_existing(key, force):
-            continue
         wav_path = OUT_DIR / f"{key}.wav"
+        if should_skip_existing(key, force):
+            if consistent_voice and not anchor_reference_audio and wav_path.exists():
+                anchor_reference_audio = str(wav_path.resolve())
+                print(f"Using existing {key} audio as MOSS voice reference for following segments")
+            continue
         mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating MOSS TTS segment {key} language={language} model={model_id}")
         if command_template:
@@ -419,7 +439,7 @@ def generate_moss(
                 language=language,
                 model=model_id,
                 wav_path=wav_path,
-                reference_audio=reference_audio,
+                reference_audio=anchor_reference_audio,
                 reference_text=reference_text,
             )
         else:
@@ -428,8 +448,11 @@ def generate_moss(
                 print("Warning: --moss-voice is not used by the native MOSS-TTS generator.")
             if reference_text:
                 print("Warning: --moss-reference-text is not used by the native MOSS-TTS generator.")
-            _generate_moss_audio(processor, model, text, language, reference_audio, wav_path)
+            _generate_moss_audio(processor, model, text, language, anchor_reference_audio, wav_path)
         write_mp3_from_wav(wav_path, mp3_path)
+        if consistent_voice and not anchor_reference_audio:
+            anchor_reference_audio = str(wav_path.resolve())
+            print(f"Using generated {key} audio as MOSS voice reference for following segments")
 
 
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
@@ -505,6 +528,19 @@ def main() -> None:
     parser.add_argument("--moss-voice", default=os.getenv("VIDEO_API_MOSS_TTS_VOICE", ""))
     parser.add_argument("--moss-reference-audio", default=os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", ""))
     parser.add_argument("--moss-reference-text", default=os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", ""))
+    parser.set_defaults(moss_consistent_voice=bool_env("VIDEO_API_MOSS_TTS_CONSISTENT_VOICE", True))
+    parser.add_argument(
+        "--moss-consistent-voice",
+        dest="moss_consistent_voice",
+        action="store_true",
+        help="Use the first generated/reused MOSS segment as a voice reference for later segments.",
+    )
+    parser.add_argument(
+        "--no-moss-consistent-voice",
+        dest="moss_consistent_voice",
+        action="store_false",
+        help="Disable automatic MOSS voice anchoring between segments.",
+    )
     parser.add_argument("--moss-device", default=os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
     parser.add_argument("--moss-dtype", default=os.getenv("VIDEO_API_MOSS_TTS_DTYPE", "auto"))
     parser.add_argument(
@@ -570,6 +606,7 @@ def main() -> None:
             args.moss_dtype,
             args.moss_command,
             args.force,
+            args.moss_consistent_voice,
         )
 
     write_duration_files(segments, args.tail_padding)

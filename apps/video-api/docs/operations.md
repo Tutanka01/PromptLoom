@@ -139,13 +139,17 @@ VIDEO_API_MOSS_TTS_DTYPE=auto        # auto garde bf16 sur CPU/CUDA pour limiter
 VIDEO_API_MOSS_TTS_VOICE=            # optionnel si le modele expose des voix nommees
 VIDEO_API_MOSS_TTS_REFERENCE_AUDIO=  # optionnel, zero-shot cloning si supporte
 VIDEO_API_MOSS_TTS_REFERENCE_TEXT=   # texte de la reference, si requis
+VIDEO_API_MOSS_TTS_CONSISTENT_VOICE=1 # stabilise automatiquement la voix entre scenes
 VIDEO_API_VOICE_TAIL_PADDING=0.45
 ```
 
 La langue parlee vient du champ API `language` du job. Les fichiers restent
 nommes `segments_en.json` et `audio/en/...` pour compatibilite avec le pipeline
 existant, mais leur contenu narratif peut etre francais, espagnol, italien,
-roumain, anglais, etc. Si ton installation MOSS utilise une commande specifique,
+roumain, anglais, etc. Avec `VIDEO_API_MOSS_TTS_CONSISTENT_VOICE=1`, si
+`VIDEO_API_MOSS_TTS_REFERENCE_AUDIO` est vide, le premier WAV de scene sert de
+reference pour les scenes suivantes afin d'eviter de passer d'une voix masculine
+a une voix feminine entre deux scenes. Si ton installation MOSS utilise une commande specifique,
 tu peux fournir une commande par segment :
 
 ```text
@@ -153,7 +157,10 @@ VIDEO_API_MOSS_TTS_COMMAND=python -m moss_tts --model {model} --language {langua
 ```
 
 Placeholders disponibles : `{text_file}`, `{text_json}`, `{output}`, `{language}`,
-`{model}`, `{reference_audio}`, `{reference_text}`.
+`{model}`, `{reference_audio}`, `{reference_text}`. Pour beneficier de
+`VIDEO_API_MOSS_TTS_CONSISTENT_VOICE=1` avec une commande externe, la commande
+doit transmettre `{reference_audio}` au moteur TTS si celui-ci accepte une
+reference de voix.
 
 Pour utiliser un modele de synthese vocale expose par le meme endpoint
 OpenAI-compatible que le LLM :

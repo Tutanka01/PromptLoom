@@ -242,6 +242,9 @@ class Settings:
     moss_tts_voice: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_VOICE", ""))
     moss_tts_reference_audio: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_AUDIO", ""))
     moss_tts_reference_text: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_REFERENCE_TEXT", ""))
+    moss_tts_consistent_voice: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_MOSS_TTS_CONSISTENT_VOICE", True)
+    )
     moss_tts_device: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
     moss_tts_dtype: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DTYPE", "auto"))
     moss_tts_command: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_COMMAND", ""))

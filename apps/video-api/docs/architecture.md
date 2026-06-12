@@ -191,7 +191,9 @@ Le moteur de voix est configurable avec `VIDEO_API_VOICE_ENGINE` :
 - `kokoro` : TTS local rapide (~5x temps reel CPU), EN + FR, pilote par
   `VIDEO_API_VOICE_LANGUAGE` (en/fr) et `VIDEO_API_KOKORO_VOICE` ;
 - `moss` : MOSS-TTS Hugging Face/local, multilingue, pilote par la langue du job
-  API et `VIDEO_API_MOSS_TTS_MODEL` ;
+  API et `VIDEO_API_MOSS_TTS_MODEL`. Par defaut, si aucune reference audio
+  explicite n'est fournie, le premier segment genere/reutilise devient la
+  reference de voix pour les segments suivants ;
 - `openai` : appelle le endpoint OpenAI-compatible `OPENAI_BASE_URL` via `/audio/speech`.
 
 Le resultat attendu :
