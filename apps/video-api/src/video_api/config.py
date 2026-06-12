@@ -248,6 +248,16 @@ class Settings:
     moss_tts_device: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DEVICE", "auto"))
     moss_tts_dtype: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_DTYPE", "auto"))
     moss_tts_command: str = field(default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_COMMAND", ""))
+    # Remote GPU TTS server (apps/tts-server), used when VIDEO_API_VOICE_ENGINE=
+    # moss-remote: the worker uploads segment texts and downloads WAVs instead
+    # of loading the MOSS checkpoint locally.
+    tts_server_url: str = field(default_factory=lambda: os.getenv("VIDEO_API_TTS_SERVER_URL", ""))
+    tts_server_api_key: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_TTS_SERVER_API_KEY", "")
+    )
+    tts_server_timeout_seconds: int = field(
+        default_factory=lambda: int(os.getenv("VIDEO_API_TTS_SERVER_TIMEOUT", "3600"))
+    )
     openai_tts_model: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_MODEL") or os.getenv("OPENAI_TTS_MODEL", "tts-1")
     )

@@ -515,6 +515,62 @@ QUALITY=ql ./render_en.sh
 ls -lh final/prompt-to-kernel-video-en-silent.mp4'
 ```
 
+## Serveur TTS GPU (apps/tts-server)
+
+Le depot contient une seconde application :
+
+```text
+apps/tts-server/
+```
+
+Objectif : sortir la synthese MOSS-TTS-v1.5 du worker video-api et la servir
+depuis une machine GPU dediee (>= 24 Go VRAM). Un seul container Docker expose
+une API HTTP FastAPI ; le modele est charge une fois au demarrage et reste en
+VRAM entre les jobs.
+
+Endpoints :
+
+- `POST /v1/tts/batch` : tous les segments d'une video en un appel -> job async ;
+- `GET /v1/jobs/<id>` : progression par segment + liens de telechargement WAV/MP3 ;
+- `POST /v1/tts` : synthese synchrone d'un segment (tests/cURL) ;
+- `GET /healthz` : etat du modele (loading/ready/error), GPU/VRAM, file d'attente.
+
+Points cles :
+
+- voix coherente geree cote serveur : 1er WAV (reference uploadee, sinon 1er
+  segment genere) = reference de clonage des suivants, comme le moteur local ;
+- cache serveur par contenu (modele + langue + texte + hash de la reference) :
+  une reparation ne resynthetise que les segments changes, et le meme texte
+  redonne exactement le meme WAV malgre le sampling stochastique de MOSS ;
+- auth par cle API (`Authorization: Bearer`), pensee pour un LAN/VPN ;
+- GPU serialise : une synthese a la fois (queue + lock) ;
+- moteur factice `TTS_SERVER_FAKE_ENGINE=1` pour tester l'API sans GPU/torch.
+
+Cote video-api, activer avec :
+
+```text
+VIDEO_API_VOICE_ENGINE=moss-remote
+VIDEO_API_TTS_SERVER_URL=http://<ip-serveur-gpu>:8100
+VIDEO_API_TTS_SERVER_API_KEY=<cle>
+```
+
+Le client est `generate_voice_en.py --engine moss-remote` (stdlib uniquement,
+pas de nouvelle dependance worker). Si une partie des WAV existe deja en local,
+il n'envoie que les segments manquants et uploade le premier WAV local comme
+reference pour garder le meme timbre. Serveur injoignable ou job TTS en echec =
+job video en echec avec l'erreur dans `logs/voice.log`, jamais de bascule
+silencieuse vers une autre voix.
+
+Doc complete : `apps/tts-server/README.md`.
+
+### Validation tts-server
+
+```bash
+python3 -m py_compile $(find apps/tts-server/src apps/tts-server/tests -name '*.py' -print)
+docker compose -f apps/tts-server/compose.yaml config --quiet
+docker compose -f apps/tts-server/compose.yaml run --rm test
+```
+
 ## Travail dans le depot
 
 Le projet peut contenir des fichiers non suivis ou des changements utilisateur.

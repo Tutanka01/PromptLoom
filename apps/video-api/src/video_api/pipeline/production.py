@@ -295,7 +295,8 @@ class VideoPipeline:
                     self.settings.openai_tts_model
                     if self.settings.voice_engine.strip().lower() == "openai"
                     else self.settings.moss_tts_model
-                    if self.settings.voice_engine.strip().lower() in {"moss", "moss-tts", "moss_tts"}
+                    if self.settings.voice_engine.strip().lower()
+                    in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
                     else "",
                 )
                 runner.run(voice_args, cwd=video_dir, log_name="voice.log", env=voice_env)

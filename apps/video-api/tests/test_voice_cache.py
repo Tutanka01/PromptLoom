@@ -101,6 +101,30 @@ def test_voice_signature_changes_with_params(monkeypatch) -> None:
     assert sig_a != sig_b
 
 
+def test_voice_signature_ignores_server_location_and_secrets() -> None:
+    base = Settings(
+        voice_engine="moss-remote",
+        tts_server_url="http://gpu-a:8100",
+        tts_server_api_key="key-1",
+        tts_server_timeout_seconds=3600,
+    )
+    moved = Settings(
+        voice_engine="moss-remote",
+        tts_server_url="http://gpu-b:8100",
+        tts_server_api_key="key-2",
+        tts_server_timeout_seconds=900,
+    )
+    other_model = Settings(
+        voice_engine="moss-remote",
+        tts_server_url="http://gpu-a:8100",
+        tts_server_api_key="key-1",
+        moss_tts_model="other/model",
+    )
+
+    assert voice_signature(base) == voice_signature(moved)
+    assert voice_signature(base) != voice_signature(other_model)
+
+
 def test_segment_fingerprint_normalizes_whitespace() -> None:
     assert segment_fingerprint("a  b\nc", "s") == segment_fingerprint("a b c", "s")
     assert segment_fingerprint("a b", "s") != segment_fingerprint("a c", "s")

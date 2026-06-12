@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import importlib.util
 import json
 import os
 import shutil
 import shlex
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -455,6 +457,140 @@ def generate_moss(
             print(f"Using generated {key} audio as MOSS voice reference for following segments")
 
 
+def _request_json(method: str, url: str, api_key: str, payload: dict | None = None, timeout: float = 120.0) -> dict:
+    import urllib.error
+    import urllib.request
+
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    data = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        try:
+            detail = error.read().decode("utf-8", "replace")[:500]
+        except Exception:
+            detail = ""
+        raise RuntimeError(f"TTS server returned HTTP {error.code} for {url}: {detail}") from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"TTS server unreachable at {url}: {error.reason}") from error
+
+
+def _download_file(url: str, api_key: str, dest: Path, timeout: float = 600.0) -> None:
+    import urllib.error
+    import urllib.request
+
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response, dest.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"Failed to download {url}: {error}") from error
+
+
+def _absolute_url(base: str, url: str) -> str:
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return base + url
+
+
+def generate_moss_remote(
+    segments: list[dict],
+    server_url: str,
+    api_key: str,
+    model_id: str,
+    language: str,
+    reference_audio: str,
+    consistent_voice: bool,
+    force: bool,
+    timeout_seconds: float,
+    poll_seconds: float = 2.0,
+) -> None:
+    """Synthesize the missing segments on the remote GPU TTS server (apps/tts-server).
+
+    Only segments without a local WAV are sent. To keep the timbre stable when
+    part of the audio is already cached locally, the first available WAV (or the
+    configured reference) is uploaded as the voice-cloning reference; otherwise
+    the server anchors on its own first generated segment.
+    """
+    if not server_url.strip():
+        raise SystemExit(
+            "moss-remote engine requires --tts-server-url (or VIDEO_API_TTS_SERVER_URL)."
+        )
+    base = server_url.strip().rstrip("/")
+
+    pending = []
+    for segment in segments:
+        if should_skip_existing(segment["key"], force):
+            continue
+        pending.append({"key": segment["key"], "text": segment["text"]})
+    if not pending:
+        print("All segments already exist locally; skipping the TTS server call")
+        return
+
+    reference_path: Path | None = None
+    if reference_audio:
+        reference_path = Path(reference_audio)
+        if not reference_path.exists():
+            raise SystemExit(f"Reference audio not found: {reference_path}")
+    elif consistent_voice:
+        for segment in segments:
+            wav_path = OUT_DIR / f"{segment['key']}.wav"
+            if wav_path.exists():
+                reference_path = wav_path
+                break
+    reference_b64 = None
+    if reference_path is not None:
+        reference_b64 = base64.b64encode(reference_path.read_bytes()).decode("ascii")
+        print(f"Uploading {reference_path.name} as the MOSS voice reference")
+
+    payload = {
+        "model": model_id or None,
+        "language": language,
+        "consistent_voice": consistent_voice,
+        "segments": pending,
+        "reference_audio_b64": reference_b64,
+    }
+    print(f"Submitting {len(pending)} segment(s) to TTS server {base}")
+    created = _request_json("POST", f"{base}/v1/tts/batch", api_key, payload)
+    job_url = f"{base}/v1/jobs/{created['job_id']}"
+
+    deadline = time.monotonic() + timeout_seconds
+    reported_done = -1
+    while True:
+        state = _request_json("GET", job_url, api_key)
+        if state["status"] in {"completed", "failed"}:
+            break
+        done = sum(1 for segment in state.get("segments", []) if segment.get("status") == "done")
+        if done != reported_done:
+            print(f"TTS server progress: {done}/{len(pending)} segment(s) done")
+            reported_done = done
+        if time.monotonic() > deadline:
+            raise RuntimeError(
+                f"TTS server job {created['job_id']} did not finish within {timeout_seconds:.0f}s"
+            )
+        time.sleep(poll_seconds)
+
+    if state["status"] == "failed":
+        raise RuntimeError(f"TTS server job {created['job_id']} failed: {state.get('error')}")
+
+    for segment in state["segments"]:
+        key = segment["key"]
+        wav_path = OUT_DIR / f"{key}.wav"
+        _download_file(_absolute_url(base, segment["wav_url"]), api_key, wav_path)
+        print(f"Downloaded {key}.wav (cached={segment.get('cached')})")
+        write_mp3_from_wav(wav_path, OUT_DIR / f"{key}.mp3")
+
+
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
     durations = {}
     concat_lines = []
@@ -512,7 +648,11 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", choices=["kokoro", "chatterbox", "chatterbox-turbo", "openai", "moss"], default="chatterbox")
+    parser.add_argument(
+        "--engine",
+        choices=["kokoro", "chatterbox", "chatterbox-turbo", "openai", "moss", "moss-remote"],
+        default="chatterbox",
+    )
     parser.add_argument("--kokoro-voice", default="af_bella")
     parser.add_argument("--kokoro-speed", type=float, default=0.92)
     parser.add_argument("--kokoro-lang", default="en", help="Spoken language for Kokoro: en or fr.")
@@ -551,6 +691,22 @@ def main() -> None:
             "{text_json}, {output}, {language}, {model}, {reference_audio}, {reference_text}."
         ),
     )
+    parser.add_argument(
+        "--tts-server-url",
+        default=os.getenv("VIDEO_API_TTS_SERVER_URL", ""),
+        help="Base URL of the remote GPU TTS server (apps/tts-server), e.g. http://gpu-host:8100.",
+    )
+    parser.add_argument(
+        "--tts-server-api-key",
+        default=os.getenv("VIDEO_API_TTS_SERVER_API_KEY", ""),
+    )
+    parser.add_argument(
+        "--tts-server-timeout",
+        type=float,
+        default=float(os.getenv("VIDEO_API_TTS_SERVER_TIMEOUT", "3600")),
+        help="Max seconds to wait for the remote TTS batch job.",
+    )
+    parser.add_argument("--tts-server-poll", type=float, default=2.0)
     parser.add_argument("--openai-base-url", default=os.getenv("OPENAI_BASE_URL", ""))
     parser.add_argument("--openai-api-key", default=os.getenv("OPENAI_API_KEY", ""))
     parser.add_argument(
@@ -593,6 +749,19 @@ def main() -> None:
             args.openai_tts_format,
             args.openai_tts_speed,
             args.force,
+        )
+    elif args.engine == "moss-remote":
+        generate_moss_remote(
+            segments,
+            server_url=args.tts_server_url,
+            api_key=args.tts_server_api_key,
+            model_id=args.moss_model,
+            language=args.moss_language,
+            reference_audio=args.moss_reference_audio,
+            consistent_voice=args.moss_consistent_voice,
+            force=args.force,
+            timeout_seconds=args.tts_server_timeout,
+            poll_seconds=args.tts_server_poll,
         )
     else:
         generate_moss(

@@ -1,0 +1,52 @@
+services:
+  tts:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TTS_SERVER_MODEL: ${TTS_SERVER_MODEL:-OpenMOSS-Team/MOSS-TTS-v1.5}
+      TTS_SERVER_API_KEYS: ${TTS_SERVER_API_KEYS:-}
+      TTS_SERVER_DEVICE: ${TTS_SERVER_DEVICE:-auto}
+      TTS_SERVER_DTYPE: ${TTS_SERVER_DTYPE:-auto}
+      TTS_SERVER_JOB_TTL_HOURS: ${TTS_SERVER_JOB_TTL_HOURS:-48}
+      TTS_SERVER_CACHE_TTL_DAYS: ${TTS_SERVER_CACHE_TTL_DAYS:-30}
+      TTS_SERVER_LOG_LEVEL: ${TTS_SERVER_LOG_LEVEL:-INFO}
+      # Optional: token for gated/private Hugging Face models.
+      HF_TOKEN: ${HF_TOKEN:-}
+    ports:
+      - "8100:8100"
+    volumes:
+      # Single volume: HF model cache (/data/hf-cache), job artifacts
+      # (/data/jobs) and the content-addressed WAV cache (/data/cache).
+      - tts_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8100/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      # First boot downloads the ~16 GB checkpoint, then loads it into VRAM.
+      start_period: 30m
+    restart: unless-stopped
+
+  test:
+    build: .
+    environment:
+      TTS_SERVER_FAKE_ENGINE: "1"
+      TTS_SERVER_DATA_DIR: /tmp/tts-data
+    command: pytest -q
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+    profiles:
+      - test
+
+volumes:
+  tts_data:

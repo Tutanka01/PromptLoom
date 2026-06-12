@@ -79,6 +79,35 @@ def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str,
                 "VIDEO_API_MOSS_TTS_COMMAND": settings.moss_tts_command,
             },
         )
+    if engine in {"moss-remote", "moss_remote", "remote-moss"}:
+        # Remote GPU TTS server (apps/tts-server): the model stays warm in VRAM
+        # there, the worker only uploads texts and downloads WAVs.
+        if not settings.tts_server_url.strip():
+            raise ValueError(
+                "VIDEO_API_TTS_SERVER_URL is required when VIDEO_API_VOICE_ENGINE=moss-remote"
+            )
+        return (
+            [
+                "python",
+                "generate_voice_en.py",
+                "--engine",
+                "moss-remote",
+                "--moss-model",
+                settings.moss_tts_model,
+                "--moss-language",
+                settings.voice_language,
+                "--tail-padding",
+                f"{settings.voice_tail_padding:.3f}",
+            ],
+            {
+                "VIDEO_API_TTS_SERVER_URL": settings.tts_server_url,
+                "VIDEO_API_TTS_SERVER_API_KEY": settings.tts_server_api_key,
+                "VIDEO_API_TTS_SERVER_TIMEOUT": str(settings.tts_server_timeout_seconds),
+                "VIDEO_API_MOSS_TTS_MODEL": settings.moss_tts_model,
+                "VIDEO_API_MOSS_TTS_REFERENCE_AUDIO": settings.moss_tts_reference_audio,
+                "VIDEO_API_MOSS_TTS_CONSISTENT_VOICE": "1" if settings.moss_tts_consistent_voice else "0",
+            },
+        )
     if engine in {"openai", "openai-compatible", "openai_compatible"}:
         return (
             [
@@ -100,14 +129,26 @@ def voice_command_for_settings(settings: Settings) -> tuple[list[str], dict[str,
         )
     raise ValueError(
         "Unsupported VIDEO_API_VOICE_ENGINE="
-        f"{settings.voice_engine!r}; expected 'chatterbox', 'kokoro', 'moss' or 'openai'."
+        f"{settings.voice_engine!r}; expected 'chatterbox', 'kokoro', 'moss', "
+        "'moss-remote' or 'openai'."
     )
+
+
+# Excluded from the audio fingerprint: these change how the synthesis endpoint
+# is reached, never what it sounds like. Rotating an API key or moving the TTS
+# server to another host must not invalidate every cached segment.
+_SIGNATURE_ENV_EXCLUDE = ("API_KEY", "VIDEO_API_TTS_SERVER_URL", "VIDEO_API_TTS_SERVER_TIMEOUT")
 
 
 def voice_signature(settings: Settings) -> str:
     """Stable fingerprint of everything that shapes the synthesized audio."""
     args, env = voice_command_for_settings(settings)
-    payload = json.dumps({"args": args, "env": env or {}}, sort_keys=True)
+    fingerprint_env = {
+        key: value
+        for key, value in (env or {}).items()
+        if not any(marker in key for marker in _SIGNATURE_ENV_EXCLUDE)
+    }
+    payload = json.dumps({"args": args, "env": fingerprint_env}, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 

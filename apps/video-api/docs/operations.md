@@ -162,6 +162,24 @@ Placeholders disponibles : `{text_file}`, `{text_json}`, `{output}`, `{language}
 doit transmettre `{reference_audio}` au moteur TTS si celui-ci accepte une
 reference de voix.
 
+Pour deporter MOSS-TTS sur un serveur GPU dedie (voir `apps/tts-server/README.md`),
+le moteur `moss-remote` envoie les textes des segments au serveur et telecharge
+les WAV ; le modele reste charge en VRAM la-bas entre les jobs :
+
+```text
+VIDEO_API_VOICE_ENGINE=moss-remote
+VIDEO_API_TTS_SERVER_URL=http://<ip-serveur-gpu>:8100
+VIDEO_API_TTS_SERVER_API_KEY=<cle>
+VIDEO_API_TTS_SERVER_TIMEOUT=3600
+```
+
+La voix coherente fonctionne comme en local : si une partie des WAV existe deja
+(reparation), le premier WAV local est envoye comme reference de clonage pour que
+le timbre ne change pas. Le serveur a aussi son propre cache par contenu : seuls
+les segments modifies sont resynthetises. Si le serveur est injoignable ou si le
+job TTS echoue, le job video echoue avec l'erreur dans `logs/voice.log` — il n'y
+a pas de bascule silencieuse vers une autre voix.
+
 Pour utiliser un modele de synthese vocale expose par le meme endpoint
 OpenAI-compatible que le LLM :
 

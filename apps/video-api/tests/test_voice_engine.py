@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from video_api.config import Settings
 from video_api.pipeline.production import voice_command_for_settings
 
@@ -47,6 +49,51 @@ def test_openai_voice_engine_uses_same_endpoint_without_logging_secret() -> None
         "VIDEO_API_OPENAI_TTS_FORMAT": "wav",
         "VIDEO_API_OPENAI_TTS_SPEED": "0.9",
     }
+
+
+def test_moss_remote_voice_engine_passes_server_env() -> None:
+    settings = Settings(
+        voice_engine="moss-remote",
+        voice_language="fr",
+        tts_server_url="http://gpu.lan:8100",
+        tts_server_api_key="secret",
+        tts_server_timeout_seconds=1800,
+        moss_tts_model="OpenMOSS-Team/MOSS-TTS-v1.5",
+        moss_tts_reference_audio="/data/voice/ref.wav",
+        moss_tts_consistent_voice=True,
+        voice_tail_padding=0.45,
+    )
+
+    args, env = voice_command_for_settings(settings)
+
+    assert args == [
+        "python",
+        "generate_voice_en.py",
+        "--engine",
+        "moss-remote",
+        "--moss-model",
+        "OpenMOSS-Team/MOSS-TTS-v1.5",
+        "--moss-language",
+        "fr",
+        "--tail-padding",
+        "0.450",
+    ]
+    assert "secret" not in " ".join(args)
+    assert env == {
+        "VIDEO_API_TTS_SERVER_URL": "http://gpu.lan:8100",
+        "VIDEO_API_TTS_SERVER_API_KEY": "secret",
+        "VIDEO_API_TTS_SERVER_TIMEOUT": "1800",
+        "VIDEO_API_MOSS_TTS_MODEL": "OpenMOSS-Team/MOSS-TTS-v1.5",
+        "VIDEO_API_MOSS_TTS_REFERENCE_AUDIO": "/data/voice/ref.wav",
+        "VIDEO_API_MOSS_TTS_CONSISTENT_VOICE": "1",
+    }
+
+
+def test_moss_remote_voice_engine_requires_server_url() -> None:
+    settings = Settings(voice_engine="moss-remote", tts_server_url="")
+
+    with pytest.raises(ValueError, match="VIDEO_API_TTS_SERVER_URL"):
+        voice_command_for_settings(settings)
 
 
 def test_moss_voice_engine_uses_job_language_and_model_env() -> None:
