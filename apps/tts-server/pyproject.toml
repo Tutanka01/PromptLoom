@@ -15,6 +15,10 @@ dependencies = [
 gpu = [
   "torch>=2.2",
   "torchaudio>=2.2",
+  # torchaudio >= 2.9 delegates load/save to torchcodec, and the model's own
+  # remote code (processing_moss_tts.py) calls torchaudio.load on the voice
+  # reference. torchcodec uses the ffmpeg libs already in the image.
+  "torchcodec>=0.4",
   "transformers>=4.46",
   "accelerate>=0.33",
   "huggingface-hub>=0.26",
