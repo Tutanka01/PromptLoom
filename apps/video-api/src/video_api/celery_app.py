@@ -24,3 +24,17 @@ celery_app.conf.update(
     task_soft_time_limit=settings.task_time_limit_seconds,
     task_time_limit=settings.task_time_limit_seconds + 300,
 )
+
+# Retention sweep: a periodic Celery beat task deletes artifact directories of
+# terminal jobs older than VIDEO_API_JOB_TTL_DAYS, so the limit is enforced even
+# on a server that never restarts (the API-startup sweep alone would not). Beat
+# runs embedded in the worker (`celery worker --beat`, see compose.yaml). When
+# retention is disabled (ttl <= 0) the task itself is a cheap no-op; scheduling
+# it unconditionally keeps the cadence configurable purely via env.
+if settings.gc_interval_hours > 0:
+    celery_app.conf.beat_schedule = {
+        "gc-job-artifacts": {
+            "task": "video_api.gc_job_artifacts",
+            "schedule": settings.gc_interval_hours * 3600.0,
+        }
+    }

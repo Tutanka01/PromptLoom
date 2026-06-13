@@ -51,6 +51,26 @@ def test_settings_reads_moss_tts_environment(monkeypatch):
     assert settings.moss_tts_command == "python -m moss_tts --output {output}"
 
 
+def test_retention_defaults_to_fifteen_days(monkeypatch):
+    monkeypatch.delenv("VIDEO_API_JOB_TTL_DAYS", raising=False)
+    monkeypatch.delenv("VIDEO_API_GC_INTERVAL_HOURS", raising=False)
+
+    settings = Settings()
+
+    assert settings.job_ttl_days == 15
+    assert settings.gc_interval_hours == 6
+
+
+def test_retention_reads_environment(monkeypatch):
+    monkeypatch.setenv("VIDEO_API_JOB_TTL_DAYS", "7")
+    monkeypatch.setenv("VIDEO_API_GC_INTERVAL_HOURS", "12")
+
+    settings = Settings()
+
+    assert settings.job_ttl_days == 7
+    assert settings.gc_interval_hours == 12
+
+
 def test_dotenv_loads_missing_values_without_overriding(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text(

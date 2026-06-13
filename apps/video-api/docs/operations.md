@@ -276,8 +276,27 @@ VIDEO_API_KEYS=                   # cles API (separees par des virgules) ; vide 
 VIDEO_API_WEBHOOK_SECRET=         # signe les webhooks callback_url (HMAC-SHA256)
 VIDEO_API_TASK_TIME_LIMIT_SECONDS=10800  # plafond Celery par job (soft ; hard = +300s)
 VIDEO_API_STALE_JOB_HOURS=6       # reaper au demarrage de l'API (jobs figes -> failed_stale)
-VIDEO_API_JOB_TTL_DAYS=0          # GC des workspaces des jobs terminaux ; 0 = off
+VIDEO_API_JOB_TTL_DAYS=15         # retention : supprime /data/jobs/<id> des jobs terminaux > 15j ; 0 = jamais
+VIDEO_API_GC_INTERVAL_HOURS=6     # cadence du GC periodique (Celery beat dans le worker)
 ```
+
+### Retention des artefacts
+
+Les workspaces de jobs (`/data/jobs/<job_id>/`) sont supprimes automatiquement
+au-dela de `VIDEO_API_JOB_TTL_DAYS` (defaut 15 jours). Seuls les jobs terminaux
+sont concernes (`completed`, `cancelled`, `failed*`) ; la ligne en base est
+conservee pour l'historique, mais ses chemins d'artefacts sont remis a vide
+(les endpoints `download` / `report` renvoient alors un 404 propre).
+
+Le balayage tourne a deux endroits, de facon idempotente :
+
+- au demarrage de l'API (immediat apres un deploiement / restart) ;
+- periodiquement dans le worker via Celery beat (`video_api.gc_job_artifacts`,
+  toutes les `VIDEO_API_GC_INTERVAL_HOURS`, defaut 6h), pour qu'un serveur qui
+  ne redemarre jamais respecte quand meme la limite.
+
+Mettre `VIDEO_API_JOB_TTL_DAYS=0` desactive completement la retention (les
+artefacts sont gardes indefiniment).
 
 ## Volumes
 

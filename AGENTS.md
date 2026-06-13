@@ -386,6 +386,14 @@ Les artefacts de jobs API vivent dans le volume Docker :
 
 Ne pas ecrire les jobs API directement dans le dossier source `videos/`.
 
+Retention : ces workspaces sont supprimes automatiquement au-dela de
+`VIDEO_API_JOB_TTL_DAYS` (defaut 15 jours, `0` = jamais). Seuls les jobs
+terminaux sont concernes ; la ligne en base est conservee et ses chemins
+d'artefacts remis a vide (download/report -> 404 propre). Le balayage
+(`db.gc_job_workspaces`) tourne au demarrage de l'API et periodiquement dans le
+worker via Celery beat (`video_api.gc_job_artifacts`, toutes les
+`VIDEO_API_GC_INTERVAL_HOURS`, defaut 6h ; le worker tourne avec `--beat`).
+
 ### Commandes video-api
 
 Depuis la racine du depot :

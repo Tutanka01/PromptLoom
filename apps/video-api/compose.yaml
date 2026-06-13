@@ -11,6 +11,9 @@ services:
       VIDEO_API_REDIS_URL: redis://redis:6379/0
       VIDEO_API_JOBS_ROOT: /data/jobs
       VIDEO_API_REPO_ROOT: /workspace
+      # Artifact retention (job workspaces under /data/jobs). The API sweeps at
+      # startup; the worker sweeps periodically (Celery beat). 0 = keep forever.
+      VIDEO_API_JOB_TTL_DAYS: ${VIDEO_API_JOB_TTL_DAYS:-15}
     command: uvicorn video_api.main:app --host 0.0.0.0 --port 8080
     ports:
       - "8080:8080"
@@ -70,8 +73,15 @@ services:
       # looped and sidechain-ducked under the voice by assemble_en.sh.
       VIDEO_API_MUSIC_FILE: ${VIDEO_API_MUSIC_FILE:-}
       VIDEO_API_MUSIC_DB: ${VIDEO_API_MUSIC_DB:--26}
+      # Artifact retention. The worker runs the periodic GC (Celery beat below);
+      # TTL_DAYS=0 disables it, GC_INTERVAL_HOURS sets how often the sweep runs.
+      VIDEO_API_JOB_TTL_DAYS: ${VIDEO_API_JOB_TTL_DAYS:-15}
+      VIDEO_API_GC_INTERVAL_HOURS: ${VIDEO_API_GC_INTERVAL_HOURS:-6}
       MANIM_USE_UV: "0"
-    command: celery -A video_api.celery_app worker --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
+    # --beat runs the embedded scheduler in this single worker (concurrency 1),
+    # which fires video_api.gc_job_artifacts every VIDEO_API_GC_INTERVAL_HOURS.
+    # The schedule DB lives in /tmp (recreated on restart, which is fine).
+    command: celery -A video_api.celery_app worker --beat --schedule=/tmp/celerybeat-schedule --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
     volumes:
       - video_jobs:/data/jobs
     depends_on:
