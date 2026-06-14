@@ -39,6 +39,8 @@ class Engine(Protocol):
         self, prompt: str, previous: dict, hint: str, language: str = "en"
     ) -> Any: ...
 
+    def translate_blueprint(self, master: dict, language: str) -> Any: ...
+
     def materialize(self, blueprint: Any, workspace: Path) -> Path: ...
 
     def generate_scenes(self, blueprint: Any, video_dir: Path) -> None: ...
@@ -69,6 +71,9 @@ class ManimEngine:
         self, prompt: str, previous: dict, hint: str, language: str = "en"
     ) -> Any:
         return self.llm.repair_blueprint(prompt, previous, hint, language)
+
+    def translate_blueprint(self, master: dict, language: str) -> Any:
+        return self.llm.translate_blueprint(master, language)
 
     def materialize(self, blueprint: Any, workspace: Path) -> Path:
         return self.materializer.materialize(blueprint, workspace)
@@ -181,6 +186,9 @@ class RemotionEngine:
         self, prompt: str, previous: dict, hint: str, language: str = "en"
     ) -> Any:
         return self.llm.repair_remotion_blueprint(prompt, previous, hint, language)
+
+    def translate_blueprint(self, master: dict, language: str) -> Any:
+        return self.llm.translate_remotion_blueprint(master, language)
 
     def repair_scenes(self, blueprint_data: dict, review: Any) -> Any | None:
         """Scene-level repair after a failed visual review: rewrite ONLY the

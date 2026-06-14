@@ -80,6 +80,13 @@ Champs :
   et les textes visibles sont generes dans cette langue, meme si le prompt est dans
   une autre langue. Les tags regionaux comme `fr-FR` ou `it-IT` sont normalises en
   `fr` et `it`.
+- `languages` optionnel, liste de codes (max 8), ex. `["fr", "en", "es"]`. Quand
+  elle contient plus d'une langue, l'API cree un **batch** : une video par langue,
+  **contenu et script identiques**, seules la narration et les textes a l'ecran
+  sont traduits. La premiere langue est la primaire (elle genere le blueprint
+  maitre) ; les autres traduisent ce maitre une fois la primaire terminee. Voir
+  la section *Videos multilingues (batch)* ci-dessous. Si absent, `language`
+  pilote une seule video (comportement inchange).
 - `target_duration_seconds` optionnel, entre 45 et 900 secondes. C'est une cible
   pedagogique pour le LLM, pas une duree garantie a l'image pres : le pipeline
   ecrit assez de narration pour s'approcher de cette duree, puis la duree reelle
@@ -122,6 +129,70 @@ curl -X POST http://localhost:8080/v1/videos \
 ```
 
 HTTP `202 Accepted` signifie que le job est accepte et execute en asynchrone.
+
+## Videos multilingues (batch)
+
+Pour produire la meme video en plusieurs langues, passer `languages` :
+
+```bash
+curl -X POST http://localhost:8080/v1/videos \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt": "Explique ce qu est un appel systeme Linux",
+    "theme": "linux-fondamentaux",
+    "languages": ["fr", "en", "es"],
+    "target_duration_seconds": 240,
+    "quality_profile": "standard"
+  }'
+```
+
+Reponse (`202`) : la premiere langue (`fr`) est la primaire, deja en file ; les
+autres sont creees en attente et lancees automatiquement quand la primaire est
+terminee.
+
+```json
+{
+  "job_id": "<id de la video fr>",
+  "status_url": "/v1/videos/<id fr>",
+  "batch_id": "9d1c...",
+  "jobs": [
+    {"job_id": "<id fr>", "language": "fr", "is_primary": true,  "status_url": "/v1/videos/<id fr>"},
+    {"job_id": "<id en>", "language": "en", "is_primary": false, "status_url": "/v1/videos/<id en>"},
+    {"job_id": "<id es>", "language": "es", "is_primary": false, "status_url": "/v1/videos/<id es>"}
+  ]
+}
+```
+
+Chaque entree de `jobs` est une video normale : statut, download et report via
+les endpoints `/v1/videos/{job_id}`. Le contenu (scenes, visuels, structure) est
+identique a la primaire ; seuls la voix et les textes a l'ecran changent de
+langue. Le fichier telecharge porte la langue dans son nom
+(`<slug>-<lang>-final.mp4`).
+
+Garanties : les secondaires ne demarrent qu'apres une primaire **terminee** (on
+ne traduit qu'un maitre qui a deja rendu). Si la primaire echoue, les secondaires
+en attente passent en `failed_generation`.
+
+## `GET /v1/batches/{batch_id}`
+
+Etat consolide de toutes les videos d'un batch (primaire en tete).
+
+```bash
+curl http://localhost:8080/v1/batches/<batch_id>
+```
+
+```json
+{
+  "batch_id": "9d1c...",
+  "languages": ["fr", "en", "es"],
+  "jobs": [
+    {"job_id": "<id fr>", "language": "fr", "batch_id": "9d1c...", "status": "completed", "progress": 100, "download_url": "/v1/videos/<id fr>/download"},
+    {"job_id": "<id en>", "language": "en", "batch_id": "9d1c...", "status": "render_final", "progress": 78}
+  ]
+}
+```
+
+`404` si aucun job ne porte ce `batch_id`.
 
 ## `GET /v1/videos/{job_id}`
 

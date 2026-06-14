@@ -291,8 +291,7 @@ class Settings:
     )
     # HMAC-SHA256 secret for webhook payloads (X-Video-API-Signature header).
     # Empty = webhooks are sent unsigned.
-    webhook_secret: str = field(default_factory=la
-                                mbda: os.getenv("VIDEO_API_WEBHOOK_SECRET", ""))
+    webhook_secret: str = field(default_factory=lambda: os.getenv("VIDEO_API_WEBHOOK_SECRET", ""))
     # Workspace garbage collection / retention. Terminal jobs (completed,
     # cancelled, failed*) whose /data/jobs/<id> directory is older than this many
     # days get that directory deleted; the DB row is kept for history and its

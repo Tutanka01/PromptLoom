@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -21,6 +21,13 @@ class VideoJob(Base):
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     theme: Mapped[str | None] = mapped_column(String(120), nullable=True)
     language: Mapped[str] = mapped_column(String(12), nullable=False, default="en")
+    # Multi-language batches: sibling jobs that share one prompt produce the same
+    # video translated into several languages. They share a batch_id; exactly one
+    # job per batch is the primary (it generates the master blueprint). The
+    # secondaries translate that master into their own language. NULL batch_id =
+    # an ordinary single-language job.
+    batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     target_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     quality_profile: Mapped[str | None] = mapped_column(String(16), nullable=True)
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)

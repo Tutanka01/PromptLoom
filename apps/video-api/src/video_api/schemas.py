@@ -63,10 +63,22 @@ CLASS_KEY_RE = re.compile(r"^Scene\d+_[A-Za-z0-9]+EN$")
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
+# How many languages a single request may fan out into. The primary language
+# generates the master blueprint; every extra language re-renders a translation
+# of it, so each one is a full render — keep the cap sane.
+MAX_BATCH_LANGUAGES = 8
+
+
 class VideoCreateRequest(BaseModel):
     prompt: str = Field(min_length=10, max_length=4000)
     theme: str | None = Field(default=None, max_length=80)
     language: str = Field(default="en", min_length=2, max_length=12)
+    # Optional multi-language batch. When set with more than one language, the
+    # request produces one video per language: identical content and structure,
+    # only the spoken narration and on-screen text translated. The first entry is
+    # the primary language (it generates the master blueprint); the rest translate
+    # it. When omitted, `language` drives a single video as before.
+    languages: list[str] | None = Field(default=None, max_length=MAX_BATCH_LANGUAGES)
     target_duration_seconds: int | None = Field(default=None, ge=45, le=900)
     # draft    = fast iteration: Kokoro voice, half-res render, no visual review.
     # standard = production defaults (Chatterbox, full-res final render).
@@ -80,22 +92,66 @@ class VideoCreateRequest(BaseModel):
     def validate_language(cls, value: str) -> str:
         return normalize_language(value)
 
+    @field_validator("languages")
+    @classmethod
+    def validate_languages(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        for item in value:
+            code = normalize_language(item)
+            if code not in normalized:  # dedupe, preserve order
+                normalized.append(code)
+        if not normalized:
+            return None
+        return normalized
+
+    def resolved_languages(self) -> list[str]:
+        """Ordered, de-duplicated languages to produce. The primary language is
+        always first. Falls back to a single-element list built from `language`."""
+        langs = list(self.languages or [])
+        if not langs:
+            return [self.language]
+        # Ensure the explicit `language` (the primary) leads the list when the
+        # caller set both fields without putting it first.
+        if self.languages is None and self.language not in langs:
+            langs.insert(0, self.language)
+        return langs
+
+
+class BatchJobRef(BaseModel):
+    job_id: str
+    language: str
+    is_primary: bool
+    status_url: str
+
 
 class VideoCreateResponse(BaseModel):
     job_id: str
     status_url: str
     download_url: str | None = None
+    # Populated only for multi-language batches.
+    batch_id: str | None = None
+    jobs: list[BatchJobRef] | None = None
 
 
 class VideoStatusResponse(BaseModel):
     job_id: str
     status: str
+    language: str | None = None
+    batch_id: str | None = None
     quality_profile: str | None = None
     progress: int
     current_step: str | None = None
     error_message: str | None = None
     download_url: str | None = None
     report_url: str | None = None
+
+
+class BatchStatusResponse(BaseModel):
+    batch_id: str
+    languages: list[str]
+    jobs: list[VideoStatusResponse]
 
 
 class BeatSpec(BaseModel):

@@ -36,6 +36,19 @@ graph_plot, comparison_table, cycle_diagram, spatial_model, recap_map.
 In `visual_intent` and each beat's `visual_action`, name the actual objects to draw and how they change (e.g. "write the limit definition in LaTeX, then morph the difference quotient into f'(x)", "plot f(x)=x^2 on axes and draw the tangent at x=2", "highlight line 3 of the loop as the counter increments"). One active idea at a time. Never write vague actions like "make it nice"."""
 
 
+def _translation_system_prompt(target_language_name: str) -> str:
+    return (
+        "You are a professional technical translator and localiser for educational "
+        f"STEM videos. Translate the requested fields into natural, fluent {target_language_name}, "
+        "keeping technical terms correct and introducing them the way a native expert would. "
+        "Return ONLY a single valid JSON object with the SAME structure as the input blueprint "
+        "(same keys, same arrays, same ordering). No prose, no markdown, no code fences. "
+        "Do NOT translate, rename, drop or add JSON keys. Do NOT change scene keys, slugs, "
+        "component names, layout names, numbers (durations, beat ratios) or any code/identifier. "
+        "Translate only the natural-language values explicitly listed as translatable."
+    )
+
+
 VISUAL_PRIMITIVES = [
     "concept_map",
     "process_flow",
@@ -796,6 +809,128 @@ class LLMClient:
             logger.warning("llm.blueprint.invalid errors=%s", exc)
             repaired = self.repair_blueprint(prompt, data, str(exc), language)
             return repaired
+
+    # ----------------------------------------------------------- translation
+    def translate_blueprint(self, master: dict, language: str) -> VideoBlueprint:
+        """Translate a validated master blueprint into *language*, preserving the
+        whole structure (slug, scene keys, layouts, beat ratios, durations) and
+        translating only the human-facing text: title, narration, beat
+        text_hint/label, visual_intent, audience, teaching_goal, learning
+        objectives. Used by secondary jobs in a multi-language batch so every
+        video shares identical content, only the spoken language differs."""
+        language = normalize_language(language)
+        target_language_name = language_name(language)
+        if self.settings.fake_llm:
+            # No real translation offline: keep the master content verbatim so
+            # the structure round-trips and the rest of the pipeline still runs.
+            logger.info("llm.fake_translate.start language=%s", language)
+            return VideoBlueprint.model_validate(master)
+        if not self.settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for translation unless VIDEO_API_FAKE_LLM=1")
+
+        client = self._build_client()
+        translatable = [
+            "title", "audience", "teaching_goal", "learning_objectives",
+            "scenes[].title", "scenes[].text", "scenes[].visual_intent",
+            "scenes[].beats[].text_hint", "scenes[].beats[].label",
+        ]
+        content = self._complete(
+            client,
+            [
+                {"role": "system", "content": _translation_system_prompt(target_language_name)},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": f"Translate this video blueprint into {target_language_name}.",
+                            "output_language": language,
+                            "output_language_name": target_language_name,
+                            "translate_only_these_fields": translatable,
+                            "keep_unchanged": [
+                                "slug", "theme", "subject_area", "difficulty",
+                                "target_duration_seconds", "style_notes",
+                                "scenes[].key", "scenes[].layout",
+                                "scenes[].duration_seconds", "scenes[].beats[].key",
+                                "scenes[].beats[].at",
+                            ],
+                            "blueprint": master,
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+            temperature=0.2,
+            json_mode=True,
+        )
+        logger.info("llm.translate.done language=%s response_chars=%d", language, len(content))
+        data = _coerce_blueprint_shape(_extract_json_object(content))
+        try:
+            return VideoBlueprint.model_validate(data)
+        except ValidationError as exc:
+            logger.warning("llm.translate.invalid language=%s errors=%s", language, exc)
+            return self.repair_blueprint(master.get("teaching_goal", ""), data, str(exc), language)
+
+    def translate_remotion_blueprint(self, master: dict, language: str) -> "RemotionBlueprint":
+        """Remotion counterpart of translate_blueprint: translate narration, prop
+        text values and beat anchors while keeping component names, prop keys,
+        durations and structure intact."""
+        from video_api.pipeline import remotion_blueprint as rb
+
+        language = normalize_language(language)
+        target_language_name = language_name(language)
+        target = int(master.get("target_duration_seconds") or self.settings.default_target_duration_seconds)
+        if self.settings.fake_llm:
+            logger.info("llm.fake_translate_remotion.start language=%s", language)
+            return RemotionBlueprint.model_validate(master)
+        if not self.settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for translation unless VIDEO_API_FAKE_LLM=1")
+
+        client = self._build_client()
+        content = self._complete(
+            client,
+            [
+                {"role": "system", "content": _translation_system_prompt(target_language_name)},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": f"Translate this Remotion video blueprint into {target_language_name}.",
+                            "output_language": language,
+                            "output_language_name": target_language_name,
+                            "translate_only_these_fields": [
+                                "title", "audience", "teaching_goal", "learning_objectives",
+                                "scenes[].title", "scenes[].narration", "scenes[].visual_intent",
+                                "scenes[].beats[].anchor",
+                                "every human-readable STRING value inside scenes[].props "
+                                "(headings, labels, captions, bullet text); keep prop KEYS, "
+                                "numbers, booleans, colours and code identifiers unchanged",
+                            ],
+                            "keep_unchanged": [
+                                "slug", "theme", "subject_area", "difficulty",
+                                "target_duration_seconds", "style_notes", "degradations",
+                                "scenes[].key", "scenes[].component",
+                                "scenes[].duration_seconds", "scenes[].transition",
+                            ],
+                            "anchor_rule": (
+                                "Each beat anchor must stay a verbatim short phrase copied from the "
+                                "TRANSLATED narration of the same scene, so it can be found in the audio."
+                            ),
+                            "blueprint": master,
+                        },
+                        ensure_ascii=True,
+                    ),
+                },
+            ],
+            temperature=0.2,
+            json_mode=True,
+        )
+        logger.info("llm.translate_remotion.done language=%s response_chars=%d", language, len(content))
+        data = rb.normalize_remotion_blueprint(_extract_json_object(content), target)
+        try:
+            return RemotionBlueprint.model_validate(data)
+        except ValidationError as exc:
+            logger.warning("llm.translate_remotion.invalid language=%s errors=%s", language, exc)
+            return self.repair_remotion_blueprint(master.get("teaching_goal", ""), data, str(exc), language)
 
     def generate_remotion_blueprint(
         self,

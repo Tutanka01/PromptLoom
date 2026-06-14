@@ -15,7 +15,13 @@ from video_api.config import get_settings
 from video_api.db import SessionLocal, gc_job_workspaces, get_session, init_db, reap_stale_jobs
 from video_api.logging_setup import configure_logging
 from video_api.models import VideoJob
-from video_api.schemas import VideoCreateRequest, VideoCreateResponse, VideoStatusResponse
+from video_api.schemas import (
+    BatchJobRef,
+    BatchStatusResponse,
+    VideoCreateRequest,
+    VideoCreateResponse,
+    VideoStatusResponse,
+)
 from video_api.storage import ensure_within, job_root
 from video_api.tasks import run_video_job
 
@@ -63,6 +69,8 @@ def _status_response(job: VideoJob) -> VideoStatusResponse:
     return VideoStatusResponse(
         job_id=job.id,
         status=job.status,
+        language=job.language,
+        batch_id=job.batch_id,
         progress=job.progress,
         current_step=job.current_step,
         error_message=job.error_message,
@@ -106,12 +114,16 @@ def healthz() -> JSONResponse:
     dependencies=[Depends(require_api_key)],
 )
 def create_video(request: VideoCreateRequest, session: Session = Depends(get_session)) -> VideoCreateResponse:
+    languages = request.resolved_languages()
+    if len(languages) > 1:
+        return _create_batch(request, languages, session)
+
     job_id = str(uuid4())
     artifact_dir = str(job_root(settings.jobs_root, job_id))
     logger.info(
         "api.job.create_requested job_id=%s language=%s theme=%s profile=%s prompt_chars=%d artifact_dir=%s",
         job_id,
-        request.language,
+        languages[0],
         request.theme,
         request.quality_profile,
         len(request.prompt),
@@ -121,7 +133,7 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
         id=job_id,
         prompt=request.prompt,
         theme=request.theme,
-        language=request.language,
+        language=languages[0],
         target_duration_seconds=request.target_duration_seconds,
         quality_profile=request.quality_profile,
         callback_url=request.callback_url,
@@ -137,6 +149,78 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
     session.commit()
     logger.info("api.job.enqueued job_id=%s task_id=%s status_url=/v1/videos/%s", job_id, result.id, job_id)
     return VideoCreateResponse(job_id=job_id, status_url=f"/v1/videos/{job_id}")
+
+
+def _create_batch(
+    request: VideoCreateRequest, languages: list[str], session: Session
+) -> VideoCreateResponse:
+    """Create one video per language from a single prompt. The primary language
+    (first) generates the master blueprint and is enqueued immediately; the
+    secondaries are persisted as queued and enqueued by the worker once the
+    primary completes (they translate its master). See tasks.fan_out_batch."""
+    batch_id = str(uuid4())
+    logger.info(
+        "api.batch.create_requested batch_id=%s languages=%s theme=%s profile=%s prompt_chars=%d",
+        batch_id,
+        ",".join(languages),
+        request.theme,
+        request.quality_profile,
+        len(request.prompt),
+    )
+    refs: list[BatchJobRef] = []
+    primary_id: str | None = None
+    for index, language in enumerate(languages):
+        job_id = str(uuid4())
+        is_primary = index == 0
+        if is_primary:
+            primary_id = job_id
+        job = VideoJob(
+            id=job_id,
+            prompt=request.prompt,
+            theme=request.theme,
+            language=language,
+            batch_id=batch_id,
+            is_primary=is_primary,
+            target_duration_seconds=request.target_duration_seconds,
+            quality_profile=request.quality_profile,
+            callback_url=request.callback_url,
+            status="queued",
+            progress=0,
+            current_step="queued" if is_primary else "waiting_for_master",
+            artifact_dir=str(job_root(settings.jobs_root, job_id)),
+        )
+        session.add(job)
+        refs.append(
+            BatchJobRef(
+                job_id=job_id,
+                language=language,
+                is_primary=is_primary,
+                status_url=f"/v1/videos/{job_id}",
+            )
+        )
+    session.commit()
+
+    # Only the primary runs now; secondaries are fanned out by the worker after
+    # the master blueprint exists.
+    assert primary_id is not None
+    result = run_video_job.delay(primary_id)
+    primary = session.get(VideoJob, primary_id)
+    if primary is not None:
+        primary.celery_task_id = result.id
+        session.commit()
+    logger.info(
+        "api.batch.enqueued batch_id=%s primary_job_id=%s task_id=%s secondaries=%d",
+        batch_id,
+        primary_id,
+        result.id,
+        len(languages) - 1,
+    )
+    return VideoCreateResponse(
+        job_id=primary_id,
+        status_url=f"/v1/videos/{primary_id}",
+        batch_id=batch_id,
+        jobs=refs,
+    )
 
 
 @app.get("/v1/videos", dependencies=[Depends(require_api_key)])
@@ -155,6 +239,27 @@ def list_videos(
         "limit": limit,
         "offset": offset,
     }
+
+
+@app.get(
+    "/v1/batches/{batch_id}",
+    response_model=BatchStatusResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def get_batch(batch_id: str, session: Session = Depends(get_session)) -> BatchStatusResponse:
+    jobs = (
+        session.query(VideoJob)
+        .filter(VideoJob.batch_id == batch_id)
+        .order_by(VideoJob.is_primary.desc(), VideoJob.created_at.asc())
+        .all()
+    )
+    if not jobs:
+        raise HTTPException(status_code=404, detail="batch not found")
+    return BatchStatusResponse(
+        batch_id=batch_id,
+        languages=[job.language for job in jobs],
+        jobs=[_status_response(job) for job in jobs],
+    )
 
 
 @app.get("/v1/videos/{job_id}", response_model=VideoStatusResponse, dependencies=[Depends(require_api_key)])
@@ -211,7 +316,12 @@ def download_video(job_id: str, session: Session = Depends(get_session)) -> File
         logger.error("api.job.download_missing_file job_id=%s path=%s", job_id, path)
         raise HTTPException(status_code=404, detail="video artifact missing")
     logger.info("api.job.download job_id=%s path=%s", job_id, path)
-    return FileResponse(path, media_type="video/mp4", filename=path.name)
+    # The pipeline always writes "<slug>-en-final.mp4"; surface the real spoken
+    # language in the download name so a batch's files don't all collide.
+    download_name = path.name
+    if job.language and job.language != "en":
+        download_name = path.name.replace("-en-final", f"-{job.language}-final", 1)
+    return FileResponse(path, media_type="video/mp4", filename=download_name)
 
 
 @app.get("/v1/videos/{job_id}/report", dependencies=[Depends(require_api_key)])

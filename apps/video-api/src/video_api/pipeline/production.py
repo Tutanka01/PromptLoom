@@ -115,6 +115,33 @@ class VideoPipeline:
                 step,
             )
 
+    def _load_master_blueprint(self, session: Session, job: VideoJob) -> dict | None:
+        """For a secondary batch job, load the primary sibling's validated
+        blueprint.json (the master to translate). Returns None for ordinary
+        single-language jobs and for the primary itself.
+
+        Raises if a secondary cannot find a usable master: secondaries are only
+        ever enqueued after the primary completes, so a missing master is a real
+        error, not a reason to silently regenerate (which would break the
+        identical-content guarantee)."""
+        if not job.batch_id or job.is_primary:
+            return None
+        primary = session.execute(
+            select(VideoJob).where(
+                VideoJob.batch_id == job.batch_id,
+                VideoJob.is_primary.is_(True),
+            )
+        ).scalar_one_or_none()
+        if primary is None:
+            raise RuntimeError(f"batch {job.batch_id}: no primary job found for secondary {job.id}")
+        master_path = job_root(self.settings.jobs_root, primary.id) / "blueprint.json"
+        if not master_path.exists():
+            raise RuntimeError(
+                f"batch {job.batch_id}: master blueprint missing at {master_path} "
+                f"(primary {primary.id} status={primary.status})"
+            )
+        return json.loads(master_path.read_text(encoding="utf-8"))
+
     def _notify_terminal(self, session: Session, job: VideoJob) -> None:
         """Best-effort terminal webhook; never raises into the pipeline."""
         try:
@@ -218,13 +245,27 @@ class VideoPipeline:
                     self.settings.max_repair_attempts,
                 )
                 if attempt == 0:
-                    self._update(session, job, "planning", 5, "planning")
-                    blueprint = self.engine.generate_blueprint(
-                        job.prompt,
-                        job.theme,
-                        job.target_duration_seconds,
-                        job.language,
-                    )
+                    master = self._load_master_blueprint(session, job)
+                    if master is not None:
+                        # Secondary job of a multi-language batch: translate the
+                        # primary's validated master instead of regenerating, so
+                        # every language shares identical content and structure.
+                        self._update(session, job, "planning", 5, "translating")
+                        logger.info(
+                            "job.translate.start job_id=%s batch_id=%s language=%s",
+                            job.id,
+                            job.batch_id,
+                            job.language,
+                        )
+                        blueprint = self.engine.translate_blueprint(master, job.language)
+                    else:
+                        self._update(session, job, "planning", 5, "planning")
+                        blueprint = self.engine.generate_blueprint(
+                            job.prompt,
+                            job.theme,
+                            job.target_duration_seconds,
+                            job.language,
+                        )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
                     blueprint = None

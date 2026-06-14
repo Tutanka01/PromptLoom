@@ -394,6 +394,42 @@ d'artefacts remis a vide (download/report -> 404 propre). Le balayage
 worker via Celery beat (`video_api.gc_job_artifacts`, toutes les
 `VIDEO_API_GC_INTERVAL_HOURS`, defaut 6h ; le worker tourne avec `--beat`).
 
+### Videos multilingues (batch) video-api
+
+`POST /v1/videos` accepte un champ optionnel `languages` (liste de codes, ex.
+`["fr", "en", "es"]`). Avec plus d'une langue, l'API cree un **batch** : une
+video par langue, **contenu et script identiques**, seules la narration parlee
+et les textes a l'ecran sont traduits.
+
+Principe (garantie "meme contenu") :
+
+- la **premiere langue** est la *primaire* : elle genere le blueprint maitre
+  normalement (LLM) et est mise en file tout de suite ;
+- les **secondaires** restent en `queued` / `current_step=waiting_for_master` ;
+- quand la primaire **se termine** (`completed`), le worker fait le fan-out
+  (`tasks._fan_out_batch`) : chaque secondaire **traduit** le `blueprint.json`
+  maitre de la primaire (`engine.translate_blueprint` ->
+  `llm.translate_blueprint` / `translate_remotion_blueprint`) au lieu de
+  regenerer, puis deroule le pipeline normal (materialize -> voix dans sa langue
+  -> render -> assemble -> verify). On ne traduit que le maitre qui a **deja**
+  rendu, donc le contenu est garanti identique ;
+- si la primaire echoue, les secondaires en attente sont passes en
+  `failed_generation` (`tasks._abort_batch_secondaries`), pas de blocage.
+
+La traduction preserve : `slug`, cles de scene, `layout`/`component`, durees,
+ratios `at` des beats, cles de props. Elle traduit : `title`, narration
+(`text`/`narration`), `text_hint`/`label`, `anchor` des beats, `visual_intent`,
+et les valeurs texte visibles dans les props Remotion.
+
+Champs de jointure cote modele : `VideoJob.batch_id` et `VideoJob.is_primary`
+(migration legere via `db._ensure_compat_columns`).
+
+Reponse de creation (batch) : `batch_id` + `jobs[{job_id, language, is_primary,
+status_url}]`. Suivi global : `GET /v1/batches/<batch_id>`. Le fichier
+telecharge porte la vraie langue dans son nom (`<slug>-<lang>-final.mp4`).
+
+Requete simple (mono-langue, `language`) : comportement inchange, pas de batch.
+
 ### Commandes video-api
 
 Depuis la racine du depot :
