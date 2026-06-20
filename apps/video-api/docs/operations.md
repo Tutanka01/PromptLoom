@@ -241,6 +241,37 @@ L'image Docker embarque deja Node 20 + Chrome headless. Detail complet :
 image, donc apres un edit du `Dockerfile` rebuild explicitement (`docker compose ...
 build worker api test`).
 
+### Production avancee : recherche et medias
+
+Les modes `editorial` et `cinematic` sont choisis dans le JSON de
+`POST /v1/videos`, pas avec une bascule globale. Ils exigent par defaut une
+recherche disponible :
+
+```text
+VIDEO_API_RESEARCH_PROVIDER=tavily       # tavily | exa | none
+VIDEO_API_RESEARCH_API_KEY=
+VIDEO_API_RESEARCH_TIMEOUT_SECONDS=45
+```
+
+Les medias stock sont opt-in par requete (`visuals.allow_stock`) et par
+configuration serveur :
+
+```text
+VIDEO_API_ASSET_PROVIDER=pexels          # pexels | none
+VIDEO_API_PEXELS_API_KEY=
+VIDEO_API_ASSET_MAX_DOWNLOAD_MB=80
+```
+
+Le worker telecharge avant le rendu et n'accepte que les domaines Pexels. En
+cas d'echec, la scene devient un diagramme ; le job ne rend jamais une URL
+distante. Pour un environnement sans provider, utiliser le mode `technical` ou
+envoyer `research: {"enabled": false}` / `visuals: {"allow_stock": false}`.
+
+Les artefacts de diagnostic sont `research.json`, `asset_manifest.json` et
+`motion_plan_report.json`. Un echec de recherche requise ou de promesse de
+mouvement finit en `failed_generation`. Un echec du delivery gate apres rendu
+finit en `failed_quality`.
+
 ### Synchro narration <-> visuel (Remotion)
 
 ```text

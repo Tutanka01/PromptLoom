@@ -13,6 +13,7 @@ Le but de cette application est de recevoir un prompt utilisateur, creer un job 
 - [Operations](operations.md): variables d'environnement, Docker, tests, logs, volumes, depannage.
 - [LLM Contract](llm-contract.md): contrat attendu entre le worker et un endpoint compatible OpenAI.
 - [Remotion Engine](remotion-engine.md): moteur de rendu Remotion (`VIDEO_API_RENDER_ENGINE=remotion`), alternative a Manim partageant TTS/assemble/verify.
+- [Production avancee](advanced-production.md): recherche sourcee, medias locaux, captions, motion design, son et gate anti-diaporama activables par requete.
 
 ## Principe important
 
@@ -20,11 +21,13 @@ L'API ne remplace pas le standard video du depot. Elle automatise le meme pipeli
 
 ```text
 prompt
-  -> blueprint LLM structure
+  -> recherche sourcee optionnelle
+  -> proposition + blueprint LLM structure
+  -> scene plan + gate de mouvement
   -> plan/script/segments/beats
-  -> code Manim deterministe
+  -> code Manim ou Remotion
   -> voix Chatterbox
-  -> rendu Manim
+  -> rendu + captions alignees
   -> assemblage ffmpeg
   -> verification ffprobe/freezedetect/snapshots
   -> MP4 final

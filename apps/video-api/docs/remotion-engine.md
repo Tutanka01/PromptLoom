@@ -18,6 +18,7 @@ video_dir/
   generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.mp3
   scenes_map.json       # {fps, scenes:[{key, component, custom, props}]} (ordonné)
   build_video_json.py   # durations.json + scenes_map.json -> video.json
+  build_transition_sfx.py # ponts sonores deterministes aux coupes
   render_en.sh          # build video.json, injecte l'entrée par job, npx remotion render -> final/<slug>-en-silent.mp4
   assemble_en.sh        # partagé avec Manim : mux silent + voiceover -> final/<slug>-en-final.mp4
   remotion_scenes/*.tsx # composants Custom générés (scene-coder)
@@ -32,7 +33,7 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 
 `schemas.RemotionBlueprint` / `RemotionScene`. Champs miroir de Manim (key ordonnée
 `Scene1_…EN`, `title`, `narration`, `duration_seconds`) + `component` + `props` +
-`visual_intent`. Les gates de durée/narration sont partagées avec Manim via
+`visual_intent` + `source_ids`. Les gates de durée/narration sont partagées avec Manim via
 `video_api.timing` : un blueprint qui valide ici a assez de narration pour passer
 `verify_mp4`. Prompt + normalisation : `pipeline/remotion_blueprint.py`
 (`expr → points` échantillonnés en sandbox, clamp des ranges, alias de champs).
@@ -55,11 +56,15 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 | `FlowScene`          | `title, stages[{label,sub?}][2-5], caption?` (paquet qui traverse) |
 | `BarChartScene`      | `title, bars[{label,value,color?}][2-6], caption?` |
 | `CounterScene`       | `title, value, prefix?, suffix?, label?, decimals?, caption?` |
+| `ImageScene`         | `title, asset_query` puis `src` local, `motion?, credit?` |
+| `FootageScene`       | `title, asset_query` puis `src` local, `mediaDurationSeconds, credit?` |
 
-Transitions inter-scènes : **automatiques** (fond `AmbientBackground` persistant au
-niveau de `MainComposition` + fade in/out par scène = cross-dissolve sans toucher
-au timing → la voix off muxée séquentiellement reste synchro). On n'utilise PAS
-`@remotion/transitions` (qui chevaucherait les scènes et désynchroniserait l'audio).
+Transitions inter-scènes : le fond `AmbientBackground` reste persistant et des
+overlays de coupe (`minimal`, `editorial`, `cinematic`) sont poses a la frontiere
+des sequences. Les scenes ne se chevauchent pas : la voix muxee sequentiellement
+reste exactement synchro. `captionMode` ajoute des captions `keywords` ou `full`
+pilotees par l'alignement mot a mot. Les modes avances mixent aussi un pont sonore
+deterministe a chaque coupe.
 
 ### Escape hatch `Custom` (code libre encadré)
 

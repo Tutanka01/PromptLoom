@@ -31,7 +31,7 @@ import uuid
 from pathlib import Path
 
 from video_api.config import Settings
-from video_api.pipeline.materialize import _assemble_script, slugify
+from video_api.pipeline.materialize import _TRANSITION_SFX_SCRIPT, _assemble_script, slugify
 from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import RemotionBlueprint, RemotionScene
 
@@ -47,25 +47,44 @@ def _segments_json(blueprint: RemotionBlueprint) -> dict:
     }
 
 
-def _scenes_map(blueprint: RemotionBlueprint, fps: int) -> dict:
+def _scenes_map(
+    blueprint: RemotionBlueprint,
+    fps: int,
+    entry_id: str,
+    caption_mode: str,
+    transition_profile: str,
+) -> dict:
     """Ordered scene->component map. Custom scenes are registered under their key."""
     scenes = []
     for scene in blueprint.scenes:
         component = scene.key if scene.is_custom else scene.component
+        props = dict(scene.props or {})
+        if scene.component in {"ImageScene", "FootageScene"} and str(props.get("src") or "").startswith("assets/"):
+            props["src"] = f"job-assets/{entry_id}/{Path(str(props['src'])).name}"
         scenes.append(
             {
                 "key": scene.key,
                 "component": component,
                 "custom": scene.is_custom,
                 "transition": getattr(scene, "transition", "auto"),
-                "props": dict(scene.props or {}),
+                "props": props,
             }
         )
-    return {"fps": fps, "scenes": scenes}
+    return {
+        "fps": fps,
+        "captionMode": caption_mode,
+        "transitionProfile": transition_profile,
+        "scenes": scenes,
+    }
 
 
 def _script_markdown(blueprint: RemotionBlueprint) -> str:
-    sections = [f"## {s.key}: {s.title} ({s.component})\n\n{s.narration}\n" for s in blueprint.scenes]
+    sections = []
+    for scene in blueprint.scenes:
+        sources = f"\n\nSources: {', '.join(scene.source_ids)}" if scene.source_ids else ""
+        sections.append(
+            f"## {scene.key}: {scene.title} ({scene.component})\n\n{scene.narration}{sources}\n"
+        )
     return f"# {blueprint.title} Script\n\n" + "\n".join(sections)
 
 
@@ -85,20 +104,31 @@ MIN_FRAMES = FPS  # >= 1 second
 ROOT = Path(__file__).resolve().parent
 durations = json.loads((ROOT / "audio" / "en" / "durations.json").read_text(encoding="utf-8"))
 scene_map = json.loads((ROOT / "scenes_map.json").read_text(encoding="utf-8"))
+alignment_path = ROOT / "audio" / "en" / "alignment.json"
+alignment = json.loads(alignment_path.read_text(encoding="utf-8")) if alignment_path.exists() else {}
 
 scenes = []
 for entry in scene_map["scenes"]:
     key = entry["key"]
     seconds = float(durations.get(key, 6.0))
     frames = max(MIN_FRAMES, round(seconds * FPS))
+    props = dict(entry.get("props", {}))
+    words = (alignment.get(key) or {}).get("words") or []
+    if words:
+        props["alignedWords"] = words
     scenes.append({
         "component": entry["component"],
-        "props": entry.get("props", {}),
+        "props": props,
         "transition": entry.get("transition", "auto"),
         "durationInFrames": frames,
     })
 
-video = {"embedAudio": False, "scenes": scenes}
+video = {
+    "embedAudio": False,
+    "captionMode": scene_map.get("captionMode", "off"),
+    "transitionProfile": scene_map.get("transitionProfile", "minimal"),
+    "scenes": scenes,
+}
 (ROOT / "video.json").write_text(json.dumps(video, indent=2) + "\\n", encoding="utf-8")
 total = sum(s["durationInFrames"] for s in scenes)
 print(f"video.json: {len(scenes)} scenes, {total} frames ({total / FPS:.1f}s)")
@@ -126,7 +156,7 @@ const Root: React.FC = () => (
     id="Video"
     component={{JobMain}}
     schema={{videoSchema}}
-    defaultProps={{{{ scenes: [], embedAudio: false }}}}
+    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", transitionProfile: "minimal" }}}}
     fps={{{fps}}}
     width={{1920}}
     height={{1080}}
@@ -180,14 +210,18 @@ python3 build_video_json.py
 #    Isolated by ENTRY_ID so concurrent jobs never collide; cleaned up on exit.
 ENTRY_DIR="${{REMOTION_DIR}}/src/entries"
 SCENES_DIR="${{REMOTION_DIR}}/src/jobScenes/${{ENTRY_ID}}"
-mkdir -p "${{ENTRY_DIR}}" "${{SCENES_DIR}}"
-cleanup() {{ rm -f "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx"; rm -rf "${{SCENES_DIR}}"; }}
+ASSET_DIR="${{REMOTION_DIR}}/public/job-assets/${{ENTRY_ID}}"
+mkdir -p "${{ENTRY_DIR}}" "${{SCENES_DIR}}" "${{ASSET_DIR}}"
+cleanup() {{ rm -f "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx"; rm -rf "${{SCENES_DIR}}" "${{ASSET_DIR}}"; }}
 trap cleanup EXIT
 
 if compgen -G "remotion_scenes/*.tsx" > /dev/null; then
   cp -f remotion_scenes/*.tsx "${{SCENES_DIR}}/"
 fi
 cp -f jobScenes_index.ts "${{SCENES_DIR}}/index.ts"
+if compgen -G "assets/*" > /dev/null; then
+  cp -f assets/* "${{ASSET_DIR}}/"
+fi
 
 cat > "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx" <<'REMOTION_ENTRY_EOF'
 {entry_body}REMOTION_ENTRY_EOF
@@ -245,6 +279,12 @@ class RemotionMaterializer:
         if scenes_dir.exists():
             shutil.rmtree(scenes_dir)
         scenes_dir.mkdir(parents=True, exist_ok=True)
+        assets_dir = video_dir / "assets"
+        if assets_dir.exists():
+            shutil.rmtree(assets_dir)
+        workspace_assets = workspace / "assets"
+        if workspace_assets.exists():
+            shutil.copytree(workspace_assets, assets_dir)
 
         (docs_dir / "script.md").write_text(_script_markdown(blueprint), encoding="utf-8")
         (video_dir / "segments_en.json").write_text(
@@ -252,9 +292,24 @@ class RemotionMaterializer:
         )
         fps = self.settings.render_fps
         (video_dir / "scenes_map.json").write_text(
-            json.dumps(_scenes_map(blueprint, fps), indent=2) + "\n", encoding="utf-8"
+            json.dumps(
+                _scenes_map(
+                    blueprint,
+                    fps,
+                    entry_id,
+                    self.settings.caption_mode,
+                    self.settings.transition_profile,
+                ),
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
         )
         (video_dir / "build_video_json.py").write_text(_build_video_json_py(fps), encoding="utf-8")
+        (video_dir / "build_transition_sfx.py").write_text(
+            _TRANSITION_SFX_SCRIPT,
+            encoding="utf-8",
+        )
         # Default (palette-only) custom-scene index; the scene-coder overwrites it
         # together with remotion_scenes/*.tsx when there are Custom scenes.
         (video_dir / "jobScenes_index.ts").write_text(
@@ -359,7 +414,14 @@ def fallback_custom_to_palette(video_dir: Path, blueprint: RemotionBlueprint, fa
 
 def validate_remotion_video_source(video_dir: Path) -> None:
     """Cheap static checks before the expensive voice/render steps."""
-    required = ["segments_en.json", "scenes_map.json", "build_video_json.py", "render_en.sh", "assemble_en.sh"]
+    required = [
+        "segments_en.json",
+        "scenes_map.json",
+        "build_video_json.py",
+        "build_transition_sfx.py",
+        "render_en.sh",
+        "assemble_en.sh",
+    ]
     missing = [name for name in required if not (video_dir / name).exists()]
     if missing:
         raise RuntimeError(f"remotion video_dir missing files: {missing}")
@@ -371,3 +433,13 @@ def validate_remotion_video_source(video_dir: Path) -> None:
     map_keys = {s["key"] for s in scene_map["scenes"]}
     if seg_keys != map_keys:
         raise RuntimeError(f"segments/scenes_map key mismatch: {seg_keys ^ map_keys}")
+    for scene in scene_map["scenes"]:
+        if scene.get("component") not in {"ImageScene", "FootageScene"}:
+            continue
+        src = str((scene.get("props") or {}).get("src") or "")
+        if not src.startswith("job-assets/") or ".." in Path(src).parts:
+            raise RuntimeError(f"unsafe or missing media src for {scene['key']}: {src!r}")
+        filename = Path(src).name
+        asset = video_dir / "assets" / filename
+        if not asset.exists() or asset.stat().st_size == 0:
+            raise RuntimeError(f"media asset missing for {scene['key']}: {asset}")

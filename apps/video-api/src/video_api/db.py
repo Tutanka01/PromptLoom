@@ -77,6 +77,7 @@ def _ensure_compat_columns() -> None:
     migrations = {
         "target_duration_seconds": "ALTER TABLE video_jobs ADD COLUMN target_duration_seconds INTEGER",
         "quality_profile": "ALTER TABLE video_jobs ADD COLUMN quality_profile VARCHAR(16)",
+        "production_config": "ALTER TABLE video_jobs ADD COLUMN production_config TEXT",
         "callback_url": "ALTER TABLE video_jobs ADD COLUMN callback_url TEXT",
         "celery_task_id": "ALTER TABLE video_jobs ADD COLUMN celery_task_id VARCHAR(64)",
         "batch_id": "ALTER TABLE video_jobs ADD COLUMN batch_id VARCHAR(36)",

@@ -95,6 +95,38 @@ class Settings:
     render_x264_preset: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_RENDER_X264_PRESET", "faster")
     )
+    # Job-resolved editorial controls. Environment values are defaults; the
+    # worker replaces them from VideoJob.production_config before selecting an
+    # engine. They are ordinary fields so every downstream component sees one
+    # immutable Settings snapshot for the current job.
+    production_mode: str = field(default_factory=lambda: os.getenv("VIDEO_API_PRODUCTION_MODE", "technical"))
+    caption_mode: str = field(default_factory=lambda: os.getenv("VIDEO_API_CAPTION_MODE", "off"))
+    transition_profile: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_TRANSITION_PROFILE", "minimal")
+    )
+    delivery_promise: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_DELIVERY_PROMISE", "technical_explainer")
+    )
+    # Research providers are server-side only: callers choose whether research
+    # is required, never supply credentials or arbitrary endpoints.
+    research_provider: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_RESEARCH_PROVIDER", "none").strip().lower()
+    )
+    research_api_key: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_RESEARCH_API_KEY", "")
+    )
+    research_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_RESEARCH_TIMEOUT_SECONDS", "45"))
+    )
+    # Licensed stock-media acquisition. Pexels is the first implementation;
+    # the interface is intentionally provider-shaped for future adapters.
+    asset_provider: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_ASSET_PROVIDER", "none").strip().lower()
+    )
+    pexels_api_key: str = field(default_factory=lambda: os.getenv("VIDEO_API_PEXELS_API_KEY", ""))
+    asset_max_download_mb: int = field(
+        default_factory=lambda: int(os.getenv("VIDEO_API_ASSET_MAX_DOWNLOAD_MB", "80"))
+    )
     # Word-level forced alignment of the TTS audio (Remotion engine only). Drives
     # narration-synced visual cues (props.cues): each item reveals when its words
     # are actually spoken instead of on an even grid. torchaudio MMS_FA; CPU is

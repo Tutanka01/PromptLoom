@@ -20,7 +20,7 @@ from video_api.pipeline.remotion_materialize import (
     fallback_custom_to_palette,
     validate_remotion_video_source,
 )
-from video_api.pipeline.remotion_scene_coder import _validate_static
+from video_api.pipeline.remotion_scene_coder import _select_scene_skills, _validate_static
 from video_api.schemas import RemotionBlueprint
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -194,7 +194,15 @@ def test_normalise_narration_field_aliases() -> None:
 def test_materialize_writes_contract(tmp_path) -> None:
     bp = fake_remotion_blueprint("Explain page tables", "cs", 240)
     video_dir = RemotionMaterializer(_settings()).materialize(bp, tmp_path)
-    for name in ["segments_en.json", "scenes_map.json", "build_video_json.py", "render_en.sh", "assemble_en.sh", "generate_voice_en.py"]:
+    for name in [
+        "segments_en.json",
+        "scenes_map.json",
+        "build_video_json.py",
+        "build_transition_sfx.py",
+        "render_en.sh",
+        "assemble_en.sh",
+        "generate_voice_en.py",
+    ]:
         assert (video_dir / name).exists(), name
     validate_remotion_video_source(video_dir)
     # render script targets the silent mp4 + uses remotion render
@@ -237,6 +245,30 @@ def test_build_video_json_floors_missing_duration(tmp_path) -> None:
     subprocess.run([sys.executable, "build_video_json.py"], cwd=video_dir, check=True, capture_output=True)
     video = json.loads((video_dir / "video.json").read_text())
     assert all(s["durationInFrames"] >= 30 for s in video["scenes"])  # MIN_FRAMES (== render_fps)
+
+
+def test_build_video_json_injects_alignment_and_editorial_profiles(tmp_path) -> None:
+    settings = Settings(
+        repo_root=REPO_ROOT,
+        fake_llm=True,
+        caption_mode="keywords",
+        transition_profile="editorial",
+    )
+    bp = fake_remotion_blueprint("x", "cs", 240)
+    video_dir = RemotionMaterializer(settings).materialize(bp, tmp_path)
+    smap = json.loads((video_dir / "scenes_map.json").read_text())
+    audio = video_dir / "audio" / "en"
+    audio.mkdir(parents=True, exist_ok=True)
+    (audio / "durations.json").write_text(json.dumps({s["key"]: 3.0 for s in smap["scenes"]}))
+    first = smap["scenes"][0]["key"]
+    (audio / "alignment.json").write_text(
+        json.dumps({first: {"words": [{"w": "kernel", "start": 0.1, "end": 0.4}]}})
+    )
+    subprocess.run([sys.executable, "build_video_json.py"], cwd=video_dir, check=True, capture_output=True)
+    video = json.loads((video_dir / "video.json").read_text())
+    assert video["captionMode"] == "keywords"
+    assert video["transitionProfile"] == "editorial"
+    assert video["scenes"][0]["props"]["alignedWords"][0]["w"] == "kernel"
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +329,18 @@ def test_scene_coder_requires_exact_export_name() -> None:
     code = 'export const WrongName: React.FC<any> = () => null;'
     with pytest.raises(ValueError):
         _validate_static(code, "Scene1_xEN")
+
+
+def test_custom_scene_skill_router_selects_domain_guidance() -> None:
+    class Scene:
+        title = "A page table walk"
+        visual_intent = "Move an address through memory mappings and show the terminal command"
+        narration = "The kernel translates each virtual address before accessing memory."
+
+    selected = _select_scene_skills(Scene())
+    assert selected[0] == "narrative_motion"
+    assert "memory_model" in selected
+    assert "code_terminal" in selected
 
 
 # --------------------------------------------------------------------------- #

@@ -21,10 +21,12 @@ FastAPI api
           v
       Celery worker
           |
+          +--> Tavily ou Exa (recherche optionnelle)
+          +--> Pexels (acquisition optionnelle, avant rendu)
           +--> endpoint LLM compatible OpenAI
           +--> fichiers de production dans /data/jobs
           +--> Chatterbox
-          +--> Manim
+          +--> Manim ou Remotion
           +--> ffmpeg / ffprobe / freezedetect
 ```
 
@@ -47,10 +49,13 @@ Le service `api` ne rend pas la video. Il reste leger et rapide.
 Role :
 
 - appeler le LLM ;
+- constituer un dossier de recherche source ;
 - valider le blueprint ;
+- resoudre les medias et leur provenance ;
+- appliquer le gate de mouvement ;
 - materialiser les fichiers de production ;
 - generer la voix ;
-- lancer Manim ;
+- lancer Manim ou Remotion ;
 - assembler avec ffmpeg ;
 - verifier la video ;
 - tenter une auto-reparation si une etape echoue.
@@ -86,8 +91,11 @@ Etats principaux :
 
 ```text
 queued
+researching
 planning
-manim_generation
+asset_acquisition
+motion_preflight
+generating_sources
 static_validation
 voice_generation
 render_low_quality
@@ -119,7 +127,10 @@ Le worker fait avancer le job et persiste chaque transition dans Postgres.
 
 ### 2. Generation LLM
 
-Le worker demande un `VideoBlueprint` a un endpoint compatible OpenAI.
+Quand la requete active la recherche, le worker constitue d'abord
+`research.json` via Tavily ou Exa. Le LLM recoit uniquement des extraits bornes
+avec des identifiants stables. Le worker demande ensuite un `VideoBlueprint` a
+un endpoint compatible OpenAI.
 
 Le blueprint contient :
 
@@ -136,6 +147,12 @@ Le blueprint contient :
 - duree et primitive visuelle par scene ;
 - narration par scene ;
 - beats visuels par scene.
+- references `source_ids` par scene.
+
+Les options resolues (`technical`, `editorial`, `cinematic`) sont persistees
+dans `video_jobs.production_config`. Un retry ou une video secondaire de batch
+rejoue donc exactement le meme contrat. Les secondaires reutilisent la
+recherche et le blueprint maitre de la primaire.
 
 ### 3. Validation
 
@@ -167,6 +184,27 @@ data/jobs/<job_id>/
     render_en.sh
     assemble_en.sh
 ```
+
+Pour un job avance, le workspace contient aussi :
+
+```text
+research.json
+proposal.json
+scene_plan.json
+asset_manifest.json
+motion_plan_report.json
+```
+
+Les medias Remotion sont telecharges avant le rendu depuis un provider
+allow-list, controles, hashes, puis servis depuis le dossier local du job. Une
+acquisition impossible devient une scene diagrammatique deterministe.
+
+Avant la materialisation, le gate anti-diaporama mesure la couverture de
+mouvement, la repetition, la densite textuelle, les beats et les sources. En
+mode avance, son echec declenche une reparation puis bloque le job si necessaire.
+Les plans cinematiques varies et totalement synchronises peuvent continuer sans
+media quand aucun visuel reel n'est semantiquement justifie ; ce cas est trace
+comme avertissement et reste soumis au gate `freezedetect` apres rendu.
 
 Le code Manim est ensuite ecrit par scene par l'etape `scene_coder` (LLM guide par
 `manim-skill.md`), qui produit du vrai Manim (LaTeX, axes, code, diagrammes). Chaque scene

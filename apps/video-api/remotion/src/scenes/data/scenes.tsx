@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Img, Loop, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { AmbientBackground } from "../../catalog/AmbientBackground";
 import { MathFormula } from "../../catalog/MathFormula";
 import { CodeBlock } from "../../catalog/CodeBlock";
@@ -502,5 +502,73 @@ export const CounterScene: React.FC<
         ) : null}
       </div>
     </Shell>
+  );
+};
+
+type MediaBase = Base & {
+  src: string;
+  credit?: string;
+  motion?: "ken-burns" | "pan-left" | "pan-right" | "push-in" | "static";
+};
+
+const mediaTransform = (p: number, motion: MediaBase["motion"]): string => {
+  if (motion === "static") return "scale(1.02)";
+  const zoom = interpolate(p, [0, 1], motion === "ken-burns" ? [1.04, 1.16] : [1.03, 1.10]);
+  const dx = motion === "pan-left" ? interpolate(p, [0, 1], [30, -30]) : motion === "pan-right" ? interpolate(p, [0, 1], [-30, 30]) : 0;
+  return `translateX(${dx}px) scale(${zoom})`;
+};
+
+const MediaChrome: React.FC<MediaBase & {children: React.ReactNode}> = ({dur, title, caption, credit, accent, children}) => {
+  const {p} = useP(dur);
+  return (
+    <AbsoluteFill style={{backgroundColor: colors.bg, overflow: "hidden"}}>
+      {children}
+      <AbsoluteFill style={{background: "linear-gradient(180deg, rgba(5,8,13,.74) 0%, rgba(5,8,13,.06) 36%, rgba(5,8,13,.18) 62%, rgba(5,8,13,.86) 100%)"}} />
+      {title ? <TitleBar label={title} opacity={appear(p, 0.02, 0.1)} /> : null}
+      {caption ? <Caption x={0} y={-2.75} label={caption} color={colors.text} size={31} opacity={appear(p, 0.56, 0.68)} width={11.5} /> : null}
+      {credit ? (
+        <div style={{position: "absolute", right: 42, bottom: 28, color: "rgba(236,241,248,.62)", fontFamily: fonts.sans, fontSize: 18}}>
+          {credit}
+        </div>
+      ) : null}
+      <div style={{position: "absolute", left: 0, bottom: 0, width: `${interpolate(p, [0, 1], [0, 100])}%`, height: 4, background: accent ?? colors.user, opacity: .72}} />
+    </AbsoluteFill>
+  );
+};
+
+/** Licensed still with deterministic editorial camera movement. */
+export const ImageScene: React.FC<MediaBase> = ({dur, src, motion = "ken-burns", ...rest}) => {
+  const {p} = useP(dur);
+  return (
+    <MediaChrome dur={dur} src={src} motion={motion} {...rest}>
+      <Img
+        src={staticFile(src)}
+        style={{width: "100%", height: "100%", objectFit: "cover", transform: mediaTransform(p, motion), filter: "saturate(.9) contrast(1.05)"}}
+      />
+    </MediaChrome>
+  );
+};
+
+/** Real B-roll, looped deterministically when shorter than the narration. */
+export const FootageScene: React.FC<MediaBase & {mediaDurationSeconds?: number}> = ({
+  dur,
+  src,
+  motion = "push-in",
+  mediaDurationSeconds = 8,
+  ...rest
+}) => {
+  const {p} = useP(dur);
+  const {fps} = useVideoConfig();
+  const loopFrames = Math.max(1, Math.round(mediaDurationSeconds * fps));
+  return (
+    <MediaChrome dur={dur} src={src} motion={motion} {...rest}>
+      <Loop durationInFrames={loopFrames}>
+        <OffthreadVideo
+          src={staticFile(src)}
+          muted
+          style={{width: "100%", height: "100%", objectFit: "cover", transform: mediaTransform(p, motion), filter: "saturate(.88) contrast(1.06)"}}
+        />
+      </Loop>
+    </MediaChrome>
   );
 };

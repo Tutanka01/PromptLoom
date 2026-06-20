@@ -128,6 +128,15 @@ _COMPONENT_ALIASES = {
     "metric": "CounterScene",
     "number": "CounterScene",
     "stat": "CounterScene",
+    "image": "ImageScene",
+    "imagescene": "ImageScene",
+    "photo": "ImageScene",
+    "still": "ImageScene",
+    "footage": "FootageScene",
+    "footagescene": "FootageScene",
+    "video": "FootageScene",
+    "broll": "FootageScene",
+    "b_roll": "FootageScene",
     "custom": "Custom",
     "freeform": "Custom",
     "free": "Custom",
@@ -153,6 +162,8 @@ _PALETTE_LINE = (
     "- FlowScene:    { title: str, stages: [ {label: str, sub?: str, icon?: icon_name}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
     "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
     "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
+    "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
+    "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
     "      A separate expert step writes bespoke React/Remotion code for it. Prefer palette components."
 )
@@ -178,6 +189,7 @@ Return ONLY one JSON object (no prose, no markdown fences) with this shape:
        "narration": "full spoken sentences for this scene (this is the spine)",
        "duration_seconds": <int>, "component": "<ComponentName>",
        "props": {{ ... }},
+       "source_ids": ["src_01"],
        "beats": [ {{ "anchor": "3-8 word phrase copied VERBATIM from this scene's narration" }} ],
        "visual_intent": "concrete visual plan (required for Custom)" }}
   ]
@@ -188,7 +200,8 @@ Components and their props:
 
 Rules:
 - The narration is the spine; each scene's visual MUST match what is spoken at that moment.
-- Open with a TitleScene and end with a BulletScene recap.
+- Open with a visually active hook and end with a concise BulletScene recap. A short TitleScene is
+  allowed, but a ComparisonScene, exact ImageScene/FootageScene, or Custom hook is often stronger.
 - Scene keys are ordered Scene1_..., Scene2_..., each ending in EN (e.g. Scene3_LimitEN).
 - Choose the component that fits the sentence: equations->FormulaScene, a function/data->PlotScene,
   code->CodeScene, relationships/systems->DiagramScene, lists/definitions->BulletScene,
@@ -205,6 +218,15 @@ Rules:
   each item exactly when its anchor is spoken. For ComparisonScene, order anchors as all left items
   then all right items. Scenes with a single visual (TitleScene, CounterScene) may omit beats.
 - Use Custom rarely, only when nothing in the palette fits.
+- Use ImageScene/FootageScene only when production_context.visuals.allow_stock is true and a real-world
+  image adds meaning. Never use generic server-room B-roll while explaining an invisible mechanism.
+- CINEMATIC MODE: build a motion-led sequence, not a slide deck. Keep BulletScene for the final recap
+  only whenever the material can be visualised structurally. Prefer FlowScene, DiagramScene,
+  TimelineScene, PlotScene, MemoryScene, ComparisonScene, or a justified Custom scene. If stock media
+  is allowed and the topic has an observable real-world anchor, include 1-2 semantically exact media
+  scenes with precise asset_query values. The narration of a media scene must explicitly discuss what
+  the image proves or grounds. Do not add decorative media just to satisfy a quota.
+- When research_context is present, attach only its valid IDs as scene.source_ids. Never invent IDs.
 Palette hints: user=#3A86FF, gold=#FFBE0B, success=#06D6A0, purple=#9B5DE5, danger=#FB5607."""
 
 
@@ -489,6 +511,19 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
                 props[key] = str(props[key])[:40]
         if props.get("decimals") is not None:
             props["decimals"] = max(0, min(3, int(_to_float(props.get("decimals"), 0))))
+    elif component in {"ImageScene", "FootageScene"}:
+        query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]
+        if not query:
+            degrade(f"{component} without asset_query")
+            query = str(title or "educational technology")
+        props["asset_query"] = query
+        props.pop("query", None)
+        # Direct URLs from an LLM are untrusted and have unknown rights. The
+        # worker's allow-listed asset provider is the only code allowed to set src.
+        props.pop("src", None)
+        motion = str(props.get("motion") or ("ken-burns" if component == "ImageScene" else "push-in"))
+        allowed = {"ken-burns", "pan-left", "pan-right", "push-in", "static"}
+        props["motion"] = motion if motion in allowed else "push-in"
     return props
 
 
@@ -551,6 +586,14 @@ def normalize_remotion_blueprint(data: Any, target_duration_seconds: int) -> dic
         scene["visual_intent"] = scene.get("visual_intent") or scene.get("visual") or scene.get("visual_description") or ""
         scene["props"] = _normalise_props(scene, degradations)
         scene["beats"] = _norm_beats(scene.get("beats") or scene.get("anchors") or scene.get("cues"))
+        raw_source_ids = scene.get("source_ids") or scene.get("sources") or []
+        if isinstance(raw_source_ids, str):
+            raw_source_ids = [raw_source_ids]
+        scene["source_ids"] = [
+            str(source_id)[:40]
+            for source_id in raw_source_ids
+            if isinstance(source_id, (str, int)) and str(source_id).strip()
+        ][:12]
         transition = str(scene.get("transition") or "auto").strip().lower()
         scene["transition"] = transition if transition in _TRANSITIONS else "auto"
         scene.pop("name", None)
@@ -584,7 +627,8 @@ Return ONLY one JSON object (no prose, no fences):
     {{ "key": "Scene1_HookEN", "title": "short scene title",
        "component": "<ComponentName>", "duration_seconds": <int>,
        "goal": "the ONE idea this scene must make click (1-2 sentences)",
-       "visual_idea": "concrete, topic-specific visual plan (1-2 sentences)" }}
+       "visual_idea": "concrete, topic-specific visual plan (1-2 sentences)",
+       "source_ids": ["src_01"] }}
   ]
 }}
 
@@ -592,14 +636,21 @@ Available components (props come later; pick by what the scene shows):
 {_PALETTE_LINE}
 
 Rules:
-- Plan the explanation from intuition, to mechanism, to transfer or recap. Scene 1 hooks with a
-  question or surprising fact; the last scene is a BulletScene recap of the key takeaways.
-- Open with a TitleScene. Scene keys ordered Scene1_...EN, Scene2_...EN.
+- Plan the explanation from intuition, to mechanism, to transfer or recap. Scene 1 is a visually
+  active hook built around a question, surprising fact, exact real-world image, or concrete contrast;
+  the last scene is a BulletScene recap of the key takeaways.
+- A short TitleScene is allowed but not mandatory. Scene keys ordered Scene1_...EN, Scene2_...EN.
 - AT MOST 2 BulletScene in the whole video (recap included). Every idea with structure gets a
   structural component: contrast->ComparisonScene, layers->LayeredSystemScene, ordered process->
   TimelineScene or FlowScene, function/data->PlotScene, equations->FormulaScene, code->CodeScene,
   command->TerminalScene, memory->MemoryScene, relationships->DiagramScene.
 - Each scene teaches exactly ONE idea; goals must build on each other in order.
+- If research_context is supplied, add `source_ids` to each outline scene using only IDs present there.
+- Respect production_context: use ImageScene/FootageScene only when stock media is allowed and semantically exact.
+- When production_context.mode is "cinematic", keep BulletScene for the final recap only whenever a
+  structural visual is possible. Use a varied motion-led mix. If stock media is allowed and an
+  observable real-world anchor exists, plan 1-2 precise ImageScene/FootageScene scenes whose media is
+  discussed by the narration; otherwise prefer bespoke or structural motion, never generic B-roll.
 - Respect the duration_policy scene count and per-scene durations handed in the user message."""
 
 REMOTION_SCENE_PROMPT = f"""You write ONE scene of a STEM explainer video, as STRICT JSON.
@@ -629,6 +680,8 @@ Rules:
 - ICONS: where the component supports them (BulletScene icons, DiagramScene nodes[].icon,
   FlowScene stages[].icon), pick a fitting name from this list (anything else is dropped):
   {", ".join(sorted(ICON_NAMES))}
+- For ImageScene/FootageScene provide a precise `asset_query`, never `src` or a URL. The worker resolves
+  and licenses the media before rendering.
 
 Example output (component=FlowScene, goal="trace the path of one read() call"):
 {{
@@ -680,6 +733,8 @@ def _items_count(component: str, props: dict[str, Any]) -> int | None:
             elif isinstance(value, (list, tuple)):
                 total += len(value[:5])
         return total
+    if component in {"ImageScene", "FootageScene"}:
+        return None
     return None
 
 
@@ -699,6 +754,8 @@ def validate_scene_payload(scene: dict[str, Any]) -> list[str]:
 
     if len(narration.split()) < 15:
         errors.append("narration is too short — write full spoken sentences")
+    if component in {"ImageScene", "FootageScene"} and not str(props.get("asset_query") or "").strip():
+        errors.append(f"{component} requires a concrete props.asset_query")
 
     # Density: more items than the component can show kills comprehension (and
     # the renderer would silently slice them off anyway).
@@ -811,6 +868,52 @@ def _props_for(component: str, title: str, narration: str, beats: list[Any]) -> 
             ],
             "caption": "How the pieces connect",
         }
+    if component == "FlowScene":
+        return {
+            "title": title,
+            "stages": [
+                {"label": label, "sub": f"Step {index + 1}"}
+                for index, label in enumerate(labels[:4])
+            ],
+            "caption": "The active idea moves with the explanation",
+        }
+    if component == "TimelineScene":
+        return {
+            "title": title,
+            "steps": [
+                {"label": label, "sub": f"Phase {index + 1}"}
+                for index, label in enumerate(labels[:4])
+            ],
+            "caption": "A narration-synchronised sequence",
+        }
+    if component == "BarChartScene":
+        return {
+            "title": title,
+            "bars": [
+                {"label": label[:24], "value": (index + 1) * 24}
+                for index, label in enumerate(labels[:4])
+            ],
+            "caption": "A deterministic animated comparison",
+        }
+    if component == "LayeredSystemScene":
+        return {
+            "title": title,
+            "layers": [
+                {"label": label, "sub": f"Layer {index + 1}"}
+                for index, label in enumerate(labels[:4])
+            ],
+            "caption": "The system is assembled layer by layer",
+        }
+    if component == "MemoryScene":
+        return {
+            "title": title,
+            "cells": [
+                {"label": f"0x{index * 16:02X}", "sub": label[:28], "highlight": index == 1}
+                for index, label in enumerate(labels[:4])
+            ],
+            "cols": 4,
+            "caption": "State changes remain visible and concrete",
+        }
     return {"title": title, "bullets": labels, "caption": ""}
 
 
@@ -818,6 +921,7 @@ def fake_remotion_blueprint(
     prompt: str,
     theme: str | None = None,
     target_duration_seconds: int | None = None,
+    production_context: dict[str, Any] | None = None,
 ) -> RemotionBlueprint:
     """Build a deterministic, gate-passing Remotion blueprint.
 
@@ -830,8 +934,23 @@ def fake_remotion_blueprint(
     base = fake_blueprint(prompt, theme, target_duration_seconds)
     scenes: list[dict[str, Any]] = []
     last_index = len(base.scenes) - 1
+    mode = str((production_context or {}).get("mode") or "technical")
+    motion_first_components = [
+        "TitleScene",
+        "FlowScene",
+        "DiagramScene",
+        "PlotScene",
+        "TimelineScene",
+        "BarChartScene",
+        "LayeredSystemScene",
+        "MemoryScene",
+    ]
     for index, scene in enumerate(base.scenes):
-        component = _component_for_layout(scene.layout, index == 0, index == last_index)
+        component = (
+            motion_first_components[index % len(motion_first_components)]
+            if mode in {"editorial", "cinematic"}
+            else _component_for_layout(scene.layout, index == 0, index == last_index)
+        )
         # Verbatim leading words of each sentence double as beat anchors so the
         # fake path exercises the full align -> cues plumbing end to end.
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", scene.text) if s.strip()]

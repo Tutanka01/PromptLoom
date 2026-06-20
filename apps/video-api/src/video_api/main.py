@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -66,6 +67,10 @@ app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 def _status_response(job: VideoJob) -> VideoStatusResponse:
     download_url = f"/v1/videos/{job.id}/download" if job.status == "completed" else None
     report_url = f"/v1/videos/{job.id}/report" if job.report_path else None
+    try:
+        production = json.loads(job.production_config or "{}")
+    except (TypeError, ValueError):
+        production = {}
     return VideoStatusResponse(
         job_id=job.id,
         status=job.status,
@@ -77,6 +82,8 @@ def _status_response(job: VideoJob) -> VideoStatusResponse:
         download_url=download_url,
         report_url=report_url,
         quality_profile=job.quality_profile,
+        render_engine=production.get("render_engine"),
+        production_mode=production.get("mode"),
     )
 
 
@@ -129,6 +136,7 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
         len(request.prompt),
         artifact_dir,
     )
+    production_config = request.production_options().model_dump()
     job = VideoJob(
         id=job_id,
         prompt=request.prompt,
@@ -136,6 +144,7 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
         language=languages[0],
         target_duration_seconds=request.target_duration_seconds,
         quality_profile=request.quality_profile,
+        production_config=json.dumps(production_config),
         callback_url=request.callback_url,
         status="queued",
         progress=0,
@@ -174,6 +183,7 @@ def _create_batch(
         is_primary = index == 0
         if is_primary:
             primary_id = job_id
+        production_config = request.production_options().model_dump()
         job = VideoJob(
             id=job_id,
             prompt=request.prompt,
@@ -183,6 +193,7 @@ def _create_batch(
             is_primary=is_primary,
             target_duration_seconds=request.target_duration_seconds,
             quality_profile=request.quality_profile,
+            production_config=json.dumps(production_config),
             callback_url=request.callback_url,
             status="queued",
             progress=0,

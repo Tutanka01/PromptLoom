@@ -20,7 +20,11 @@ apps/video-api/
     storage.py
     pipeline/
       llm.py
+      research.py
+      assets.py
+      editorial.py
       materialize.py
+      remotion_materialize.py
       validate.py
       commands.py
       verify.py
@@ -68,7 +72,24 @@ Il supporte :
 - modele configurable par `OPENAI_MODEL` ;
 - mode fake via `VIDEO_API_FAKE_LLM=1` ;
 - extraction JSON ;
-- reparation de blueprint invalide.
+- reparation de blueprint invalide ;
+- contexte de production et dossier de recherche bornes.
+
+### `pipeline/research.py`
+
+Adapters Tavily/Exa. Cette etape produit des sources normalisees et stables ;
+elle ne laisse jamais le LLM choisir une URL ou un endpoint.
+
+### `pipeline/assets.py`
+
+Resout les `asset_query` Remotion via Pexels, telecharge les medias dans le
+workspace, valide domaine/type/taille, calcule leur hash et produit un fallback
+deterministe en cas d'echec.
+
+### `pipeline/editorial.py`
+
+Ecrit `proposal.json` et `scene_plan.json`, puis applique les gates de promesse
+editoriale avant et apres rendu.
 
 ### `pipeline/materialize.py`
 
@@ -84,7 +105,9 @@ Il ecrit :
 - style ;
 - scripts `render_en.sh` et `assemble_en.sh`.
 
-Important : le code Manim est genere depuis un template deterministe. Le LLM ne fournit pas directement du Python arbitraire.
+Le blueprint reste du JSON valide. Le code par scene est produit par un scene
+coder encadre (Manim ou TSX Remotion), avec validation et fallback
+deterministe ; le LLM ne peut pas injecter de code arbitraire non controle.
 
 ### `pipeline/validate.py`
 
@@ -121,6 +144,8 @@ Orchestrateur principal.
 Il gere :
 
 - transitions d'etat ;
+- configuration de production persistee par job ;
+- recherche, assets et motion preflight ;
 - tentatives de reparation ;
 - ecriture des rapports ;
 - statut final.

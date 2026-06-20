@@ -30,6 +30,9 @@ class VideoJob(Base):
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     target_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     quality_profile: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Versioned JSON (stored as text for SQLite/Postgres portability) containing
+    # per-job render engine, research, asset, caption and delivery policy.
+    production_config: Mapped[str | None] = mapped_column(Text, nullable=True)
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)

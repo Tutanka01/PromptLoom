@@ -5,6 +5,14 @@ description: The proposable component palette for Remotion STEM scene generation
 
 # Remotion component catalog (STEM-general)
 
+`ImageScene` et `FootageScene` sont les deux composants editoriaux de media.
+Le blueprint fournit `asset_query`, jamais une URL. Le worker resout Pexels,
+injecte un `src` local avec credit/provenance, puis applique Ken Burns,
+panoramique, push-in ou boucle video. Une resolution impossible retombe sur
+`BulletScene`; ces composants ne doivent etre proposes que lorsque
+`production_context.visuals.allow_stock` est vrai et que le media montre
+exactement ce que dit la narration.
+
 Two layers, both for explainer videos on **any STEM subject** (math, physics,
 chemistry, biology, statistics, CS, engineering):
 

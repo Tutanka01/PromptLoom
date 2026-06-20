@@ -714,6 +714,8 @@ class LLMClient:
         theme: str | None,
         target_duration_seconds: int | None,
         language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> VideoBlueprint:
         effective_target = target_duration_seconds or self.settings.default_target_duration_seconds
         language = normalize_language(language)
@@ -751,6 +753,8 @@ class LLMClient:
             "generation_guidelines": _load_generation_guidelines(self.settings),
             "duration_policy": self._duration_policy(effective_target),
             "approved_visual_primitives": VISUAL_PRIMITIVES,
+            "production_context": production_context or {},
+            "research_context": research_context or {},
             "required_schema": {
                 "title": "string",
                 "theme": "kebab-case string",
@@ -770,6 +774,7 @@ class LLMClient:
                         "layout": "one approved visual primitive string",
                         "text": f"{target_language_name} narration for this scene",
                         "visual_intent": "concrete visual plan",
+                        "source_ids": ["IDs copied from research_context.sources"],
                         "beats": [
                             {
                                 "key": "short_identifier",
@@ -938,6 +943,8 @@ class LLMClient:
         theme: str | None,
         target_duration_seconds: int | None,
         language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> "RemotionBlueprint":
         """Generate a Remotion-engine blueprint (component palette + props)."""
         from video_api.pipeline import remotion_blueprint as rb
@@ -947,21 +954,40 @@ class LLMClient:
         target_language_name = language_name(language)
         if self.settings.fake_llm:
             logger.info("llm.fake_remotion_blueprint.start prompt_chars=%d theme=%s", len(prompt), theme)
-            return rb.fake_remotion_blueprint(prompt, theme, effective_target)
+            return rb.fake_remotion_blueprint(
+                prompt,
+                theme,
+                effective_target,
+                production_context=production_context,
+            )
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required unless VIDEO_API_FAKE_LLM=1")
         client = self._build_client()
         if self.settings.blueprint_two_pass:
             try:
                 return self._generate_remotion_two_pass(
-                    client, prompt, theme, effective_target, language, target_language_name
+                    client,
+                    prompt,
+                    theme,
+                    effective_target,
+                    language,
+                    target_language_name,
+                    production_context,
+                    research_context,
                 )
             except Exception as exc:
                 logger.warning(
                     "llm.remotion.two_pass.failed error=%s — falling back to single-pass", exc
                 )
         return self._generate_remotion_single_pass(
-            client, prompt, theme, effective_target, language, target_language_name
+            client,
+            prompt,
+            theme,
+            effective_target,
+            language,
+            target_language_name,
+            production_context,
+            research_context,
         )
 
     def _generate_remotion_single_pass(
@@ -972,6 +998,8 @@ class LLMClient:
         effective_target: int,
         language: str = "en",
         target_language_name: str = "English",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> "RemotionBlueprint":
         from video_api.pipeline import remotion_blueprint as rb
 
@@ -993,6 +1021,8 @@ class LLMClient:
             ),
             "target_duration_seconds": effective_target,
             "duration_policy": self._duration_policy(effective_target),
+            "production_context": production_context or {},
+            "research_context": research_context or {},
         }
         content = self._complete(
             client,
@@ -1009,7 +1039,14 @@ class LLMClient:
             return RemotionBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.remotion_blueprint.invalid errors=%s", exc)
-            return self.repair_remotion_blueprint(prompt, data, str(exc), language)
+            return self.repair_remotion_blueprint(
+                prompt,
+                data,
+                str(exc),
+                language,
+                production_context=production_context,
+                research_context=research_context,
+            )
 
     # ------------------------------------------------------------------ 2-pass
     def _generate_remotion_two_pass(
@@ -1020,6 +1057,8 @@ class LLMClient:
         effective_target: int,
         language: str = "en",
         target_language_name: str = "English",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> "RemotionBlueprint":
         """Outline pass (structure + pedagogy), then one focused call per scene.
 
@@ -1048,6 +1087,8 @@ class LLMClient:
             ),
             "target_duration_seconds": effective_target,
             "duration_policy": self._duration_policy(effective_target),
+            "production_context": production_context or {},
+            "research_context": research_context or {},
         }
         content = self._complete(
             client,
@@ -1084,6 +1125,8 @@ class LLMClient:
             degradations,
             language=language,
             target_language_name=target_language_name,
+            production_context=production_context,
+            research_context=research_context,
         )
 
         data: dict[str, Any] = {
@@ -1101,7 +1144,14 @@ class LLMClient:
             return RemotionBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.remotion.two_pass.invalid errors=%s", exc)
-            return self.repair_remotion_blueprint(prompt, data, str(exc), language)
+            return self.repair_remotion_blueprint(
+                prompt,
+                data,
+                str(exc),
+                language,
+                production_context=production_context,
+                research_context=research_context,
+            )
 
     def _write_remotion_scenes(
         self,
@@ -1115,6 +1165,8 @@ class LLMClient:
         previous_by_key: dict[str, dict] | None = None,
         language: str = "en",
         target_language_name: str = "English",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> list[dict]:
         """Write scenes in parallel (pass 2). With *only_keys*, rewrite just those
         scenes — used by the scene-level visual-review repair, where *feedback_by_key*
@@ -1136,6 +1188,8 @@ class LLMClient:
             "audience": outline.get("audience") or "",
             "style_notes": outline.get("style_notes") or "",
             "user_prompt": prompt,
+            "production_context": production_context or {},
+            "research_context": research_context or {},
         }
 
         def write_scene(item: tuple[int, dict]) -> dict:
@@ -1208,6 +1262,7 @@ class LLMClient:
                     "props": payload.get("props") if isinstance(payload.get("props"), dict) else {},
                     "beats": payload.get("beats") or [],
                     "visual_intent": str(sc.get("visual_idea") or "")[:600],
+                    "source_ids": list(sc.get("source_ids") or [])[:12],
                 }
                 errors = rb.validate_scene_payload(scene_dict)
                 words = len(scene_dict["narration"].split())
@@ -1239,6 +1294,7 @@ class LLMClient:
                 "props": {},
                 "beats": [],
                 "visual_intent": str(sc.get("visual_idea") or "")[:600],
+                "source_ids": list(sc.get("source_ids") or [])[:12],
             }
 
         targets = [
@@ -1311,7 +1367,13 @@ class LLMClient:
         return RemotionBlueprint.model_validate(data)
 
     def repair_remotion_blueprint(
-        self, prompt: str, previous: Any, error_report: str, language: str = "en"
+        self,
+        prompt: str,
+        previous: Any,
+        error_report: str,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> "RemotionBlueprint":
         from video_api.pipeline import remotion_blueprint as rb
 
@@ -1338,6 +1400,8 @@ class LLMClient:
                             "original_prompt": prompt,
                             "previous": previous,
                             "errors": error_report,
+                            "production_context": production_context or {},
+                            "research_context": research_context or {},
                             "output_language": normalize_language(language),
                             "output_language_name": language_name(language),
                             "language_rules": (
@@ -1350,14 +1414,24 @@ class LLMClient:
                                 "target_duration_seconds, subject_area, difficulty, audience, teaching_goal, "
                                 "learning_objectives, style_notes, scenes. Keys ordered Scene1_...EN. "
                                 "Each scene needs a valid component + props. If narration is too short, "
-                                "LENGTHEN the spoken 'narration' until it meets duration_policy."
+                                "LENGTHEN the spoken 'narration' until it meets duration_policy. Preserve "
+                                "scene keys, valid source_ids, teaching order, and already-valid narration "
+                                "unless fixing the reported error requires a change. When the error is a "
+                                "MotionQualityError, the returned component mix MUST be materially different "
+                                "and satisfy every blocking issue in its full motion report. Make the smallest "
+                                "semantically correct change: normally replace a non-recap BulletScene with a "
+                                "FlowScene, DiagramScene, TimelineScene, PlotScene, or other motion-led component. "
+                                "For cinematic mode, keep at most one BulletScene for the final recap. When stock "
+                                "media is allowed, add one or two ImageScene/FootageScene scenes only if a precise "
+                                "real-world image directly explains that narration; provide asset_query and never "
+                                "a URL. Never add generic B-roll merely to game the score."
                             ),
                         },
                         ensure_ascii=True,
                     ),
                 },
             ],
-            temperature=0.15,
+            temperature=0.2,
             json_mode=True,
         )
         logger.info("llm.remotion.repair.done model=%s response_chars=%d", self.settings.openai_model, len(content))

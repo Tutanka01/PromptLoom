@@ -32,11 +32,23 @@ class Engine(Protocol):
     output_fps: float
 
     def generate_blueprint(
-        self, prompt: str, theme: str | None, target: int | None, language: str = "en"
+        self,
+        prompt: str,
+        theme: str | None,
+        target: int | None,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> Any: ...
 
     def repair_blueprint(
-        self, prompt: str, previous: dict, hint: str, language: str = "en"
+        self,
+        prompt: str,
+        previous: dict,
+        hint: str,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> Any: ...
 
     def translate_blueprint(self, master: dict, language: str) -> Any: ...
@@ -63,12 +75,26 @@ class ManimEngine:
         self.scene_coder = SceneCoder(settings)
 
     def generate_blueprint(
-        self, prompt: str, theme: str | None, target: int | None, language: str = "en"
+        self,
+        prompt: str,
+        theme: str | None,
+        target: int | None,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> Any:
-        return self.llm.generate_blueprint(prompt, theme, target, language)
+        return self.llm.generate_blueprint(
+            prompt, theme, target, language, production_context, research_context
+        )
 
     def repair_blueprint(
-        self, prompt: str, previous: dict, hint: str, language: str = "en"
+        self,
+        prompt: str,
+        previous: dict,
+        hint: str,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> Any:
         return self.llm.repair_blueprint(prompt, previous, hint, language)
 
@@ -178,14 +204,35 @@ class RemotionEngine:
         self.output_fps = float(settings.render_fps)
 
     def generate_blueprint(
-        self, prompt: str, theme: str | None, target: int | None, language: str = "en"
+        self,
+        prompt: str,
+        theme: str | None,
+        target: int | None,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> Any:
-        return self.llm.generate_remotion_blueprint(prompt, theme, target, language)
+        return self.llm.generate_remotion_blueprint(
+            prompt, theme, target, language, production_context, research_context
+        )
 
     def repair_blueprint(
-        self, prompt: str, previous: dict, hint: str, language: str = "en"
+        self,
+        prompt: str,
+        previous: dict,
+        hint: str,
+        language: str = "en",
+        production_context: dict[str, Any] | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> Any:
-        return self.llm.repair_remotion_blueprint(prompt, previous, hint, language)
+        return self.llm.repair_remotion_blueprint(
+            prompt,
+            previous,
+            hint,
+            language,
+            production_context=production_context,
+            research_context=research_context,
+        )
 
     def translate_blueprint(self, master: dict, language: str) -> Any:
         return self.llm.translate_remotion_blueprint(master, language)

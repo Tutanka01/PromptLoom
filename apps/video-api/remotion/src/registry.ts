@@ -8,6 +8,8 @@ import {
   DiagramScene,
   FlowScene,
   FormulaScene,
+  FootageScene,
+  ImageScene,
   LayeredSystemScene,
   MemoryScene,
   PlotScene,
@@ -37,4 +39,6 @@ export const SCENE_COMPONENTS: Record<string, React.FC<Record<string, unknown>>>
   FlowScene: FlowScene as React.FC<Record<string, unknown>>,
   BarChartScene: BarChartScene as React.FC<Record<string, unknown>>,
   CounterScene: CounterScene as React.FC<Record<string, unknown>>,
+  ImageScene: ImageScene as React.FC<Record<string, unknown>>,
+  FootageScene: FootageScene as React.FC<Record<string, unknown>>,
 };

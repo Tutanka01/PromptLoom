@@ -69,6 +69,68 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_BATCH_LANGUAGES = 8
 
 
+ProductionMode = Literal["technical", "editorial", "cinematic"]
+CaptionMode = Literal["off", "keywords", "full"]
+AssetStrategy = Literal["diagrams", "hybrid", "motion_first"]
+
+
+class ResearchOptions(BaseModel):
+    """Per-job grounding policy.
+
+    ``enabled=None`` means "derive from production_mode": disabled for the
+    backwards-compatible technical mode, enabled for editorial/cinematic.
+    When enabled, ``required`` prevents a job from quietly pretending it was
+    researched when no server-side research provider is configured.
+    """
+
+    enabled: bool | None = None
+    required: bool = True
+    max_sources: int = Field(default=10, ge=3, le=20)
+
+
+class VisualOptions(BaseModel):
+    strategy: AssetStrategy = "diagrams"
+    allow_stock: bool | None = None
+    max_assets: int = Field(default=4, ge=0, le=12)
+
+
+class ProductionOptions(BaseModel):
+    """Versioned, persisted configuration resolved from a create request."""
+
+    version: Literal[1] = 1
+    mode: ProductionMode = "technical"
+    render_engine: Literal["manim", "remotion"] | None = None
+    research: ResearchOptions = Field(default_factory=ResearchOptions)
+    visuals: VisualOptions = Field(default_factory=VisualOptions)
+    captions: CaptionMode | None = None
+    delivery_promise: Literal[
+        "technical_explainer", "editorial_explainer", "motion_led_explainer"
+    ] | None = None
+
+    @model_validator(mode="after")
+    def resolve_defaults(self) -> "ProductionOptions":
+        advanced = self.mode in {"editorial", "cinematic"}
+        if self.render_engine is None and advanced:
+            self.render_engine = "remotion"
+        if self.mode == "cinematic" and self.render_engine == "manim":
+            raise ValueError("cinematic production mode requires render_engine='remotion'")
+        if self.research.enabled is None:
+            self.research.enabled = advanced
+        if self.captions is None:
+            self.captions = "keywords" if advanced else "off"
+        if self.delivery_promise is None:
+            self.delivery_promise = {
+                "technical": "technical_explainer",
+                "editorial": "editorial_explainer",
+                "cinematic": "motion_led_explainer",
+            }[self.mode]
+        if advanced and self.visuals.strategy == "diagrams":
+            self.visuals.strategy = "hybrid"
+        if self.visuals.allow_stock is None:
+            self.visuals.allow_stock = advanced
+        return self
+
+
 class VideoCreateRequest(BaseModel):
     prompt: str = Field(min_length=10, max_length=4000)
     theme: str | None = Field(default=None, max_length=80)
@@ -85,6 +147,13 @@ class VideoCreateRequest(BaseModel):
     # high     = standard + visual review forced on (needs VIDEO_API_VISION_MODEL).
     # "final" is the legacy name, kept as an alias of standard.
     quality_profile: Literal["draft", "standard", "high", "final"] = "standard"
+    # Per-job render/production controls. Existing callers omit these and keep
+    # the historical technical pipeline selected by server configuration.
+    render_engine: Literal["manim", "remotion"] | None = None
+    production_mode: ProductionMode = "technical"
+    research: ResearchOptions = Field(default_factory=ResearchOptions)
+    visuals: VisualOptions = Field(default_factory=VisualOptions)
+    captions: CaptionMode | None = None
     callback_url: str | None = None
 
     @field_validator("language")
@@ -106,6 +175,14 @@ class VideoCreateRequest(BaseModel):
             return None
         return normalized
 
+    @model_validator(mode="after")
+    def validate_production_controls(self) -> "VideoCreateRequest":
+        # Validate cross-field constraints at the HTTP schema boundary. Keeping
+        # this in production_options() alone would turn an invalid combination
+        # such as cinematic+Manim into an endpoint 500 instead of a clean 422.
+        self.production_options()
+        return self
+
     def resolved_languages(self) -> list[str]:
         """Ordered, de-duplicated languages to produce. The primary language is
         always first. Falls back to a single-element list built from `language`."""
@@ -117,6 +194,15 @@ class VideoCreateRequest(BaseModel):
         if self.languages is None and self.language not in langs:
             langs.insert(0, self.language)
         return langs
+
+    def production_options(self) -> ProductionOptions:
+        return ProductionOptions(
+            mode=self.production_mode,
+            render_engine=self.render_engine,
+            research=self.research,
+            visuals=self.visuals,
+            captions=self.captions,
+        )
 
 
 class BatchJobRef(BaseModel):
@@ -141,6 +227,8 @@ class VideoStatusResponse(BaseModel):
     language: str | None = None
     batch_id: str | None = None
     quality_profile: str | None = None
+    render_engine: str | None = None
+    production_mode: str | None = None
     progress: int
     current_step: str | None = None
     error_message: str | None = None
@@ -213,6 +301,7 @@ class SceneSpec(BaseModel):
     layout: SceneLayout = "concept_map"
     visual_intent: str = Field(min_length=10, max_length=500)
     beats: list[BeatSpec] = Field(min_length=3, max_length=8)
+    source_ids: list[str] = Field(default_factory=list, max_length=12)
 
     @field_validator("key")
     @classmethod
@@ -351,6 +440,8 @@ REMOTION_PALETTE = (
     "FlowScene",
     "BarChartScene",
     "CounterScene",
+    "ImageScene",
+    "FootageScene",
 )
 
 RemotionComponent = Literal[
@@ -368,6 +459,8 @@ RemotionComponent = Literal[
     "FlowScene",
     "BarChartScene",
     "CounterScene",
+    "ImageScene",
+    "FootageScene",
     "Custom",
 ]
 
@@ -405,6 +498,9 @@ class RemotionScene(BaseModel):
     # Concrete visual plan; only consumed when component == "Custom" (drives the
     # Remotion scene-coder). Harmless for palette scenes.
     visual_intent: str = Field(default="", max_length=600)
+    # Stable IDs from research.json. They are provenance metadata, not visible
+    # URLs, and survive translation/repair unchanged.
+    source_ids: list[str] = Field(default_factory=list, max_length=12)
 
     @property
     def text(self) -> str:

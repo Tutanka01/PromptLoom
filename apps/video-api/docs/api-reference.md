@@ -58,6 +58,11 @@ curl -X POST http://localhost:8080/v1/videos \
   "language": "it",
   "target_duration_seconds": 240,
   "quality_profile": "standard",
+  "render_engine": "remotion",
+  "production_mode": "cinematic",
+  "research": {"enabled": true, "required": true, "max_sources": 10},
+  "visuals": {"strategy": "hybrid", "allow_stock": true, "max_assets": 4},
+  "captions": "keywords",
   "callback_url": null
 }
 ```
@@ -100,6 +105,21 @@ Champs :
   `high` = `standard` + revue visuelle forcee si `VIDEO_API_VISION_MODEL` est defini
   + controle de gel fatal.
   `final` = ancien nom, alias de `standard`.
+- `render_engine` optionnel : `manim` ou `remotion`. Sans valeur, le mode
+  `technical` conserve le moteur configure sur le serveur ; `editorial` et
+  `cinematic` choisissent Remotion. `cinematic` refuse explicitement Manim.
+- `production_mode` optionnel : `technical` (compatibilite historique),
+  `editorial` ou `cinematic`. Les deux modes avances activent par defaut la
+  recherche, les captions par mots-cles, les ponts sonores et le gate
+  anti-diaporama. Le mode cinematique rend Remotion en 60 fps.
+- `research` controle l'etape de recherche : `enabled`, `required` et
+  `max_sources` (3 a 20). Les credentials et endpoints restent exclusivement
+  cote serveur. En mode avance, `enabled` et `required` valent `true` par defaut.
+- `visuals.strategy` vaut `diagrams`, `hybrid` ou `motion_first` ;
+  `allow_stock` autorise les requetes de medias et `max_assets` (0 a 12) borne
+  leur nombre. Une acquisition impossible produit un fallback diagrammatique.
+- `captions` vaut `off`, `keywords` ou `full`. `keywords` utilise les mots
+  alignes sur la voix autour des beats narratifs.
 - `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
   (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
   dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
@@ -210,6 +230,8 @@ Reponse typique :
   "status": "render_final",
   "progress": 78,
   "current_step": "render_final",
+  "render_engine": "remotion",
+  "production_mode": "cinematic",
   "error_message": null,
   "download_url": null,
   "report_url": null
@@ -289,6 +311,11 @@ Le rapport peut contenir :
 - stream audio ;
 - resume `freezedetect` ;
 - chemins de snapshots.
+- configuration `production`, resume `research`, `motion_plan` et resultat du
+  gate final `delivery`.
+
+Les artefacts avances inspectables incluent `research.json`, `proposal.json`,
+`scene_plan.json`, `asset_manifest.json` et `motion_plan_report.json`.
 
 ## Polling recommande cote client
 

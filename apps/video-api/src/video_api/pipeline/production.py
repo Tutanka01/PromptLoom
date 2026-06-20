@@ -23,11 +23,13 @@ from video_api.db import SessionLocal
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.engine import make_engine
+from video_api.pipeline.editorial import MotionQualityError, write_editorial_artifacts
 from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
 from video_api.pipeline.voice import voice_command_for_settings
 from video_api.schemas import VisualReviewResult
+from video_api.schemas import ProductionOptions
 from video_api.storage import job_root
 
 
@@ -55,6 +57,7 @@ class VideoPipeline:
         self.engine = make_engine(self.settings, self.llm)
         self.visual_reviewer = VisualReviewer(self.settings)
         self.quality_profile = "standard"
+        self.production_options = ProductionOptions()
         # (step, monotonic_seconds) marks recorded by _update; turned into the
         # per-step timing table of report.json at completion.
         self._step_marks: list[tuple[str, float]] = []
@@ -71,6 +74,37 @@ class VideoPipeline:
             self.llm = LLMClient(adjusted)
             self.engine = make_engine(adjusted, self.llm)
             self.visual_reviewer = VisualReviewer(adjusted)
+
+    def _apply_production_config(self, raw: str | None) -> None:
+        """Resolve the persisted per-job configuration into one Settings
+        snapshot before selecting the render engine."""
+        if raw:
+            try:
+                options = ProductionOptions.model_validate_json(raw)
+            except Exception as exc:
+                raise RuntimeError(f"invalid persisted production_config: {exc}") from exc
+        else:
+            options = ProductionOptions()
+        self.production_options = options
+        engine = options.render_engine or self.settings.render_engine
+        transition_profile = {
+            "technical": "minimal",
+            "editorial": "editorial",
+            "cinematic": "cinematic",
+        }[options.mode]
+        render_fps = 60 if options.mode == "cinematic" and engine == "remotion" else self.settings.render_fps
+        self.settings = dataclasses.replace(
+            self.settings,
+            render_engine=engine,
+            production_mode=options.mode,
+            caption_mode=options.captions or "off",
+            transition_profile=transition_profile,
+            delivery_promise=options.delivery_promise or "technical_explainer",
+            render_fps=render_fps,
+        )
+        self.llm = LLMClient(self.settings)
+        self.engine = make_engine(self.settings, self.llm)
+        self.visual_reviewer = VisualReviewer(self.settings)
 
     def _update(
         self,
@@ -142,6 +176,39 @@ class VideoPipeline:
             )
         return json.loads(master_path.read_text(encoding="utf-8"))
 
+    def _load_master_research(self, session: Session, job: VideoJob) -> dict | None:
+        if not job.batch_id or job.is_primary:
+            return None
+        primary = session.execute(
+            select(VideoJob).where(
+                VideoJob.batch_id == job.batch_id,
+                VideoJob.is_primary.is_(True),
+            )
+        ).scalar_one_or_none()
+        if primary is None:
+            return None
+        path = job_root(self.settings.jobs_root, primary.id) / "research.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+    def _prepare_research(self, session: Session, job: VideoJob, workspace: Path) -> Any | None:
+        from video_api.pipeline.research import ResearchDossier, Researcher
+
+        options = self.production_options.research
+        if not options.enabled:
+            return None
+        master = self._load_master_research(session, job)
+        if master is not None:
+            dossier = ResearchDossier.model_validate(master)
+        else:
+            self._update(session, job, "planning", 3, "researching")
+            dossier = Researcher(self.settings).research(
+                job.prompt,
+                max_sources=options.max_sources,
+                required=options.required,
+            )
+        (workspace / "research.json").write_text(dossier.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        return dossier
+
     def _notify_terminal(self, session: Session, job: VideoJob) -> None:
         """Best-effort terminal webhook; never raises into the pipeline."""
         try:
@@ -153,12 +220,17 @@ class VideoPipeline:
             logger.exception("job.webhook.error job_id=%s", job.id)
 
     def _assemble_env(self) -> dict[str, str] | None:
-        if not self.settings.music_file:
-            return None
-        return {
-            "MUSIC_FILE": self.settings.music_file,
-            "MUSIC_DB": f"{self.settings.music_gain_db:g}",
-        }
+        env: dict[str, str] = {}
+        if self.settings.music_file:
+            env.update(
+                {
+                    "MUSIC_FILE": self.settings.music_file,
+                    "MUSIC_DB": f"{self.settings.music_gain_db:g}",
+                }
+            )
+        if self.production_options.mode in {"editorial", "cinematic"}:
+            env["TRANSITION_SFX"] = "1"
+        return env or None
 
     def run(self, job_id: str) -> str:
         with SessionLocal() as session:
@@ -166,6 +238,7 @@ class VideoPipeline:
             if job is None:
                 raise RuntimeError(f"job not found: {job_id}")
             self._apply_profile(getattr(job, "quality_profile", None))
+            self._apply_production_config(getattr(job, "production_config", None))
             self.settings = dataclasses.replace(self.settings, voice_language=job.language or "en")
             self.llm = LLMClient(self.settings)
             self.engine = make_engine(self.settings, self.llm)
@@ -184,7 +257,8 @@ class VideoPipeline:
             )
 
             try:
-                self._run_with_repairs(session, job, workspace, runner, reports_dir)
+                research = self._prepare_research(session, job, workspace)
+                self._run_with_repairs(session, job, workspace, runner, reports_dir, research)
                 self._notify_terminal(session, job)
                 return job.status
             except JobCancelled:
@@ -197,7 +271,10 @@ class VideoPipeline:
                     failure_status = "failed_visual_review"
                 elif "verify" in current_step:
                     failure_status = "failed_quality"
-                elif current_step in {"planning", "materializing_sources", "static_validation"} or current_step.startswith("repairing"):
+                elif current_step in {
+                    "researching", "planning", "asset_acquisition", "motion_preflight",
+                    "materializing_sources", "static_validation",
+                } or current_step.startswith("repairing"):
                     failure_status = "failed_generation"
                 else:
                     failure_status = "failed_render"
@@ -233,6 +310,7 @@ class VideoPipeline:
         workspace: Path,
         runner: CommandRunner,
         reports_dir: Path,
+        research: Any | None = None,
     ) -> None:
         last_error: Exception | None = None
         blueprint_data: dict | None = None
@@ -265,6 +343,8 @@ class VideoPipeline:
                             job.theme,
                             job.target_duration_seconds,
                             job.language,
+                            self.production_options.model_dump(),
+                            research.prompt_context() if research is not None else None,
                         )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
@@ -288,6 +368,8 @@ class VideoPipeline:
                                     repair_exc,
                                 )
                                 blueprint = None
+                    elif isinstance(last_error, MotionQualityError):
+                        repair_hint = last_error.repair_hint()
                     else:
                         repair_hint = f"{type(last_error).__name__}: {last_error}"
                     if blueprint is None:
@@ -296,8 +378,57 @@ class VideoPipeline:
                             blueprint_data or {},
                             repair_hint,
                             job.language,
+                            self.production_options.model_dump(),
+                            research.prompt_context() if research is not None else None,
                         )
+                # Never allow an LLM to invent provenance identifiers. Fake
+                # mode attaches its deterministic fixture so advanced smoke
+                # tests exercise the complete sourced path.
+                valid_source_ids = {source.id for source in getattr(research, "sources", [])}
+                for scene in blueprint.scenes:
+                    current = list(getattr(scene, "source_ids", []) or [])
+                    filtered = [source_id for source_id in current if source_id in valid_source_ids]
+                    if self.settings.fake_llm and valid_source_ids and not filtered:
+                        filtered = [sorted(valid_source_ids)[0]]
+                    if hasattr(scene, "source_ids"):
+                        scene.source_ids = filtered
+
+                asset_manifest = None
+                if self.engine.name == "remotion":
+                    from video_api.pipeline.assets import AssetResolver
+
+                    self._update(session, job, "generating_sources", 16, "asset_acquisition")
+                    asset_manifest = AssetResolver(self.settings).resolve(
+                        blueprint,
+                        workspace,
+                        allow_stock=bool(self.production_options.visuals.allow_stock),
+                        max_assets=self.production_options.visuals.max_assets,
+                    )
+
+                self._update(session, job, "planning", 18, "motion_preflight")
                 blueprint_data = blueprint.model_dump()
+                motion_plan = write_editorial_artifacts(
+                    workspace, blueprint, self.production_options, research, asset_manifest
+                )
+                (workspace / f"motion_plan_report_attempt_{attempt}.json").write_text(
+                    json.dumps(motion_plan, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                logger.info(
+                    "job.motion_preflight.done job_id=%s attempt=%d score=%.1f minimum=%.1f "
+                    "score_passed=%s passed=%s blockers=%d warnings=%d components=%s",
+                    job.id,
+                    attempt,
+                    motion_plan["score"],
+                    motion_plan["minimum_score"],
+                    motion_plan["score_passed"],
+                    motion_plan["passed"],
+                    len(motion_plan["blocking_issues"]),
+                    len(motion_plan["warnings"]),
+                    json.dumps(motion_plan["component_mix"], sort_keys=True),
+                )
+                if self.production_options.mode != "technical" and not motion_plan["passed"]:
+                    raise MotionQualityError(motion_plan)
                 (workspace / "blueprint.json").write_text(
                     json.dumps(blueprint_data, indent=2) + "\n",
                     encoding="utf-8",
@@ -459,6 +590,21 @@ class VideoPipeline:
                     final_report["visual_review"] = json.loads(visual_review_result.model_dump_json())
                 final_report["quality"] = _quality_summary(blueprint, video_dir, cued_scenes)
                 final_report["quality_profile"] = self.quality_profile
+                final_report["production"] = self.production_options.model_dump()
+                final_report["research"] = {
+                    "enabled": research is not None,
+                    "provider": getattr(research, "provider", None),
+                    "source_count": len(getattr(research, "sources", []) or []),
+                }
+                final_report["motion_plan"] = motion_plan
+                from video_api.pipeline.editorial import evaluate_rendered_delivery
+
+                final_report["delivery"] = evaluate_rendered_delivery(motion_plan, final_report)
+                if self.production_options.mode != "technical" and not final_report["delivery"]["passed"]:
+                    raise RuntimeError(
+                        "rendered video did not fulfil its delivery promise: "
+                        + json.dumps(final_report["delivery"], sort_keys=True)
+                    )
                 final_report["timings"] = _timings_from_marks(self._step_marks)
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")

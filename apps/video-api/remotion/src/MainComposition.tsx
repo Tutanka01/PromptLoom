@@ -2,6 +2,7 @@ import React from "react";
 import { AbsoluteFill, Audio, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { z } from "zod";
 import { AmbientBackground } from "./catalog/AmbientBackground";
+import { NarrationCaptions, type AlignedWord } from "./catalog/NarrationCaptions";
 import { SCENE_COMPONENTS } from "./registry";
 import { colors } from "./style/tokens";
 
@@ -28,6 +29,8 @@ export const sceneSchema = z.object({
 export const videoSchema = z.object({
   scenes: z.array(sceneSchema),
   embedAudio: z.boolean().default(false),
+  captionMode: z.enum(["off", "keywords", "full"]).default("off"),
+  transitionProfile: z.enum(["minimal", "editorial", "cinematic"]).default("minimal"),
 });
 
 export type VideoProps = z.infer<typeof videoSchema>;
@@ -95,9 +98,51 @@ const SceneFrame: React.FC<{
   );
 };
 
-export const MainComposition: React.FC<MainCompositionProps> = ({ scenes, embedAudio, registry }) => {
+/** A cut-cover overlay that never changes timeline length. It is deliberately
+ * rendered as a top-level Sequence around a scene boundary instead of a
+ * TransitionSeries overlap, preserving the audio-derived scene starts. */
+const CutOverlay: React.FC<{dur: number; index: number; profile: "editorial" | "cinematic"}> = ({dur, index, profile}) => {
+  const frame = useCurrentFrame();
+  const x = frame / Math.max(1, dur - 1);
+  const peak = interpolate(x, [0, 0.36, 0.5, 0.64, 1], [0, 0.08, profile === "cinematic" ? 0.52 : 0.28, 0.08, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const style = index % 2;
+  const background = style === 0
+    ? "radial-gradient(ellipse at 72% 48%, rgba(255,190,11,.82), rgba(251,86,7,.34) 22%, transparent 58%)"
+    : "linear-gradient(105deg, transparent 25%, rgba(58,134,255,.34) 45%, rgba(236,241,248,.58) 51%, rgba(155,93,229,.24) 58%, transparent 76%)";
+  const shift = interpolate(x, [0, 1], style === 0 ? [-90, 90] : [-320, 320]);
+  return (
+    <AbsoluteFill
+      style={{
+        opacity: peak,
+        background,
+        transform: `translateX(${shift}px) scale(${1 + peak * 0.04})`,
+        filter: "blur(10px)",
+        mixBlendMode: "screen",
+        pointerEvents: "none",
+      }}
+    />
+  );
+};
+
+export const MainComposition: React.FC<MainCompositionProps> = ({
+  scenes,
+  embedAudio,
+  captionMode,
+  transitionProfile,
+  registry,
+}) => {
   const components = registry ?? SCENE_COMPONENTS;
-  let from = 0;
+  let cursor = 0;
+  const scheduled = scenes.map((scene) => {
+    const start = cursor;
+    cursor += scene.durationInFrames;
+    return {scene, start};
+  });
+  const {fps} = useVideoConfig();
+  const overlayFrames = Math.max(12, Math.round(fps * 0.36));
   return (
     <AbsoluteFill style={{ backgroundColor: colors.bg }}>
       {/* Persistent living background, BEHIND every scene. SceneFrame fades each
@@ -107,10 +152,8 @@ export const MainComposition: React.FC<MainCompositionProps> = ({ scenes, embedA
           frozen frame between scenes (keeps freezedetect happy). No timeline
           overlap, so the per-segment voiceover stays perfectly in sync. */}
       <AmbientBackground />
-      {scenes.map((scene, i) => {
+      {scheduled.map(({scene, start}, i) => {
         const Comp = components[scene.component];
-        const start = from;
-        from += scene.durationInFrames;
         if (!Comp) {
           return null;
         }
@@ -119,10 +162,28 @@ export const MainComposition: React.FC<MainCompositionProps> = ({ scenes, embedA
             {embedAudio && scene.audio ? <Audio src={staticFile(scene.audio)} /> : null}
             <SceneFrame dur={scene.durationInFrames} index={i} transition={scene.transition}>
               <Comp dur={scene.durationInFrames} {...scene.props} />
+              <NarrationCaptions
+                words={(scene.props.alignedWords as AlignedWord[] | undefined) ?? []}
+                cues={(scene.props.cues as (number | null)[] | undefined) ?? []}
+                mode={captionMode}
+                dur={scene.durationInFrames}
+              />
             </SceneFrame>
           </Sequence>
         );
       })}
+      {transitionProfile !== "minimal"
+        ? scheduled.slice(1).map(({start}, index) => (
+            <Sequence
+              key={`cut-${index}`}
+              from={Math.max(0, start - Math.floor(overlayFrames / 2))}
+              durationInFrames={overlayFrames}
+              name={`Cut overlay ${index + 1}`}
+            >
+              <CutOverlay dur={overlayFrames} index={index} profile={transitionProfile} />
+            </Sequence>
+          ))
+        : null}
     </AbsoluteFill>
   );
 };

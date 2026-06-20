@@ -21,7 +21,8 @@ Il doit produire un blueprint structure qui decrit :
 - quelle duree cible respecter ;
 - quelle narration lire ;
 - quelle composition visuelle suggerer par scene (`layout`, indicatif) ;
-- quels beats visuels synchroniser avec la narration.
+- quels beats visuels synchroniser avec la narration ;
+- quelles sources du dossier fourni soutiennent chaque scene (`source_ids`).
 
 Le code Manim est ensuite ecrit, scene par scene, par une seconde etape d'authoring LLM
 (`scene_coder`, guidee par `manim-skill.md`) qui produit du vrai Manim (LaTeX, axes, code,
@@ -55,6 +56,7 @@ Le LLM doit retourner un objet JSON :
       "layout": "concept_map",
       "text": "A derivative begins with a simple question: how fast is something changing right now?...",
       "visual_intent": "Build a concept map from changing quantities to the question of instant rate.",
+      "source_ids": ["src_01", "src_03"],
       "beats": [
         {
           "key": "question",
@@ -89,6 +91,20 @@ Regles principales :
 - les beats sont ordonnes par `at`.
 - `at` est un ratio entre `0.0` et `1.0`.
 - le dernier beat utile doit etre au moins vers `0.75`.
+- `source_ids` ne peut contenir que des identifiants du `research_context` ; le
+  worker supprime toute reference inventee.
+
+## Contexte de production et de recherche
+
+Le prompt recoit deux objets controles par le worker :
+
+- `production_context` : mode, moteur, politique de medias, captions et promesse
+  de livraison ;
+- `research_context` : extraits bornes et IDs stables produits par Tavily ou Exa.
+
+Le modele ne doit jamais inventer une URL. Pour `ImageScene` et
+`FootageScene`, il fournit seulement un `asset_query` semantique. Le worker
+resout le media, remplace la prop par un chemin local et ecrit la provenance.
 
 ## Python Manim genere, mais sous garde-fous
 

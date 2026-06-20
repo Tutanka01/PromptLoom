@@ -79,6 +79,58 @@ Hard rules (a violation makes the scene unusable):
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
 
 
+_SPECIALIST_GUIDANCE = {
+    "kinetic_typography": (
+        "Use TextReveal/BlurReveal sparingly for one decisive phrase. Keep functional labels stable; "
+        "do not turn the whole narration into flying text."
+    ),
+    "systems_flow": (
+        "Build a spatially stable topology with Card/Zone/Arrow, then animate one FlowToken and "
+        "focus/dim the currently narrated node. Arrows must not cross labels."
+    ),
+    "data_visualization": (
+        "Use Plot/BarChart/Counter with truthful values and labelled axes. Animate the encoding itself, "
+        "not decorative containers, and reveal the comparison when narration reaches it."
+    ),
+    "code_terminal": (
+        "Use CodeBlock or Terminal with real executable-looking content. Reveal by meaningful lines or "
+        "command/output beats; never show placeholder code."
+    ),
+    "memory_model": (
+        "Use MemoryGrid for addresses, entries, frames or buffers. Keep indices legible, highlight only "
+        "the active cell, and show mapping/translation with an explicit token or arrow."
+    ),
+    "narrative_motion": (
+        "Plan a visible state change at the opening, middle and final narration cues. Settle the last "
+        "meaningful state around p=0.88 so the scene never ends as a static afterthought."
+    ),
+}
+
+
+def _select_scene_skills(scene: Any) -> list[str]:
+    """Small deterministic router inspired by Remotion's official skill-based
+    prompt template. Only relevant guidance is injected for a Custom scene."""
+    text = " ".join(
+        [
+            str(getattr(scene, "title", "")),
+            str(getattr(scene, "visual_intent", "")),
+            str(getattr(scene, "narration", "")),
+        ]
+    ).lower()
+    selected = ["narrative_motion"]
+    rules = {
+        "systems_flow": ("flow", "path", "pipeline", "kernel", "network", "queue", "layer"),
+        "data_visualization": ("plot", "chart", "graph", "metric", "rate", "distribution", "counter"),
+        "code_terminal": ("code", "terminal", "command", "shell", "syscall", "function", "algorithm"),
+        "memory_model": ("memory", "address", "page table", "buffer", "register", "stack", "heap"),
+        "kinetic_typography": ("phrase", "word", "title", "typography", "statement", "reveal"),
+    }
+    for skill, needles in rules.items():
+        if any(needle in text for needle in needles):
+            selected.append(skill)
+    return selected[:4]
+
+
 class RemotionSceneCoder:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -131,6 +183,7 @@ class RemotionSceneCoder:
 
     def _messages(self, scene: Any, blueprint: Any, previous: str = "", error: str = "") -> list[dict]:
         skill = _load_skill(self.settings)
+        selected_skills = _select_scene_skills(scene)
         ctx = {
             "scene_key": scene.key,
             "title": scene.title,
@@ -140,8 +193,18 @@ class RemotionSceneCoder:
             "props": scene.props,
             "video_subject": blueprint.teaching_goal,
             "style_notes": blueprint.style_notes,
+            "selected_skills": selected_skills,
         }
-        system = _SYSTEM.replace("{KEY}", scene.key) + "\n\n" + skill
+        specialist = "\n".join(
+            f"- {name}: {_SPECIALIST_GUIDANCE[name]}" for name in selected_skills
+        )
+        system = (
+            _SYSTEM.replace("{KEY}", scene.key)
+            + "\n\nSelected specialist guidance:\n"
+            + specialist
+            + "\n\n"
+            + skill
+        )
         if previous:
             user = (
                 f"The following Remotion scene component for `{scene.key}` failed. Fix it.\n\n"

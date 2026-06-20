@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import uuid
 
 import pytest
@@ -46,6 +47,39 @@ def test_create_then_status(client: TestClient) -> None:
     assert body["status"] == "queued"
     assert body["quality_profile"] == "draft"
     assert body["download_url"] is None
+
+
+def test_cinematic_options_are_persisted_per_job(client: TestClient) -> None:
+    job_id = _create_job(
+        client,
+        production_mode="cinematic",
+        research={"enabled": True, "required": False, "max_sources": 8},
+        visuals={"strategy": "motion_first", "allow_stock": True, "max_assets": 3},
+        captions="full",
+    )
+    response = client.get(f"/v1/videos/{job_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["render_engine"] == "remotion"
+    assert body["production_mode"] == "cinematic"
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        config = json.loads(job.production_config)
+    assert config["visuals"]["max_assets"] == 3
+    assert config["captions"] == "full"
+
+
+def test_cinematic_manim_is_rejected_as_request_validation(client: TestClient) -> None:
+    response = client.post(
+        "/v1/videos",
+        json={
+            "prompt": "Explain how virtual memory and page tables work together",
+            "production_mode": "cinematic",
+            "render_engine": "manim",
+        },
+    )
+    assert response.status_code == 422
+    assert "requires render_engine='remotion'" in response.text
 
 
 def test_status_not_found(client: TestClient) -> None:
