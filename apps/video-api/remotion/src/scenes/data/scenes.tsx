@@ -12,7 +12,7 @@ import { Counter } from "../../catalog/Counter";
 import { Icon } from "../../catalog/Icon";
 import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
 import { colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
-import { appear, cueOr, dimAt, lastCue } from "../../style/anim";
+import { appear, beat, cueOr, dimAt, lastCue } from "../../style/anim";
 
 /**
  * Data-driven STEM scene templates. Each reads plain props (no code) so a
@@ -570,5 +570,299 @@ export const FootageScene: React.FC<MediaBase & {mediaDurationSeconds?: number}>
         />
       </Loop>
     </MediaChrome>
+  );
+};
+
+/** A full-screen headline quotation revealed word-by-word, optional attribution. */
+export const QuoteScene: React.FC<Base & { quote: string; author?: string }> = ({
+  dur,
+  accent,
+  cues,
+  quote = "",
+  author,
+}) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const cQuote = cueOr(cues, 0, 0.12);
+  const cAuthor = Math.max(cQuote + 0.1, cueOr(cues, 1, 0.6));
+  const size = quote.length > 160 ? 56 : quote.length > 90 ? 72 : 92;
+  return (
+    <AbsoluteFill>
+      <AmbientBackground accent={ac} />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 12%",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 180,
+            lineHeight: "120px",
+            color: ac,
+            opacity: appear(p, 0.04, 0.12) * 0.45,
+            fontFamily: fonts.sans,
+          }}
+        >
+          {"“"}
+        </div>
+        <TextReveal text={quote} fontSize={size} color={colors.text} delay={cQuote * dur} staggerDelay={4} />
+        {author ? (
+          <div
+            style={{
+              marginTop: mu(0.5),
+              fontSize: 34,
+              color: colors.muted,
+              opacity: appear(p, cAuthor, cAuthor + 0.1),
+              fontFamily: fonts.sans,
+            }}
+          >
+            {"— "}
+            {author}
+          </div>
+        ) : null}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// --- SplitFocusScene: two live panels with bounded "kinds" ---------------- //
+type SplitPanel =
+  | { kind: "code"; code: string; lang?: string; codeTitle?: string }
+  | { kind: "plot"; points: [number, number][]; xRange: [number, number]; yRange: [number, number]; xLabel?: string; yLabel?: string }
+  | { kind: "formula"; formulas: string[] }
+  | { kind: "bullets"; bullets: string[]; heading?: string }
+  | { kind: "terminal"; command: string; output?: string };
+
+const fnFromPoints = (points: [number, number][]) => (x: number): number => {
+  if (points.length === 0) return 0;
+  if (x <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    if (x <= points[i][0]) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      const t = (x - x0) / (x1 - x0 || 1);
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return points[points.length - 1][1];
+};
+
+const SplitPanelView: React.FC<{ panel: SplitPanel; p: number; start: number; accent: string }> = ({ panel, p, start, accent }) => {
+  const reveal = appear(p, start, start + 0.12);
+  const wrap = (children: React.ReactNode) => (
+    <div
+      style={{
+        opacity: reveal,
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "0 5%",
+        boxSizing: "border-box",
+      }}
+    >
+      {children}
+    </div>
+  );
+  if (panel.kind === "code") {
+    return wrap(<CodeBlock code={panel.code} lang={panel.lang ?? "python"} fontSize={26} startAt={start} title={panel.codeTitle} accent={accent} />);
+  }
+  if (panel.kind === "terminal") {
+    const text = `$ ${panel.command}${panel.output ? "\n" + panel.output : ""}`;
+    return wrap(
+      <pre
+        style={{
+          fontFamily: fonts.mono,
+          fontSize: 26,
+          color: colors.text,
+          background: "#101722",
+          border: `2px solid ${accent}`,
+          borderRadius: 16,
+          padding: 28,
+          margin: 0,
+          maxWidth: "100%",
+          whiteSpace: "pre-wrap",
+          textAlign: "left",
+        }}
+      >
+        {text}
+      </pre>,
+    );
+  }
+  if (panel.kind === "formula") {
+    return wrap(
+      <div style={{ display: "flex", flexDirection: "column", gap: 28, alignItems: "center" }}>
+        {panel.formulas.map((tex, i) => (
+          <MathFormula key={i} tex={tex} display fontSize={48} color={colors.text} delay={start + i * 0.12} />
+        ))}
+      </div>,
+    );
+  }
+  if (panel.kind === "bullets") {
+    return wrap(
+      <div style={{ display: "flex", flexDirection: "column", gap: 22, alignItems: "flex-start" }}>
+        {panel.heading ? (
+          <div style={{ fontSize: 36, fontWeight: 700, color: accent, fontFamily: fonts.sans, marginBottom: 8 }}>{panel.heading}</div>
+        ) : null}
+        {panel.bullets.map((b, i) => (
+          <div
+            key={i}
+            style={{ fontSize: 32, color: colors.text, fontFamily: fonts.sans, opacity: appear(p, start + 0.1 + i * 0.1, start + 0.2 + i * 0.1) }}
+          >
+            {"• "}
+            {b}
+          </div>
+        ))}
+      </div>,
+    );
+  }
+  return wrap(
+    <Plot
+      fn={fnFromPoints(panel.points)}
+      xRange={panel.xRange}
+      yRange={panel.yRange}
+      width={760}
+      height={520}
+      color={accent}
+      drawProgress={beat(p, start, start + 0.33)}
+      xLabel={panel.xLabel ?? "x"}
+      yLabel={panel.yLabel ?? "y"}
+    />,
+  );
+};
+
+/** Two live panels side by side (cause/effect, code + its result). */
+export const SplitFocusScene: React.FC<Base & { left: SplitPanel; right: SplitPanel }> = ({ dur, accent, title, caption, cues, left, right }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const cLeft = cueOr(cues, 0, 0.14);
+  const cRight = Math.max(cLeft + 0.05, cueOr(cues, 1, 0.4));
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      <div style={{ position: "absolute", left: 0, top: 200, width: WIDTH, height: 720, display: "flex" }}>
+        <div style={{ width: WIDTH / 2, height: "100%", position: "relative" }}>
+          <SplitPanelView panel={left} p={p} start={cLeft} accent={ac} />
+        </div>
+        <div style={{ width: WIDTH / 2, height: "100%", position: "relative" }}>
+          <SplitPanelView panel={right} p={p} start={cRight} accent={colors.success} />
+        </div>
+      </div>
+      <div style={{ position: "absolute", left: WIDTH / 2 - 1, top: 210, width: 2, height: 700, background: colors.edge, opacity: 0.5 }} />
+    </Shell>
+  );
+};
+
+// --- ZoomNarrativeScene: a camera that pans/zooms across a canvas ---------- //
+type CanvasItem = { id: string; label: string; x: number; y: number; sub?: string; detail?: string };
+
+/** Camera zooms/pans across a virtual canvas, focusing each path stop in turn. */
+export const ZoomNarrativeScene: React.FC<Base & { canvas: CanvasItem[]; path: string[] }> = ({ dur, accent, title, cues, canvas, path }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const byId: Record<string, CanvasItem> = Object.fromEntries(canvas.map((c) => [c.id, c]));
+  const stops = path.map((id) => byId[id]).filter(Boolean) as CanvasItem[];
+  if (stops.length === 0) {
+    return (
+      <AbsoluteFill>
+        <AmbientBackground accent={ac} />
+      </AbsoluteFill>
+    );
+  }
+  // Strictly-increasing camera keyframes: one per stop (at its cue), then an
+  // overview keyframe (scale 1, centred) at the end.
+  const times: number[] = [];
+  let prev = 0;
+  stops.forEach((_, i) => {
+    const raw = cueOr(cues, i, 0.12 + (i * (0.82 - 0.12)) / Math.max(1, stops.length));
+    const v = Math.max(prev + 0.001, raw);
+    times.push(v);
+    prev = v;
+  });
+  const overview = Math.max(prev + 0.02, 0.92);
+  times.push(overview);
+  const ZOOM = 1.9;
+  const targetsX = stops.map((s) => s.x).concat([0]);
+  const targetsY = stops.map((s) => s.y).concat([0]);
+  const scales = stops.map(() => ZOOM).concat([1]);
+  const clampOpts = { extrapolateLeft: "clamp" as const, extrapolateRight: "clamp" as const };
+  const camX = interpolate(p, times, targetsX, clampOpts);
+  const camY = interpolate(p, times, targetsY, clampOpts);
+  const scale = interpolate(p, times, scales, clampOpts);
+  // Move so the focused world point lands at screen centre, scaled about centre.
+  const tx = -camX * mu(1) * scale;
+  const ty = camY * mu(1) * scale;
+  return (
+    <AbsoluteFill>
+      <AmbientBackground accent={ac} />
+      {title ? <TitleBar label={title} opacity={appear(p, 0, 0.08)} /> : null}
+      <AbsoluteFill style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "center center" }}>
+        {canvas.map((item) => {
+          const stopIdx = path.indexOf(item.id);
+          const focusT = times[stopIdx >= 0 ? stopIdx : 0];
+          const reveal = appear(p, focusT, focusT + 0.1);
+          return (
+            <div key={item.id} style={{ opacity: 0.32 + 0.68 * reveal }}>
+              <Card x={item.x} y={item.y} w={2.4} h={1.2} accent={ac} glow={reveal} fontPx={28}>
+                <div style={{ textAlign: "center" }}>
+                  {item.label}
+                  {item.sub ? <div style={{ fontSize: 18, color: colors.muted, fontWeight: 400 }}>{item.sub}</div> : null}
+                </div>
+              </Card>
+              {item.detail ? (
+                <Caption x={item.x} y={item.y - 0.95} label={item.detail} color={colors.muted} size={18} opacity={reveal} width={3} />
+              ) : null}
+            </div>
+          );
+        })}
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+
+// --- NetworkMapScene: an animated node-link graph -------------------------- //
+type NetNode = { id: string; label: string; x: number; y: number; group?: string };
+type NetLink = { a: string; b: string; label?: string };
+
+const NET_GROUP_COLORS = [colors.user, colors.success, colors.purple, colors.kernel];
+
+/** Animated node-link graph; nodes light up on cue, edges draw after both ends. */
+export const NetworkMapScene: React.FC<Base & { nodes: NetNode[]; links: NetLink[] }> = ({ dur, accent, title, caption, cues, nodes, links }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const indexOf: Record<string, number> = Object.fromEntries(nodes.map((n, i) => [n.id, i]));
+  const byId: Record<string, NetNode> = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const groups = Array.from(new Set(nodes.map((n) => n.group ?? "_")));
+  const colorFor = (n: NetNode) => NET_GROUP_COLORS[groups.indexOf(n.group ?? "_") % NET_GROUP_COLORS.length] ?? ac;
+  const nodeCue = (i: number) => cueOr(cues, i, 0.12 + (i * 0.6) / Math.max(1, nodes.length));
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      {links.map((lk, i) => {
+        const a = byId[lk.a];
+        const b = byId[lk.b];
+        if (!a || !b) return null;
+        const start = Math.max(nodeCue(indexOf[lk.a] ?? 0), nodeCue(indexOf[lk.b] ?? 0));
+        const progress = beat(p, start, start + 0.16, "linear");
+        return <Arrow key={`l${i}`} from={[a.x, a.y]} to={[b.x, b.y]} color={colors.edge} width={2.5} progress={progress} opacity={0.7} />;
+      })}
+      {nodes.map((n, i) => {
+        const reveal = appear(p, nodeCue(i), nodeCue(i) + 0.1);
+        return (
+          <div key={n.id} style={{ opacity: reveal }}>
+            <Card x={n.x} y={n.y} w={1.9} h={0.82} accent={colorFor(n)} glow={reveal * 0.8} fontPx={22}>
+              {n.label}
+            </Card>
+          </div>
+        );
+      })}
+    </Shell>
   );
 };

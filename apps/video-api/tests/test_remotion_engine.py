@@ -177,6 +177,130 @@ def test_normalise_new_scenes_empty_fallbacks() -> None:
     assert isinstance(cnt["props"]["value"], float)
 
 
+def test_normalise_quote_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("quote", {"quote": "Virtual memory is a useful lie.", "author": "Tanenbaum"}), 240
+    )["scenes"][0]
+    assert out["component"] == "QuoteScene"  # alias coerced
+    assert out["props"]["quote"] == "Virtual memory is a useful lie."
+    assert out["props"]["author"] == "Tanenbaum"
+
+
+def test_normalise_quote_scene_empty_fallback() -> None:
+    out = normalize_remotion_blueprint(_wrap_scene("QuoteScene", {}), 240)["scenes"][0]
+    # empty quote degrades to a renderable BulletScene, never a blank frame
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
+def test_normalise_split_focus_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene(
+            "split",
+            {
+                "title": "Cause and effect",
+                "left": {"kind": "code", "code": "x = 1\n", "lang": "python"},
+                "right": {"kind": "bullets", "bullets": ["a", "b"]},
+            },
+        ),
+        240,
+    )["scenes"][0]
+    assert out["component"] == "SplitFocusScene"
+    assert out["props"]["left"]["kind"] == "code"
+    assert out["props"]["right"]["kind"] == "bullets"
+    assert out["props"]["right"]["bullets"] == ["a", "b"]
+
+
+def test_normalise_split_focus_plot_expr_to_points() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene(
+            "SplitFocusScene",
+            {
+                "left": {"kind": "plot", "expr": "x", "xRange": [-2, 2], "yRange": [-2, 2]},
+                "right": {"kind": "formula", "formulas": ["y = x"]},
+            },
+        ),
+        240,
+    )["scenes"][0]
+    assert out["component"] == "SplitFocusScene"
+    assert "points" in out["props"]["left"] and "expr" not in out["props"]["left"]
+    assert out["props"]["right"]["formulas"] == ["y = x"]
+
+
+def test_normalise_split_focus_invalid_panel_fallback() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("split", {"left": {"kind": "image", "src": "x"}, "right": {}}), 240
+    )["scenes"][0]
+    # no valid bounded panel -> degrade to BulletScene
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
+def test_normalise_zoom_narrative_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene(
+            "zoom",
+            {
+                "canvas": [
+                    {"id": "a", "label": "Process", "x": -3, "y": 1, "detail": "PID, state"},
+                    {"id": "b", "label": "Kernel", "x": 3, "y": -1},
+                    {"id": "c", "label": "Hardware", "x": 0, "y": -2.5},
+                ],
+                "path": ["a", "b", "x-unknown"],
+            },
+        ),
+        240,
+    )["scenes"][0]
+    assert out["component"] == "ZoomNarrativeScene"
+    assert [n["id"] for n in out["props"]["canvas"]] == ["a", "b", "c"]
+    # unknown id dropped, unvisited "c" appended -> every id visited once
+    assert out["props"]["path"] == ["a", "b", "c"]
+    assert -6 <= out["props"]["canvas"][0]["x"] <= 6
+
+
+def test_normalise_zoom_narrative_too_few_items_fallback() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("ZoomNarrativeScene", {"canvas": [{"id": "a", "label": "x"}]}), 240
+    )["scenes"][0]
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
+def test_normalise_network_map_scene_layout_is_deterministic() -> None:
+    raw = _wrap_scene(
+        "network",
+        {
+            "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}],
+            "links": [{"a": "a", "b": "b"}, {"a": "b", "b": "z-missing"}],
+        },
+    )
+    out1 = normalize_remotion_blueprint(raw, 240)["scenes"][0]
+    out2 = normalize_remotion_blueprint(raw, 240)["scenes"][0]
+    assert out1["component"] == "NetworkMapScene"
+    # positions assigned, in-bounds, deterministic
+    assert all(-6 <= n["x"] <= 6 and -3 <= n["y"] <= 3 for n in out1["props"]["nodes"])
+    assert [(n["x"], n["y"]) for n in out1["props"]["nodes"]] == [(n["x"], n["y"]) for n in out2["props"]["nodes"]]
+    # link to a missing node id dropped
+    assert out1["props"]["links"] == [{"a": "a", "b": "b"}]
+
+
+def test_normalise_network_map_empty_fallback() -> None:
+    out = normalize_remotion_blueprint(_wrap_scene("NetworkMapScene", {"nodes": []}), 240)["scenes"][0]
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
+def test_new_archetypes_registered_and_advertised() -> None:
+    from video_api.schemas import REMOTION_PALETTE
+    from video_api.pipeline.remotion_blueprint import _PALETTE_LINE
+
+    registry_src = (REMOTION_DIR / "src" / "registry.ts").read_text()
+    for name in ("QuoteScene", "SplitFocusScene", "ZoomNarrativeScene", "NetworkMapScene"):
+        assert name in REMOTION_PALETTE, f"{name} missing from REMOTION_PALETTE"
+        assert f"{name}:" in registry_src, f"{name} missing from registry.ts"
+        assert name in _PALETTE_LINE, f"{name} missing from the LLM palette prompt"
+
+
 def test_normalise_narration_field_aliases() -> None:
     raw = {
         "title": "T", "slug": "t", "scenes": [

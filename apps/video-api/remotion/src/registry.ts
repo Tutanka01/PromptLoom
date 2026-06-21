@@ -12,10 +12,14 @@ import {
   ImageScene,
   LayeredSystemScene,
   MemoryScene,
+  NetworkMapScene,
   PlotScene,
+  QuoteScene,
+  SplitFocusScene,
   TerminalScene,
   TimelineScene,
   TitleScene,
+  ZoomNarrativeScene,
 } from "./scenes/data/scenes";
 
 /**
@@ -39,6 +43,10 @@ export const SCENE_COMPONENTS: Record<string, React.FC<Record<string, unknown>>>
   FlowScene: FlowScene as React.FC<Record<string, unknown>>,
   BarChartScene: BarChartScene as React.FC<Record<string, unknown>>,
   CounterScene: CounterScene as React.FC<Record<string, unknown>>,
+  QuoteScene: QuoteScene as React.FC<Record<string, unknown>>,
+  SplitFocusScene: SplitFocusScene as React.FC<Record<string, unknown>>,
+  ZoomNarrativeScene: ZoomNarrativeScene as React.FC<Record<string, unknown>>,
+  NetworkMapScene: NetworkMapScene as React.FC<Record<string, unknown>>,
   ImageScene: ImageScene as React.FC<Record<string, unknown>>,
   FootageScene: FootageScene as React.FC<Record<string, unknown>>,
 };

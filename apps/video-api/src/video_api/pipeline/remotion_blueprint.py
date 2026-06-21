@@ -128,6 +128,26 @@ _COMPONENT_ALIASES = {
     "metric": "CounterScene",
     "number": "CounterScene",
     "stat": "CounterScene",
+    "quote": "QuoteScene",
+    "quotescene": "QuoteScene",
+    "pullquote": "QuoteScene",
+    "statement": "QuoteScene",
+    "split": "SplitFocusScene",
+    "splitfocus": "SplitFocusScene",
+    "splitfocusscene": "SplitFocusScene",
+    "split_screen": "SplitFocusScene",
+    "splitscreen": "SplitFocusScene",
+    "sidebyside": "SplitFocusScene",
+    "zoom": "ZoomNarrativeScene",
+    "zoomnarrative": "ZoomNarrativeScene",
+    "zoomnarrativescene": "ZoomNarrativeScene",
+    "canvas": "ZoomNarrativeScene",
+    "map_zoom": "ZoomNarrativeScene",
+    "network": "NetworkMapScene",
+    "networkmap": "NetworkMapScene",
+    "networkmapscene": "NetworkMapScene",
+    "network_map": "NetworkMapScene",
+    "graph_map": "NetworkMapScene",
     "image": "ImageScene",
     "imagescene": "ImageScene",
     "photo": "ImageScene",
@@ -162,6 +182,14 @@ _PALETTE_LINE = (
     "- FlowScene:    { title: str, stages: [ {label: str, sub?: str, icon?: icon_name}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
     "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
     "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
+    "- QuoteScene:   { quote: str, author?: str, accent?: \"#hex\" }  — a full-screen headline quotation/statement revealed word-by-word (beats: quote; +1 if author)\n"
+    "- SplitFocusScene: { title?: str, caption?: str,\n"
+    "                  left:  {kind: \"code\"|\"plot\"|\"formula\"|\"bullets\"|\"terminal\", ...kind props},\n"
+    "                  right: {kind: \"code\"|\"plot\"|\"formula\"|\"bullets\"|\"terminal\", ...kind props} }  — two live panels side by side (cause/effect, code + its result).\n"
+    "                  kind props mirror the matching scene: code{code,lang?,codeTitle?}, plot{expr|points,xRange,yRange,xLabel?,yLabel?}, formula{formulas[1-2]}, bullets{bullets[2-4],heading?}, terminal{command,output?}. Beats: left, right, then inner items.\n"
+    "- ZoomNarrativeScene: { canvas: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), sub?: str, detail?: str}, ...(2-8) ],\n"
+    "                  path?: [id, ...], accent?: \"#hex\" }  — a camera zooms/pans across a big canvas, focusing each item in `path` order. Beats: one anchor per path stop.\n"
+    "- NetworkMapScene: { nodes: [ {id: str, label: str, group?: str}, ...(2-10) ], links: [ {a: id, b: id, label?: str} ] }  — an animated node-link graph for a complex system. Do NOT provide x/y; positions are auto-computed. Beats: one anchor per node.\n"
     "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
     "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
@@ -390,6 +418,88 @@ def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap
     return out
 
 
+_SPLIT_KINDS = ("code", "plot", "formula", "bullets", "terminal")
+
+
+def _norm_panel(value: Any) -> dict[str, Any] | None:
+    """Normalise one SplitFocus panel to a bounded kind, or None if invalid.
+
+    Bounded kinds are fully deterministic (no external asset). ``image``/
+    ``footage`` are intentionally excluded in this version (they would require
+    the asset resolver to descend into nested props)."""
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or "").strip().lower()
+    if kind not in _SPLIT_KINDS:
+        return None
+    if kind == "code":
+        code = str(value.get("code") or "").strip()
+        if not code:
+            return None
+        out: dict[str, Any] = {"kind": "code", "code": code[:1200]}
+        if value.get("lang"):
+            out["lang"] = str(value["lang"])[:24]
+        if value.get("codeTitle"):
+            out["codeTitle"] = str(value["codeTitle"])[:60]
+        return out
+    if kind == "terminal":
+        command = str(value.get("command") or value.get("cmd") or "").strip()
+        if not command:
+            return None
+        out = {"kind": "terminal", "command": command[:200]}
+        if value.get("output"):
+            out["output"] = str(value["output"])[:400]
+        return out
+    if kind == "formula":
+        formulas = [str(f).strip() for f in (value.get("formulas") or []) if str(f).strip()]
+        if not formulas:
+            return None
+        return {"kind": "formula", "formulas": formulas[:2]}
+    if kind == "bullets":
+        bullets = [str(b).strip() for b in (value.get("bullets") or []) if str(b).strip()]
+        if not bullets:
+            return None
+        out = {"kind": "bullets", "bullets": bullets[:4]}
+        if value.get("heading"):
+            out["heading"] = str(value["heading"])[:60]
+        return out
+    # plot
+    x_range = _clamp_range(value.get("xRange"), -50, 50, (-4.0, 4.0))
+    y_range = _clamp_range(value.get("yRange"), -200, 200, (-2.0, 6.0))
+    expr = value.get("expr")
+    pts = value.get("points")
+    if expr:
+        pts = sample_expr(str(expr), x_range[0], x_range[1], n=80)
+    if not isinstance(pts, list) or not pts:
+        return None
+    out = {"kind": "plot", "points": pts, "xRange": x_range, "yRange": y_range}
+    if value.get("xLabel"):
+        out["xLabel"] = str(value["xLabel"])[:24]
+    if value.get("yLabel"):
+        out["yLabel"] = str(value["yLabel"])[:24]
+    return out
+
+
+def _network_layout(n: int) -> list[tuple[float, float]]:
+    """Deterministic golden-angle spiral placement, squashed to 16:9 and scaled
+    to the canvas bounds. Same n -> same coordinates (render must be
+    deterministic). No randomness, no seed needed."""
+    if n <= 0:
+        return []
+    if n == 1:
+        return [(0.0, 0.0)]
+    golden = math.pi * (3.0 - math.sqrt(5.0))  # ~2.39996 rad
+    radius = min(5.0, 1.6 + n * 0.18)
+    out: list[tuple[float, float]] = []
+    for i in range(n):
+        r = radius * math.sqrt((i + 0.5) / n)
+        a = i * golden
+        x = round(max(-6.0, min(6.0, r * math.cos(a))), 3)
+        y = round(max(-3.0, min(3.0, r * 0.62 * math.sin(a))), 3)
+        out.append((x, y))
+    return out
+
+
 def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = None) -> dict[str, Any]:
     component = scene.get("component")
     props = dict(scene.get("props") or {})
@@ -511,6 +621,105 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
                 props[key] = str(props[key])[:40]
         if props.get("decimals") is not None:
             props["decimals"] = max(0, min(3, int(_to_float(props.get("decimals"), 0))))
+    elif component == "QuoteScene":
+        quote = str(props.get("quote") or "").strip()
+        if len(quote) < 3:
+            degrade("QuoteScene without a quote — fell back to a narration bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 3)}
+        out: dict[str, Any] = {"quote": quote[:240]}
+        author = str(props.get("author") or "").strip()
+        if author:
+            out["author"] = author[:80]
+        if props.get("accent"):
+            out["accent"] = str(props["accent"])
+        return out
+    elif component == "SplitFocusScene":
+        left = _norm_panel(props.get("left"))
+        right = _norm_panel(props.get("right"))
+        if left is None or right is None:
+            degrade("SplitFocusScene without two valid bounded panels — fell back to a bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
+        out = {"left": left, "right": right}
+        if props.get("title"):
+            out["title"] = str(props["title"])[:80]
+        if props.get("caption"):
+            out["caption"] = str(props["caption"])[:120]
+        return out
+    elif component == "ZoomNarrativeScene":
+        raw_items = props.get("canvas") if isinstance(props.get("canvas"), list) else []
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for i, it in enumerate(raw_items[:8]):
+            if not isinstance(it, dict):
+                continue
+            iid = str(it.get("id") or f"n{i}").strip()[:24]
+            if not iid or iid in seen_ids:
+                continue
+            seen_ids.add(iid)
+            node: dict[str, Any] = {
+                "id": iid,
+                "label": str(it.get("label") or iid)[:48],
+                "x": max(-6.0, min(6.0, _to_float(it.get("x"), 0.0))),
+                "y": max(-3.0, min(3.0, _to_float(it.get("y"), 0.0))),
+            }
+            if it.get("sub"):
+                node["sub"] = str(it["sub"])[:48]
+            if it.get("detail"):
+                node["detail"] = str(it["detail"])[:120]
+            items.append(node)
+        if len(items) < 2:
+            degrade("ZoomNarrativeScene with fewer than 2 canvas items — fell back to a bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
+        raw_path = props.get("path") if isinstance(props.get("path"), list) else []
+        path: list[str] = []
+        for pid in raw_path:
+            sid = str(pid).strip()
+            if sid in seen_ids and sid not in path:
+                path.append(sid)
+        for node in items:  # append any unvisited node, preserving canvas order
+            if node["id"] not in path:
+                path.append(node["id"])
+        out = {"canvas": items, "path": path}
+        if props.get("accent"):
+            out["accent"] = str(props["accent"])
+        return out
+    elif component == "NetworkMapScene":
+        raw_nodes = props.get("nodes") if isinstance(props.get("nodes"), list) else []
+        nodes: list[dict[str, Any]] = []
+        ids: set[str] = set()
+        for i, nd in enumerate(raw_nodes[:10]):
+            if not isinstance(nd, dict):
+                continue
+            nid = str(nd.get("id") or f"n{i}").strip()[:24]
+            if not nid or nid in ids:
+                continue
+            ids.add(nid)
+            node = {"id": nid, "label": str(nd.get("label") or nid)[:40]}
+            if nd.get("group"):
+                node["group"] = str(nd["group"])[:24]
+            nodes.append(node)
+        if not nodes:
+            degrade("NetworkMapScene without nodes — fell back to a bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
+        coords = _network_layout(len(nodes))
+        for node, (x, y) in zip(nodes, coords):
+            node["x"], node["y"] = x, y
+        raw_links = props.get("links") if isinstance(props.get("links"), list) else []
+        links: list[dict[str, Any]] = []
+        for lk in raw_links[:20]:
+            if not isinstance(lk, dict):
+                continue
+            a, b = str(lk.get("a") or "").strip(), str(lk.get("b") or "").strip()
+            if a in ids and b in ids and a != b:
+                link = {"a": a, "b": b}
+                if lk.get("label"):
+                    link["label"] = str(lk["label"])[:32]
+                links.append(link)
+        return {"nodes": nodes, "links": links}
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]
         if not query:
