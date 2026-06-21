@@ -12,7 +12,7 @@ import { Counter } from "../../catalog/Counter";
 import { Icon } from "../../catalog/Icon";
 import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
 import { colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
-import { appear, cueOr, dimAt, lastCue } from "../../style/anim";
+import { appear, beat, cueOr, dimAt, lastCue } from "../../style/anim";
 
 /**
  * Data-driven STEM scene templates. Each reads plain props (no code) so a
@@ -629,5 +629,134 @@ export const QuoteScene: React.FC<Base & { quote: string; author?: string }> = (
         ) : null}
       </div>
     </AbsoluteFill>
+  );
+};
+
+// --- SplitFocusScene: two live panels with bounded "kinds" ---------------- //
+type SplitPanel =
+  | { kind: "code"; code: string; lang?: string; codeTitle?: string }
+  | { kind: "plot"; points: [number, number][]; xRange: [number, number]; yRange: [number, number]; xLabel?: string; yLabel?: string }
+  | { kind: "formula"; formulas: string[] }
+  | { kind: "bullets"; bullets: string[]; heading?: string }
+  | { kind: "terminal"; command: string; output?: string };
+
+const fnFromPoints = (points: [number, number][]) => (x: number): number => {
+  if (points.length === 0) return 0;
+  if (x <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    if (x <= points[i][0]) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      const t = (x - x0) / (x1 - x0 || 1);
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return points[points.length - 1][1];
+};
+
+const SplitPanelView: React.FC<{ panel: SplitPanel; p: number; start: number; accent: string }> = ({ panel, p, start, accent }) => {
+  const reveal = appear(p, start, start + 0.12);
+  const wrap = (children: React.ReactNode) => (
+    <div
+      style={{
+        opacity: reveal,
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "0 5%",
+        boxSizing: "border-box",
+      }}
+    >
+      {children}
+    </div>
+  );
+  if (panel.kind === "code") {
+    return wrap(<CodeBlock code={panel.code} lang={panel.lang ?? "python"} fontSize={26} startAt={start} title={panel.codeTitle} accent={accent} />);
+  }
+  if (panel.kind === "terminal") {
+    const text = `$ ${panel.command}${panel.output ? "\n" + panel.output : ""}`;
+    return wrap(
+      <pre
+        style={{
+          fontFamily: fonts.mono,
+          fontSize: 26,
+          color: colors.text,
+          background: "#101722",
+          border: `2px solid ${accent}`,
+          borderRadius: 16,
+          padding: 28,
+          margin: 0,
+          maxWidth: "100%",
+          whiteSpace: "pre-wrap",
+          textAlign: "left",
+        }}
+      >
+        {text}
+      </pre>,
+    );
+  }
+  if (panel.kind === "formula") {
+    return wrap(
+      <div style={{ display: "flex", flexDirection: "column", gap: 28, alignItems: "center" }}>
+        {panel.formulas.map((tex, i) => (
+          <MathFormula key={i} tex={tex} display fontSize={48} color={colors.text} delay={start + i * 0.12} />
+        ))}
+      </div>,
+    );
+  }
+  if (panel.kind === "bullets") {
+    return wrap(
+      <div style={{ display: "flex", flexDirection: "column", gap: 22, alignItems: "flex-start" }}>
+        {panel.heading ? (
+          <div style={{ fontSize: 36, fontWeight: 700, color: accent, fontFamily: fonts.sans, marginBottom: 8 }}>{panel.heading}</div>
+        ) : null}
+        {panel.bullets.map((b, i) => (
+          <div
+            key={i}
+            style={{ fontSize: 32, color: colors.text, fontFamily: fonts.sans, opacity: appear(p, start + 0.1 + i * 0.1, start + 0.2 + i * 0.1) }}
+          >
+            {"• "}
+            {b}
+          </div>
+        ))}
+      </div>,
+    );
+  }
+  return wrap(
+    <Plot
+      fn={fnFromPoints(panel.points)}
+      xRange={panel.xRange}
+      yRange={panel.yRange}
+      width={760}
+      height={520}
+      color={accent}
+      drawProgress={beat(p, start, start + 0.33)}
+      xLabel={panel.xLabel ?? "x"}
+      yLabel={panel.yLabel ?? "y"}
+    />,
+  );
+};
+
+/** Two live panels side by side (cause/effect, code + its result). */
+export const SplitFocusScene: React.FC<Base & { left: SplitPanel; right: SplitPanel }> = ({ dur, accent, title, caption, cues, left, right }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const cLeft = cueOr(cues, 0, 0.14);
+  const cRight = Math.max(cLeft + 0.05, cueOr(cues, 1, 0.4));
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      <div style={{ position: "absolute", left: 0, top: 200, width: WIDTH, height: 720, display: "flex" }}>
+        <div style={{ width: WIDTH / 2, height: "100%", position: "relative" }}>
+          <SplitPanelView panel={left} p={p} start={cLeft} accent={ac} />
+        </div>
+        <div style={{ width: WIDTH / 2, height: "100%", position: "relative" }}>
+          <SplitPanelView panel={right} p={p} start={cRight} accent={colors.success} />
+        </div>
+      </div>
+      <div style={{ position: "absolute", left: WIDTH / 2 - 1, top: 210, width: 2, height: 700, background: colors.edge, opacity: 0.5 }} />
+    </Shell>
   );
 };

@@ -193,6 +193,49 @@ def test_normalise_quote_scene_empty_fallback() -> None:
     assert out["props"]["bullets"]
 
 
+def test_normalise_split_focus_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene(
+            "split",
+            {
+                "title": "Cause and effect",
+                "left": {"kind": "code", "code": "x = 1\n", "lang": "python"},
+                "right": {"kind": "bullets", "bullets": ["a", "b"]},
+            },
+        ),
+        240,
+    )["scenes"][0]
+    assert out["component"] == "SplitFocusScene"
+    assert out["props"]["left"]["kind"] == "code"
+    assert out["props"]["right"]["kind"] == "bullets"
+    assert out["props"]["right"]["bullets"] == ["a", "b"]
+
+
+def test_normalise_split_focus_plot_expr_to_points() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene(
+            "SplitFocusScene",
+            {
+                "left": {"kind": "plot", "expr": "x", "xRange": [-2, 2], "yRange": [-2, 2]},
+                "right": {"kind": "formula", "formulas": ["y = x"]},
+            },
+        ),
+        240,
+    )["scenes"][0]
+    assert out["component"] == "SplitFocusScene"
+    assert "points" in out["props"]["left"] and "expr" not in out["props"]["left"]
+    assert out["props"]["right"]["formulas"] == ["y = x"]
+
+
+def test_normalise_split_focus_invalid_panel_fallback() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("split", {"left": {"kind": "image", "src": "x"}, "right": {}}), 240
+    )["scenes"][0]
+    # no valid bounded panel -> degrade to BulletScene
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
 def test_normalise_narration_field_aliases() -> None:
     raw = {
         "title": "T", "slug": "t", "scenes": [

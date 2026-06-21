@@ -132,6 +132,12 @@ _COMPONENT_ALIASES = {
     "quotescene": "QuoteScene",
     "pullquote": "QuoteScene",
     "statement": "QuoteScene",
+    "split": "SplitFocusScene",
+    "splitfocus": "SplitFocusScene",
+    "splitfocusscene": "SplitFocusScene",
+    "split_screen": "SplitFocusScene",
+    "splitscreen": "SplitFocusScene",
+    "sidebyside": "SplitFocusScene",
     "image": "ImageScene",
     "imagescene": "ImageScene",
     "photo": "ImageScene",
@@ -167,6 +173,10 @@ _PALETTE_LINE = (
     "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
     "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
     "- QuoteScene:   { quote: str, author?: str, accent?: \"#hex\" }  — a full-screen headline quotation/statement revealed word-by-word (beats: quote; +1 if author)\n"
+    "- SplitFocusScene: { title?: str, caption?: str,\n"
+    "                  left:  {kind: \"code\"|\"plot\"|\"formula\"|\"bullets\"|\"terminal\", ...kind props},\n"
+    "                  right: {kind: \"code\"|\"plot\"|\"formula\"|\"bullets\"|\"terminal\", ...kind props} }  — two live panels side by side (cause/effect, code + its result).\n"
+    "                  kind props mirror the matching scene: code{code,lang?,codeTitle?}, plot{expr|points,xRange,yRange,xLabel?,yLabel?}, formula{formulas[1-2]}, bullets{bullets[2-4],heading?}, terminal{command,output?}. Beats: left, right, then inner items.\n"
     "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
     "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
@@ -395,6 +405,68 @@ def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap
     return out
 
 
+_SPLIT_KINDS = ("code", "plot", "formula", "bullets", "terminal")
+
+
+def _norm_panel(value: Any) -> dict[str, Any] | None:
+    """Normalise one SplitFocus panel to a bounded kind, or None if invalid.
+
+    Bounded kinds are fully deterministic (no external asset). ``image``/
+    ``footage`` are intentionally excluded in this version (they would require
+    the asset resolver to descend into nested props)."""
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or "").strip().lower()
+    if kind not in _SPLIT_KINDS:
+        return None
+    if kind == "code":
+        code = str(value.get("code") or "").strip()
+        if not code:
+            return None
+        out: dict[str, Any] = {"kind": "code", "code": code[:1200]}
+        if value.get("lang"):
+            out["lang"] = str(value["lang"])[:24]
+        if value.get("codeTitle"):
+            out["codeTitle"] = str(value["codeTitle"])[:60]
+        return out
+    if kind == "terminal":
+        command = str(value.get("command") or value.get("cmd") or "").strip()
+        if not command:
+            return None
+        out = {"kind": "terminal", "command": command[:200]}
+        if value.get("output"):
+            out["output"] = str(value["output"])[:400]
+        return out
+    if kind == "formula":
+        formulas = [str(f).strip() for f in (value.get("formulas") or []) if str(f).strip()]
+        if not formulas:
+            return None
+        return {"kind": "formula", "formulas": formulas[:2]}
+    if kind == "bullets":
+        bullets = [str(b).strip() for b in (value.get("bullets") or []) if str(b).strip()]
+        if not bullets:
+            return None
+        out = {"kind": "bullets", "bullets": bullets[:4]}
+        if value.get("heading"):
+            out["heading"] = str(value["heading"])[:60]
+        return out
+    # plot
+    x_range = _clamp_range(value.get("xRange"), -50, 50, (-4.0, 4.0))
+    y_range = _clamp_range(value.get("yRange"), -200, 200, (-2.0, 6.0))
+    expr = value.get("expr")
+    pts = value.get("points")
+    if expr:
+        pts = sample_expr(str(expr), x_range[0], x_range[1], n=80)
+    if not isinstance(pts, list) or not pts:
+        return None
+    out = {"kind": "plot", "points": pts, "xRange": x_range, "yRange": y_range}
+    if value.get("xLabel"):
+        out["xLabel"] = str(value["xLabel"])[:24]
+    if value.get("yLabel"):
+        out["yLabel"] = str(value["yLabel"])[:24]
+    return out
+
+
 def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = None) -> dict[str, Any]:
     component = scene.get("component")
     props = dict(scene.get("props") or {})
@@ -528,6 +600,19 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             out["author"] = author[:80]
         if props.get("accent"):
             out["accent"] = str(props["accent"])
+        return out
+    elif component == "SplitFocusScene":
+        left = _norm_panel(props.get("left"))
+        right = _norm_panel(props.get("right"))
+        if left is None or right is None:
+            degrade("SplitFocusScene without two valid bounded panels — fell back to a bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
+        out = {"left": left, "right": right}
+        if props.get("title"):
+            out["title"] = str(props["title"])[:80]
+        if props.get("caption"):
+            out["caption"] = str(props["caption"])[:120]
         return out
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]

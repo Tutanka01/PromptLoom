@@ -14,6 +14,7 @@ import {
   MemoryScene,
   PlotScene,
   QuoteScene,
+  SplitFocusScene,
   TerminalScene,
   TimelineScene,
   TitleScene,
@@ -41,6 +42,7 @@ export const SCENE_COMPONENTS: Record<string, React.FC<Record<string, unknown>>>
   BarChartScene: BarChartScene as React.FC<Record<string, unknown>>,
   CounterScene: CounterScene as React.FC<Record<string, unknown>>,
   QuoteScene: QuoteScene as React.FC<Record<string, unknown>>,
+  SplitFocusScene: SplitFocusScene as React.FC<Record<string, unknown>>,
   ImageScene: ImageScene as React.FC<Record<string, unknown>>,
   FootageScene: FootageScene as React.FC<Record<string, unknown>>,
 };
