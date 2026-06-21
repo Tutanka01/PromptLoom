@@ -236,6 +236,36 @@ def test_normalise_split_focus_invalid_panel_fallback() -> None:
     assert out["props"]["bullets"]
 
 
+def test_normalise_zoom_narrative_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene(
+            "zoom",
+            {
+                "canvas": [
+                    {"id": "a", "label": "Process", "x": -3, "y": 1, "detail": "PID, state"},
+                    {"id": "b", "label": "Kernel", "x": 3, "y": -1},
+                    {"id": "c", "label": "Hardware", "x": 0, "y": -2.5},
+                ],
+                "path": ["a", "b", "x-unknown"],
+            },
+        ),
+        240,
+    )["scenes"][0]
+    assert out["component"] == "ZoomNarrativeScene"
+    assert [n["id"] for n in out["props"]["canvas"]] == ["a", "b", "c"]
+    # unknown id dropped, unvisited "c" appended -> every id visited once
+    assert out["props"]["path"] == ["a", "b", "c"]
+    assert -6 <= out["props"]["canvas"][0]["x"] <= 6
+
+
+def test_normalise_zoom_narrative_too_few_items_fallback() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("ZoomNarrativeScene", {"canvas": [{"id": "a", "label": "x"}]}), 240
+    )["scenes"][0]
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
 def test_normalise_narration_field_aliases() -> None:
     raw = {
         "title": "T", "slug": "t", "scenes": [

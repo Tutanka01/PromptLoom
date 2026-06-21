@@ -138,6 +138,11 @@ _COMPONENT_ALIASES = {
     "split_screen": "SplitFocusScene",
     "splitscreen": "SplitFocusScene",
     "sidebyside": "SplitFocusScene",
+    "zoom": "ZoomNarrativeScene",
+    "zoomnarrative": "ZoomNarrativeScene",
+    "zoomnarrativescene": "ZoomNarrativeScene",
+    "canvas": "ZoomNarrativeScene",
+    "map_zoom": "ZoomNarrativeScene",
     "image": "ImageScene",
     "imagescene": "ImageScene",
     "photo": "ImageScene",
@@ -177,6 +182,8 @@ _PALETTE_LINE = (
     "                  left:  {kind: \"code\"|\"plot\"|\"formula\"|\"bullets\"|\"terminal\", ...kind props},\n"
     "                  right: {kind: \"code\"|\"plot\"|\"formula\"|\"bullets\"|\"terminal\", ...kind props} }  — two live panels side by side (cause/effect, code + its result).\n"
     "                  kind props mirror the matching scene: code{code,lang?,codeTitle?}, plot{expr|points,xRange,yRange,xLabel?,yLabel?}, formula{formulas[1-2]}, bullets{bullets[2-4],heading?}, terminal{command,output?}. Beats: left, right, then inner items.\n"
+    "- ZoomNarrativeScene: { canvas: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), sub?: str, detail?: str}, ...(2-8) ],\n"
+    "                  path?: [id, ...], accent?: \"#hex\" }  — a camera zooms/pans across a big canvas, focusing each item in `path` order. Beats: one anchor per path stop.\n"
     "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
     "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
@@ -613,6 +620,45 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             out["title"] = str(props["title"])[:80]
         if props.get("caption"):
             out["caption"] = str(props["caption"])[:120]
+        return out
+    elif component == "ZoomNarrativeScene":
+        raw_items = props.get("canvas") if isinstance(props.get("canvas"), list) else []
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for i, it in enumerate(raw_items[:8]):
+            if not isinstance(it, dict):
+                continue
+            iid = str(it.get("id") or f"n{i}").strip()[:24]
+            if not iid or iid in seen_ids:
+                continue
+            seen_ids.add(iid)
+            node: dict[str, Any] = {
+                "id": iid,
+                "label": str(it.get("label") or iid)[:48],
+                "x": max(-6.0, min(6.0, _to_float(it.get("x"), 0.0))),
+                "y": max(-3.0, min(3.0, _to_float(it.get("y"), 0.0))),
+            }
+            if it.get("sub"):
+                node["sub"] = str(it["sub"])[:48]
+            if it.get("detail"):
+                node["detail"] = str(it["detail"])[:120]
+            items.append(node)
+        if len(items) < 2:
+            degrade("ZoomNarrativeScene with fewer than 2 canvas items — fell back to a bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
+        raw_path = props.get("path") if isinstance(props.get("path"), list) else []
+        path: list[str] = []
+        for pid in raw_path:
+            sid = str(pid).strip()
+            if sid in seen_ids and sid not in path:
+                path.append(sid)
+        for node in items:  # append any unvisited node, preserving canvas order
+            if node["id"] not in path:
+                path.append(node["id"])
+        out = {"canvas": items, "path": path}
+        if props.get("accent"):
+            out["accent"] = str(props["accent"])
         return out
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]

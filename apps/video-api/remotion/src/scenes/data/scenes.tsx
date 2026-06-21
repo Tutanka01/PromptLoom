@@ -760,3 +760,70 @@ export const SplitFocusScene: React.FC<Base & { left: SplitPanel; right: SplitPa
     </Shell>
   );
 };
+
+// --- ZoomNarrativeScene: a camera that pans/zooms across a canvas ---------- //
+type CanvasItem = { id: string; label: string; x: number; y: number; sub?: string; detail?: string };
+
+/** Camera zooms/pans across a virtual canvas, focusing each path stop in turn. */
+export const ZoomNarrativeScene: React.FC<Base & { canvas: CanvasItem[]; path: string[] }> = ({ dur, accent, title, cues, canvas, path }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const byId: Record<string, CanvasItem> = Object.fromEntries(canvas.map((c) => [c.id, c]));
+  const stops = path.map((id) => byId[id]).filter(Boolean) as CanvasItem[];
+  if (stops.length === 0) {
+    return (
+      <AbsoluteFill>
+        <AmbientBackground accent={ac} />
+      </AbsoluteFill>
+    );
+  }
+  // Strictly-increasing camera keyframes: one per stop (at its cue), then an
+  // overview keyframe (scale 1, centred) at the end.
+  const times: number[] = [];
+  let prev = 0;
+  stops.forEach((_, i) => {
+    const raw = cueOr(cues, i, 0.12 + (i * (0.82 - 0.12)) / Math.max(1, stops.length));
+    const v = Math.max(prev + 0.001, raw);
+    times.push(v);
+    prev = v;
+  });
+  const overview = Math.max(prev + 0.02, 0.92);
+  times.push(overview);
+  const ZOOM = 1.9;
+  const targetsX = stops.map((s) => s.x).concat([0]);
+  const targetsY = stops.map((s) => s.y).concat([0]);
+  const scales = stops.map(() => ZOOM).concat([1]);
+  const clampOpts = { extrapolateLeft: "clamp" as const, extrapolateRight: "clamp" as const };
+  const camX = interpolate(p, times, targetsX, clampOpts);
+  const camY = interpolate(p, times, targetsY, clampOpts);
+  const scale = interpolate(p, times, scales, clampOpts);
+  // Move so the focused world point lands at screen centre, scaled about centre.
+  const tx = -camX * mu(1) * scale;
+  const ty = camY * mu(1) * scale;
+  return (
+    <AbsoluteFill>
+      <AmbientBackground accent={ac} />
+      {title ? <TitleBar label={title} opacity={appear(p, 0, 0.08)} /> : null}
+      <AbsoluteFill style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})`, transformOrigin: "center center" }}>
+        {canvas.map((item) => {
+          const stopIdx = path.indexOf(item.id);
+          const focusT = times[stopIdx >= 0 ? stopIdx : 0];
+          const reveal = appear(p, focusT, focusT + 0.1);
+          return (
+            <div key={item.id} style={{ opacity: 0.32 + 0.68 * reveal }}>
+              <Card x={item.x} y={item.y} w={2.4} h={1.2} accent={ac} glow={reveal} fontPx={28}>
+                <div style={{ textAlign: "center" }}>
+                  {item.label}
+                  {item.sub ? <div style={{ fontSize: 18, color: colors.muted, fontWeight: 400 }}>{item.sub}</div> : null}
+                </div>
+              </Card>
+              {item.detail ? (
+                <Caption x={item.x} y={item.y - 0.95} label={item.detail} color={colors.muted} size={18} opacity={reveal} width={3} />
+              ) : null}
+            </div>
+          );
+        })}
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
