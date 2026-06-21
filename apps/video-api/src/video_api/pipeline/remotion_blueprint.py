@@ -128,6 +128,10 @@ _COMPONENT_ALIASES = {
     "metric": "CounterScene",
     "number": "CounterScene",
     "stat": "CounterScene",
+    "quote": "QuoteScene",
+    "quotescene": "QuoteScene",
+    "pullquote": "QuoteScene",
+    "statement": "QuoteScene",
     "image": "ImageScene",
     "imagescene": "ImageScene",
     "photo": "ImageScene",
@@ -162,6 +166,7 @@ _PALETTE_LINE = (
     "- FlowScene:    { title: str, stages: [ {label: str, sub?: str, icon?: icon_name}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
     "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
     "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
+    "- QuoteScene:   { quote: str, author?: str, accent?: \"#hex\" }  — a full-screen headline quotation/statement revealed word-by-word (beats: quote; +1 if author)\n"
     "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
     "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
@@ -511,6 +516,19 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
                 props[key] = str(props[key])[:40]
         if props.get("decimals") is not None:
             props["decimals"] = max(0, min(3, int(_to_float(props.get("decimals"), 0))))
+    elif component == "QuoteScene":
+        quote = str(props.get("quote") or "").strip()
+        if len(quote) < 3:
+            degrade("QuoteScene without a quote — fell back to a narration bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 3)}
+        out: dict[str, Any] = {"quote": quote[:240]}
+        author = str(props.get("author") or "").strip()
+        if author:
+            out["author"] = author[:80]
+        if props.get("accent"):
+            out["accent"] = str(props["accent"])
+        return out
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]
         if not query:

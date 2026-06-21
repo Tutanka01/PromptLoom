@@ -572,3 +572,62 @@ export const FootageScene: React.FC<MediaBase & {mediaDurationSeconds?: number}>
     </MediaChrome>
   );
 };
+
+/** A full-screen headline quotation revealed word-by-word, optional attribution. */
+export const QuoteScene: React.FC<Base & { quote: string; author?: string }> = ({
+  dur,
+  accent,
+  cues,
+  quote = "",
+  author,
+}) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const cQuote = cueOr(cues, 0, 0.12);
+  const cAuthor = Math.max(cQuote + 0.1, cueOr(cues, 1, 0.6));
+  const size = quote.length > 160 ? 56 : quote.length > 90 ? 72 : 92;
+  return (
+    <AbsoluteFill>
+      <AmbientBackground accent={ac} />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 12%",
+          textAlign: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 180,
+            lineHeight: "120px",
+            color: ac,
+            opacity: appear(p, 0.04, 0.12) * 0.45,
+            fontFamily: fonts.sans,
+          }}
+        >
+          {"“"}
+        </div>
+        <TextReveal text={quote} fontSize={size} color={colors.text} delay={cQuote * dur} staggerDelay={4} />
+        {author ? (
+          <div
+            style={{
+              marginTop: mu(0.5),
+              fontSize: 34,
+              color: colors.muted,
+              opacity: appear(p, cAuthor, cAuthor + 0.1),
+              fontFamily: fonts.sans,
+            }}
+          >
+            {"— "}
+            {author}
+          </div>
+        ) : null}
+      </div>
+    </AbsoluteFill>
+  );
+};

@@ -177,6 +177,22 @@ def test_normalise_new_scenes_empty_fallbacks() -> None:
     assert isinstance(cnt["props"]["value"], float)
 
 
+def test_normalise_quote_scene() -> None:
+    out = normalize_remotion_blueprint(
+        _wrap_scene("quote", {"quote": "Virtual memory is a useful lie.", "author": "Tanenbaum"}), 240
+    )["scenes"][0]
+    assert out["component"] == "QuoteScene"  # alias coerced
+    assert out["props"]["quote"] == "Virtual memory is a useful lie."
+    assert out["props"]["author"] == "Tanenbaum"
+
+
+def test_normalise_quote_scene_empty_fallback() -> None:
+    out = normalize_remotion_blueprint(_wrap_scene("QuoteScene", {}), 240)["scenes"][0]
+    # empty quote degrades to a renderable BulletScene, never a blank frame
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
 def test_normalise_narration_field_aliases() -> None:
     raw = {
         "title": "T", "slug": "t", "scenes": [

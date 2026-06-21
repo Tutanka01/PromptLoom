@@ -440,6 +440,7 @@ REMOTION_PALETTE = (
     "FlowScene",
     "BarChartScene",
     "CounterScene",
+    "QuoteScene",
     "ImageScene",
     "FootageScene",
 )
@@ -459,6 +460,7 @@ RemotionComponent = Literal[
     "FlowScene",
     "BarChartScene",
     "CounterScene",
+    "QuoteScene",
     "ImageScene",
     "FootageScene",
     "Custom",
