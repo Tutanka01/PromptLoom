@@ -62,7 +62,7 @@ curl -X POST http://localhost:8080/v1/videos \
   "production_mode": "cinematic",
   "research": {"enabled": true, "required": true, "max_sources": 10},
   "visuals": {"strategy": "hybrid", "allow_stock": true, "max_assets": 4},
-  "captions": "keywords",
+  "captions": "full",
   "callback_url": null
 }
 ```
@@ -110,16 +110,19 @@ Champs :
   `cinematic` choisissent Remotion. `cinematic` refuse explicitement Manim.
 - `production_mode` optionnel : `technical` (compatibilite historique),
   `editorial` ou `cinematic`. Les deux modes avances activent par defaut la
-  recherche, les captions par mots-cles, les ponts sonores et le gate
-  anti-diaporama. Le mode cinematique rend Remotion en 60 fps.
+  recherche, les sous-titres continus (`captions: "full"`), les ponts sonores et
+  le gate anti-diaporama. Le mode cinematique rend Remotion en 60 fps.
 - `research` controle l'etape de recherche : `enabled`, `required` et
   `max_sources` (3 a 20). Les credentials et endpoints restent exclusivement
   cote serveur. En mode avance, `enabled` et `required` valent `true` par defaut.
 - `visuals.strategy` vaut `diagrams`, `hybrid` ou `motion_first` ;
   `allow_stock` autorise les requetes de medias et `max_assets` (0 a 12) borne
   leur nombre. Une acquisition impossible produit un fallback diagrammatique.
-- `captions` vaut `off`, `keywords` ou `full`. `keywords` utilise les mots
-  alignes sur la voix autour des beats narratifs.
+- `captions` vaut `off`, `keywords` ou `full` (defaut `full` en mode avance). Les
+  sous-titres sont une piste continue homogene affichant le vrai texte parle
+  (casse, ponctuation, accents, chiffres reels) regroupe en cues lisibles ; `full`
+  et `keywords` la rendent en continu, `off` la masque. Quand l'alignement tourne,
+  le job exporte aussi un sidecar `.srt` + `.vtt` (voir `report.subtitles`).
 - `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
   (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
   dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
@@ -276,9 +279,15 @@ Sert n'importe quel fichier du workspace du job (protection path-traversal) :
 `blueprint.json`, `logs/render-low.log`, `reports/final/freeze.json`,
 `reports/final/snapshots/check_01_0010.png`, ...
 
+C'est aussi par cet endpoint qu'on telecharge les **sous-titres sidecar** quand
+`captions != off` : les chemins exacts (relatifs au workspace) sont publies dans
+`report.subtitles` (`{"srt": "...", "vtt": "..."}`).
+
 ```bash
 curl http://localhost:8080/v1/videos/<job_id>/artifacts/blueprint.json
 curl http://localhost:8080/v1/videos/<job_id>/artifacts/logs/render-final.log
+# sous-titres (chemin lu depuis report.subtitles) :
+curl http://localhost:8080/v1/videos/<job_id>/artifacts/videos/<theme>/<slug>/final/<slug>-<langue>.srt
 ```
 
 ## `GET /v1/videos/{job_id}/download`
@@ -312,7 +321,9 @@ Le rapport peut contenir :
 - resume `freezedetect` ;
 - chemins de snapshots.
 - configuration `production`, resume `research`, `motion_plan` et resultat du
-  gate final `delivery`.
+  gate final `delivery` ;
+- `subtitles` : chemins workspace des sidecars `.srt`/`.vtt` (vide si
+  `captions: "off"` ou si l'alignement n'a rien produit).
 
 Les artefacts avances inspectables incluent `research.json`, `proposal.json`,
 `scene_plan.json`, `asset_manifest.json` et `motion_plan_report.json`.

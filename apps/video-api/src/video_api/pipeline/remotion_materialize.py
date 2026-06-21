@@ -104,8 +104,15 @@ MIN_FRAMES = FPS  # >= 1 second
 ROOT = Path(__file__).resolve().parent
 durations = json.loads((ROOT / "audio" / "en" / "durations.json").read_text(encoding="utf-8"))
 scene_map = json.loads((ROOT / "scenes_map.json").read_text(encoding="utf-8"))
-alignment_path = ROOT / "audio" / "en" / "alignment.json"
-alignment = json.loads(alignment_path.read_text(encoding="utf-8")) if alignment_path.exists() else {}
+
+# One global, whole-video subtitle cue list (pipeline/captions.py). Rendered as a
+# single continuous top-level track, so it is NOT attached per scene.
+subtitles_path = ROOT / "subtitles.json"
+subtitles = (
+    json.loads(subtitles_path.read_text(encoding="utf-8")).get("cues", [])
+    if subtitles_path.exists()
+    else []
+)
 
 scenes = []
 for entry in scene_map["scenes"]:
@@ -113,9 +120,6 @@ for entry in scene_map["scenes"]:
     seconds = float(durations.get(key, 6.0))
     frames = max(MIN_FRAMES, round(seconds * FPS))
     props = dict(entry.get("props", {}))
-    words = (alignment.get(key) or {}).get("words") or []
-    if words:
-        props["alignedWords"] = words
     scenes.append({
         "component": entry["component"],
         "props": props,
@@ -126,6 +130,7 @@ for entry in scene_map["scenes"]:
 video = {
     "embedAudio": False,
     "captionMode": scene_map.get("captionMode", "off"),
+    "subtitles": subtitles,
     "transitionProfile": scene_map.get("transitionProfile", "minimal"),
     "scenes": scenes,
 }
@@ -156,7 +161,7 @@ const Root: React.FC = () => (
     id="Video"
     component={{JobMain}}
     schema={{videoSchema}}
-    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", transitionProfile: "minimal" }}}}
+    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal" }}}}
     fps={{{fps}}}
     width={{1920}}
     height={{1080}}

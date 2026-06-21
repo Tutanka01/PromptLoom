@@ -98,6 +98,7 @@ motion_preflight
 generating_sources
 static_validation
 voice_generation
+audio_alignment
 render_low_quality
 assemble_low_quality
 verify_low_quality

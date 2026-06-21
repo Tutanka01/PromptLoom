@@ -9,8 +9,8 @@ reste en `production_mode: "technical"`.
 | Mode | Moteur par defaut | Recherche | Captions | Promesse controlee |
 |---|---|---|---|---|
 | `technical` | configuration serveur | desactivee | `off` | explication technique |
-| `editorial` | Remotion | activee | `keywords` | montage editorial anime |
-| `cinematic` | Remotion 60 fps | activee | `keywords` | video conduite par le mouvement |
+| `editorial` | Remotion | activee | `full` | montage editorial anime |
+| `cinematic` | Remotion 60 fps | activee | `full` | video conduite par le mouvement |
 
 `cinematic` exige Remotion. `editorial` accepte un moteur explicite, mais
 Remotion est recommande pour les captions alignees, les medias et les
@@ -30,7 +30,7 @@ curl -X POST http://localhost:8080/v1/videos \
     "production_mode": "cinematic",
     "research": {"enabled": true, "required": true, "max_sources": 10},
     "visuals": {"strategy": "hybrid", "allow_stock": true, "max_assets": 4},
-    "captions": "keywords"
+    "captions": "full"
   }'
 ```
 
@@ -43,7 +43,8 @@ recherche sourcee
   -> scene plan + motion preflight
   -> acquisition locale des medias
   -> TTS + alignement mot a mot
-  -> Remotion (motion design + captions)
+  -> sous-titres (cues globaux + sidecar .srt/.vtt) si captions != off
+  -> Remotion (motion design + piste de sous-titres continue)
   -> voix + ponts sonores + musique duckee optionnelle
   -> ffprobe + freezedetect + delivery gate
 ```
@@ -96,10 +97,22 @@ ou il apporte une information exacte.
 - `FootageScene` boucle proprement un clip local avec un traitement editorial.
 - les transitions sont des overlays aux frontieres de scenes : elles ne
   chevauchent pas la timeline et ne desynchronisent donc jamais la voix ;
-- `captions: "keywords"` affiche des fenetres courtes autour des beats,
-  `full` affiche toute la transcription, `off` les masque ;
-- les mots actifs viennent de `audio/en/alignment.json` ; sans alignement, les
-  scenes restent rendables avec leurs timings deterministes ;
+- les sous-titres sont une **piste unique continue** posee au-dessus de toute la
+  timeline (pas par scene, pas conditionnee aux beats), donc homogene et stable
+  pendant les transitions. `full` (et `keywords`, conserve par compatibilite) la
+  rendent en continu ; `off` la masque ;
+- `pipeline/captions.py` regroupe les mots alignes (`audio/en/alignment.json` ->
+  `captions`) en cues lisibles (1-2 lignes equilibrees, coupees sur la
+  ponctuation) affichant le vrai texte (casse, ponctuation, accents, chiffres
+  reels), pas la forme normalisee de l'aligneur, et ecrit la liste globale dans
+  `subtitles.json` (consommee par Remotion). Le multilingue latin (francais
+  inclus) est gere : les diacritiques sont replies cote alignement seulement,
+  l'affichage garde les accents. Sans alignement, les scenes restent rendables
+  (sans sous-titres) ;
+- la meme liste de cues produit un sidecar `final/<slug>-<langue>.srt` + `.vtt`
+  (timeline globale), liste dans `report.subtitles` et telechargeable via
+  `/v1/videos/{id}/artifacts/<chemin>` — incruste et fichier ne peuvent pas
+  diverger ;
 - les modes avances generent des ponts sonores subtils aux coupes. Une musique
   configuree avec `VIDEO_API_MUSIC_FILE` reste duckee sous la narration.
 

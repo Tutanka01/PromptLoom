@@ -2,7 +2,7 @@ import React from "react";
 import { AbsoluteFill, Audio, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { z } from "zod";
 import { AmbientBackground } from "./catalog/AmbientBackground";
-import { NarrationCaptions, type AlignedWord } from "./catalog/NarrationCaptions";
+import { SubtitleTrack } from "./catalog/NarrationCaptions";
 import { SCENE_COMPONENTS } from "./registry";
 import { colors } from "./style/tokens";
 
@@ -26,10 +26,20 @@ export const sceneSchema = z.object({
   audio: z.string().optional(),
 });
 
+const captionWordSchema = z.object({ text: z.string(), start: z.number(), end: z.number() });
+const captionCueSchema = z.object({
+  start: z.number(),
+  end: z.number(),
+  lines: z.array(z.array(captionWordSchema)),
+});
+
 export const videoSchema = z.object({
   scenes: z.array(sceneSchema),
   embedAudio: z.boolean().default(false),
   captionMode: z.enum(["off", "keywords", "full"]).default("off"),
+  // One global, whole-video cue list (pipeline/captions.py -> subtitles.json),
+  // rendered as a single continuous top-level track.
+  subtitles: z.array(captionCueSchema).default([]),
   transitionProfile: z.enum(["minimal", "editorial", "cinematic"]).default("minimal"),
 });
 
@@ -131,6 +141,7 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
   scenes,
   embedAudio,
   captionMode,
+  subtitles,
   transitionProfile,
   registry,
 }) => {
@@ -162,12 +173,6 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
             {embedAudio && scene.audio ? <Audio src={staticFile(scene.audio)} /> : null}
             <SceneFrame dur={scene.durationInFrames} index={i} transition={scene.transition}>
               <Comp dur={scene.durationInFrames} {...scene.props} />
-              <NarrationCaptions
-                words={(scene.props.alignedWords as AlignedWord[] | undefined) ?? []}
-                cues={(scene.props.cues as (number | null)[] | undefined) ?? []}
-                mode={captionMode}
-                dur={scene.durationInFrames}
-              />
             </SceneFrame>
           </Sequence>
         );
@@ -184,6 +189,10 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
             </Sequence>
           ))
         : null}
+      {/* One continuous subtitle track over the WHOLE timeline, on top of every
+          scene and overlay. Not wrapped in a Sequence, so it reads the global
+          frame and never fades with scene transitions. */}
+      <SubtitleTrack cues={subtitles} mode={captionMode} />
     </AbsoluteFill>
   );
 };

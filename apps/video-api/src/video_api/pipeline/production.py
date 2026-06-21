@@ -475,20 +475,39 @@ class VideoPipeline:
                 logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
 
                 cued_scenes = 0
+                subtitle_files: dict[str, str] = {}
                 if self.engine.name == "remotion" and self.settings.align_enabled:
                     self._update(session, job, "audio_alignment", 44, "audio_alignment")
                     try:
                         from video_api.pipeline.align import align_segments
                         from video_api.pipeline.beats import resolve_cues
+                        from video_api.pipeline.captions import write_subtitles
 
                         align_segments(video_dir, device=self.settings.align_device)
                         cued = resolve_cues(video_dir, blueprint)
                         cued_scenes = len(cued)
+                        # Subtitles are opt-in per request: `captions: "off"` ships
+                        # a clean video with no burned-in track AND no .srt/.vtt.
+                        # Alignment/beats above still run — they drive the visual
+                        # cue timing regardless of subtitles.
+                        n_cues = 0
+                        if self.settings.caption_mode != "off":
+                            n_cues = write_subtitles(
+                                video_dir, slug=blueprint.slug, language=job.language
+                            )
+                            subtitle_files = _subtitle_artifacts(
+                                workspace, video_dir, blueprint.slug, job.language
+                            )
                         logger.info(
-                            "job.align.done job_id=%s scenes_with_cues=%d", job.id, len(cued)
+                            "job.align.done job_id=%s scenes_with_cues=%d caption_mode=%s subtitle_cues=%d",
+                            job.id,
+                            len(cued),
+                            self.settings.caption_mode,
+                            n_cues,
                         )
                     except Exception as align_exc:
-                        # Non-fatal: scenes keep their default item timings.
+                        # Non-fatal: scenes keep their default item timings and the
+                        # job ships without burned-in captions / sidecar subtitles.
                         logger.warning(
                             "job.align.failed job_id=%s error=%s (continuing without cues)",
                             job.id,
@@ -605,6 +624,7 @@ class VideoPipeline:
                         "rendered video did not fulfil its delivery promise: "
                         + json.dumps(final_report["delivery"], sort_keys=True)
                     )
+                final_report["subtitles"] = subtitle_files
                 final_report["timings"] = _timings_from_marks(self._step_marks)
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")
@@ -645,6 +665,26 @@ class VideoPipeline:
 
 def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:
     return timing.minimum_final_duration(target_duration_seconds, default_min_duration_seconds)
+
+
+def _subtitle_artifacts(
+    workspace: Path, video_dir: Path, slug: str, language: str
+) -> dict[str, str]:
+    """Workspace-relative paths to the sidecar subtitles, for the report.
+
+    These resolve under the generic artifacts endpoint
+    (``/v1/videos/{id}/artifacts/<path>``); only files actually written are
+    listed so a job without alignment simply reports no subtitles.
+    """
+    found: dict[str, str] = {}
+    for ext in ("srt", "vtt"):
+        path = video_dir / "final" / f"{slug}-{language}.{ext}"
+        if path.exists():
+            try:
+                found[ext] = str(path.relative_to(workspace))
+            except ValueError:
+                found[ext] = str(path)
+    return found
 
 
 def _timings_from_marks(marks: list[tuple[str, float]]) -> dict:

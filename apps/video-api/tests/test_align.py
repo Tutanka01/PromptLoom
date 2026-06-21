@@ -1,12 +1,43 @@
 import json
 from pathlib import Path
 
-from video_api.pipeline.align import align_segments, normalize_words
+from video_api.pipeline.align import align_segments, normalize_words, surface_tokens
 
 
 def test_normalize_words_basic() -> None:
     assert normalize_words("The Kernel, talks to hardware!") == [
         "the", "kernel", "talks", "to", "hardware",
+    ]
+
+
+def test_surface_tokens_preserve_case_and_punctuation() -> None:
+    # The surface keeps the real spoken word (case + punctuation) for display;
+    # its sub-tokens are the normalized pieces fed to the aligner. Flattening the
+    # sub-tokens must equal normalize_words so the same flat sequence still aligns.
+    text = "The Kernel, talks to hardware!"
+    tokens = surface_tokens(text)
+    assert [surface for surface, _ in tokens] == [
+        "The", "Kernel,", "talks", "to", "hardware!",
+    ]
+    flat = [sub for _, subs in tokens for sub in subs]
+    assert flat == normalize_words(text)
+
+
+def test_surface_tokens_digit_word_spawns_multiple_subtokens() -> None:
+    tokens = surface_tokens("use 64-bit addressing")
+    by_surface = {surface: subs for surface, subs in tokens}
+    # The real "64-bit" stays intact for display, but aligns via spelled digits.
+    assert "64-bit" in by_surface
+    assert len(by_surface["64-bit"]) == 3  # sixty / four / bit
+    assert by_surface["64-bit"][-1] == "bit"
+
+
+def test_normalize_words_folds_diacritics_but_surface_keeps_accents() -> None:
+    # Alignment charset is ASCII (CTC); accents must fold, NOT be dropped.
+    assert normalize_words("été du système") == ["ete", "du", "systeme"]
+    # ...while the surface (what the viewer reads) keeps the real accents.
+    assert [surface for surface, _ in surface_tokens("été du système")] == [
+        "été", "du", "système",
     ]
 
 
@@ -48,6 +79,36 @@ def test_align_segments_writes_alignment(tmp_path: Path) -> None:
     assert words[1]["start"] == 0.5
     on_disk = json.loads((audio_dir / "alignment.json").read_text(encoding="utf-8"))
     assert on_disk["S1"]["words"] == words
+
+
+def test_align_segments_writes_surface_captions(tmp_path: Path) -> None:
+    audio_dir = tmp_path / "audio" / "en"
+    audio_dir.mkdir(parents=True)
+    _write_segments(tmp_path, [{"key": "S1", "text": "The kernel, runs."}])
+    (audio_dir / "S1.wav").write_bytes(b"RIFF")
+
+    alignment = align_segments(tmp_path, aligner=_fake_aligner)
+    captions = alignment["S1"]["captions"]
+    # Real surface text with case + punctuation, NOT the normalized form.
+    assert [c["text"] for c in captions] == ["The", "kernel,", "runs."]
+    # Timing carried straight from the aligned sub-token (1:1 here).
+    assert captions[0]["start"] == 0.0
+    assert captions[1]["start"] == 0.5
+
+
+def test_align_segments_caption_spans_digit_expansion(tmp_path: Path) -> None:
+    audio_dir = tmp_path / "audio" / "en"
+    audio_dir.mkdir(parents=True)
+    _write_segments(tmp_path, [{"key": "S1", "text": "use 64-bit"}])
+    (audio_dir / "S1.wav").write_bytes(b"RIFF")
+
+    alignment = align_segments(tmp_path, aligner=_fake_aligner)
+    captions = alignment["S1"]["captions"]
+    assert [c["text"] for c in captions] == ["use", "64-bit"]
+    # "64-bit" aligns via three sub-tokens (sixty/four/bit): its display span
+    # runs from the first sub-token's start to the last sub-token's end.
+    assert captions[1]["start"] == 0.5   # "sixty"
+    assert captions[1]["end"] == 1.9     # end of "bit" (index 3 -> 1.5 + 0.4)
 
 
 def test_align_segments_skips_missing_wav(tmp_path: Path) -> None:

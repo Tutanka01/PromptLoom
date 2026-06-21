@@ -371,11 +371,11 @@ def test_build_video_json_floors_missing_duration(tmp_path) -> None:
     assert all(s["durationInFrames"] >= 30 for s in video["scenes"])  # MIN_FRAMES (== render_fps)
 
 
-def test_build_video_json_injects_alignment_and_editorial_profiles(tmp_path) -> None:
+def test_build_video_json_passes_global_subtitles_and_editorial_profiles(tmp_path) -> None:
     settings = Settings(
         repo_root=REPO_ROOT,
         fake_llm=True,
-        caption_mode="keywords",
+        caption_mode="full",
         transition_profile="editorial",
     )
     bp = fake_remotion_blueprint("x", "cs", 240)
@@ -384,15 +384,15 @@ def test_build_video_json_injects_alignment_and_editorial_profiles(tmp_path) -> 
     audio = video_dir / "audio" / "en"
     audio.mkdir(parents=True, exist_ok=True)
     (audio / "durations.json").write_text(json.dumps({s["key"]: 3.0 for s in smap["scenes"]}))
-    first = smap["scenes"][0]["key"]
-    (audio / "alignment.json").write_text(
-        json.dumps({first: {"words": [{"w": "kernel", "start": 0.1, "end": 0.4}]}})
-    )
+    # The global subtitle cue list (pipeline/captions.py -> subtitles.json) must be
+    # carried verbatim into video.json as a top-level `subtitles` array.
+    cue = {"start": 0.1, "end": 0.9, "lines": [[{"text": "Kernel", "start": 0.1, "end": 0.4}]]}
+    (video_dir / "subtitles.json").write_text(json.dumps({"cues": [cue]}))
     subprocess.run([sys.executable, "build_video_json.py"], cwd=video_dir, check=True, capture_output=True)
     video = json.loads((video_dir / "video.json").read_text())
-    assert video["captionMode"] == "keywords"
+    assert video["captionMode"] == "full"
     assert video["transitionProfile"] == "editorial"
-    assert video["scenes"][0]["props"]["alignedWords"][0]["w"] == "kernel"
+    assert video["subtitles"][0]["lines"][0][0]["text"] == "Kernel"
 
 
 # --------------------------------------------------------------------------- #

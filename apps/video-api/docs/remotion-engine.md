@@ -66,9 +66,16 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 Transitions inter-scènes : le fond `AmbientBackground` reste persistant et des
 overlays de coupe (`minimal`, `editorial`, `cinematic`) sont poses a la frontiere
 des sequences. Les scenes ne se chevauchent pas : la voix muxee sequentiellement
-reste exactement synchro. `captionMode` ajoute des captions `keywords` ou `full`
-pilotees par l'alignement mot a mot. Les modes avances mixent aussi un pont sonore
-deterministe a chaque coupe.
+reste exactement synchro. Les sous-titres sont une **piste unique continue**
+(`SubtitleTrack`) posee au niveau composition, au-dessus de toutes les scenes,
+donc elle ne fond jamais avec les transitions et ne depend pas des beats.
+`pipeline/captions.py` regroupe les mots alignes en cues globales (1-2 lignes
+equilibrees, coupees sur la ponctuation, duree bornee) affichant le **vrai texte**
+(casse, ponctuation, accents, chiffres reels) avec surlignage karaoke ; il ecrit
+la liste dans `subtitles.json` (lue par le rendu) et le meme contenu en sidecar
+`final/<slug>-<lang>.srt` + `.vtt`, donc incruste et fichier ne peuvent pas
+diverger. `captionMode` vaut `off` (masque) ou `full`/`keywords` (continu). Les
+modes avances mixent aussi un pont sonore deterministe a chaque coupe.
 
 ### Escape hatch `Custom` (code libre encadré)
 

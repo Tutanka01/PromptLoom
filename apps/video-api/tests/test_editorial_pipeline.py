@@ -23,7 +23,7 @@ def test_production_options_resolve_advanced_defaults() -> None:
     assert options.research.enabled is True
     assert options.visuals.strategy == "hybrid"
     assert options.visuals.allow_stock is True
-    assert options.captions == "keywords"
+    assert options.captions == "full"
     assert options.delivery_promise == "motion_led_explainer"
 
 

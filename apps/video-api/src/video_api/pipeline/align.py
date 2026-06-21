@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -49,25 +50,59 @@ def _spell_number(piece: str) -> str:
         return " ".join(_DIGIT_NAMES[d] for d in piece)
 
 
-def normalize_words(text: str) -> list[str]:
-    """Lowercase + restrict to the charset MMS_FA can align (a-z, apostrophe).
+def _fold_diacritics(text: str) -> str:
+    """Strip combining marks so accented letters fold to ASCII for the aligner.
 
-    Digits are expanded to spoken words so "64-bit" aligns as "sixty four bit"
-    and "ext4" as "ext four". Punctuation splits words; empty pieces are dropped.
-    The SAME normalization must be applied to beat anchors (pipeline/beats.py)
-    so anchor matching compares like with like.
+    "été" -> "ete", "système" -> "systeme". This keeps non-English (Latin-script)
+    narration alignable: MMS_FA's charset is a-z, so previously accented letters
+    were *dropped* ("été" -> "t"), wrecking French/Spanish/etc. alignment. Folding
+    is for the alignment charset ONLY — the surface text keeps its real accents.
     """
-    words: list[str] = []
-    for raw in re.split(r"\s+", text.strip()):
-        for piece in re.findall(r"[a-zA-Z']+|\d+", raw):
-            if piece.isdigit():
-                spoken = _spell_number(piece)
-                words.extend(re.findall(r"[a-z']+", spoken.lower()))
-            else:
-                cleaned = piece.lower().strip("'")
-                if cleaned:
-                    words.append(cleaned)
-    return words
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+
+
+def _subtokens(raw: str) -> list[str]:
+    """Normalized alignment sub-tokens for one whitespace-delimited word.
+
+    Digits are spelled ("64" -> ["sixty", "four"]); accents are folded; the
+    charset is restricted to a-z + apostrophe. May return several tokens
+    ("64-bit" -> ["sixty", "four", "bit"]), one, or none (pure punctuation).
+    """
+    subs: list[str] = []
+    for piece in re.findall(r"[a-zA-Z']+|\d+", _fold_diacritics(raw)):
+        if piece.isdigit():
+            spoken = _spell_number(piece)
+            subs.extend(re.findall(r"[a-z']+", spoken.lower()))
+        else:
+            cleaned = piece.lower().strip("'")
+            if cleaned:
+                subs.append(cleaned)
+    return subs
+
+
+def surface_tokens(text: str) -> list[tuple[str, list[str]]]:
+    """Real surface words paired with the normalized sub-tokens each one spawns.
+
+    The surface keeps the spoken word verbatim — original case, punctuation and
+    accents — so captions/SRT show the real text. The sub-tokens are the
+    alignment form. Flattening every word's sub-tokens equals ``normalize_words``,
+    so the exact same flat sequence still feeds the CTC aligner and beat matching.
+    Pure-punctuation words (e.g. a lone "—") yield an empty sub-token list.
+    """
+    return [(raw, _subtokens(raw)) for raw in re.split(r"\s+", text.strip()) if raw]
+
+
+def normalize_words(text: str) -> list[str]:
+    """Flat normalized token sequence for forced alignment + beat matching.
+
+    Lowercase, accent-folded, charset a-z + apostrophe; digits expanded to spoken
+    words so "64-bit" aligns as "sixty four bit" and "ext4" as "ext four". This is
+    exactly ``surface_tokens`` flattened — the SAME normalization must reach beat
+    anchors (pipeline/beats.py) so anchor matching compares like with like.
+    """
+    return [sub for _, subs in surface_tokens(text) for sub in subs]
 
 
 def _build_mms_aligner(device: str) -> Aligner:
@@ -100,6 +135,41 @@ def _build_mms_aligner(device: str) -> Aligner:
         ]
 
     return align_one
+
+
+def surface_captions(text: str, words: list[dict]) -> list[dict]:
+    """Project per-token alignment timings back onto the real surface words.
+
+    ``words`` are the aligned normalized tokens ({"w","start","end"}, in
+    ``normalize_words`` order). Each surface word claims the span of its
+    sub-tokens — start of the first, end of the last — so "64-bit" gets one
+    caption spanning sixty/four/bit. Pure-punctuation words (no sub-tokens)
+    glue onto the previous caption's text. Returns [{"text","start","end"}].
+    """
+    groups = surface_tokens(text)
+    expected = sum(len(subs) for _, subs in groups)
+    if len(words) != expected:
+        # Stale/mismatched alignment (e.g. an old cache from a different
+        # normalization): don't risk a misaligned projection.
+        logger.warning("align.captions_skip expected=%d got=%d", expected, len(words))
+        return []
+    captions: list[dict] = []
+    cursor = 0
+    for surface, subs in groups:
+        if not subs:
+            if captions:
+                captions[-1]["text"] = f"{captions[-1]['text']} {surface}"
+            continue
+        span = words[cursor : cursor + len(subs)]
+        cursor += len(subs)
+        captions.append(
+            {
+                "text": surface,
+                "start": float(span[0]["start"]),
+                "end": float(span[-1]["end"]),
+            }
+        )
+    return captions
 
 
 def _load_json(path: Path) -> dict:
@@ -137,7 +207,11 @@ def align_segments(video_dir: Path, device: str = "auto", aligner: Aligner | Non
             and cached.get("fp") == fingerprint
             and cached.get("words")
         ):
-            alignment[key] = cached
+            # Reuse the cached timings, but (re)derive surface captions from the
+            # current text so old caches predating captions still get them.
+            entry = {"fp": cached["fp"], "words": cached["words"]}
+            entry["captions"] = surface_captions(segment["text"], cached["words"])
+            alignment[key] = entry
             reused += 1
             continue
         try:
@@ -148,12 +222,14 @@ def align_segments(video_dir: Path, device: str = "auto", aligner: Aligner | Non
             if aligner is None:
                 aligner = _build_mms_aligner(device)
             spans = aligner(wav_path, words)
+            word_dicts = [
+                {"w": word, "start": round(start, 3), "end": round(end, 3)}
+                for word, (start, end) in zip(words, spans)
+            ]
             alignment[key] = {
                 "fp": fingerprint,
-                "words": [
-                    {"w": word, "start": round(start, 3), "end": round(end, 3)}
-                    for word, (start, end) in zip(words, spans)
-                ],
+                "words": word_dicts,
+                "captions": surface_captions(segment["text"], word_dicts),
             }
         except Exception as exc:
             logger.warning("align.segment_failed key=%s error=%s", key, exc)

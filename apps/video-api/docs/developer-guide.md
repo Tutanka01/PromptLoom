@@ -25,6 +25,11 @@ apps/video-api/
       editorial.py
       materialize.py
       remotion_materialize.py
+      remotion_scene_coder.py
+      align.py
+      beats.py
+      captions.py
+      voice.py
       validate.py
       commands.py
       verify.py
@@ -108,6 +113,37 @@ Il ecrit :
 Le blueprint reste du JSON valide. Le code par scene est produit par un scene
 coder encadre (Manim ou TSX Remotion), avec validation et fallback
 deterministe ; le LLM ne peut pas injecter de code arbitraire non controle.
+
+### `pipeline/align.py`
+
+Alignement force mot a mot (Remotion). Apres le TTS, `align_segments` projette
+chaque WAV sur sa narration (torchaudio MMS_FA) et ecrit `audio/en/alignment.json` :
+
+- `words` : tokens normalises pour l'aligneur CTC et le matching de beats ;
+- `captions` : les **vrais mots de surface** (casse, ponctuation, accents,
+  chiffres reels) avec leur timing, via `surface_tokens` (correspondance mot reel
+  -> sous-tokens d'alignement) + pliage NFKD des diacritiques cote alignement
+  seulement (multilingue latin).
+
+Per-segment non fatal, cache par empreinte de voix (reutilise les timings
+inchanges).
+
+### `pipeline/beats.py`
+
+Resout les `beats[].anchor` du blueprint contre les `words` alignes en
+`props.cues` (ratios de progression de scene), pour reveler chaque item visuel
+quand il est prononce. Cues forcees croissantes ; anchor non trouve => timing par
+defaut pour cet item.
+
+### `pipeline/captions.py`
+
+Source de verite unique des sous-titres (opt-in via `captions`). `build_cues`
+(fonction pure) regroupe les `captions` alignees en cues lisibles (coupe sur la
+ponctuation, 1-2 lignes equilibrees <= ~42 car., duree bornee). `write_subtitles`
+decale chaque scene sur la timeline globale (somme cumulee de `durations.json`,
+la voix etant un flux continu) et ecrit `subtitles.json` (piste continue lue par
+Remotion) + `final/<slug>-<langue>.srt`/`.vtt`. Incruste et sidecar partagent les
+memes cues, donc ne peuvent pas diverger.
 
 ### `pipeline/validate.py`
 

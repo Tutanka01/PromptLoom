@@ -31,7 +31,8 @@ prompt
   -> plan/script/segments/beats
   -> code Manim ou Remotion
   -> voix Chatterbox
-  -> rendu + captions alignees
+  -> alignement mot a mot (+ sous-titres optionnels : piste continue + .srt/.vtt)
+  -> rendu Manim ou Remotion
   -> assemblage ffmpeg
   -> verification ffprobe/freezedetect/snapshots
   -> MP4 final

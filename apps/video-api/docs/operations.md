@@ -275,11 +275,12 @@ Les artefacts de diagnostic sont `research.json`, `asset_manifest.json` et
 mouvement finit en `failed_generation`. Un echec du delivery gate apres rendu
 finit en `failed_quality`.
 
-### Synchro narration <-> visuel (Remotion)
+### Synchro narration <-> visuel + sous-titres (Remotion)
 
 ```text
 VIDEO_API_ALIGN_ENABLED=1         # alignement force mot a mot (torchaudio MMS_FA)
 VIDEO_API_ALIGN_DEVICE=auto       # auto | cpu | cuda
+VIDEO_API_CAPTION_MODE=off        # defaut serveur : off | full | keywords
 ```
 
 Apres le TTS, le worker aligne chaque WAV sur sa narration et resout les
@@ -287,6 +288,21 @@ Apres le TTS, le worker aligne chaque WAV sur sa narration et resout les
 quand ses mots sont prononces. Non fatal : sans alignement, les scenes gardent
 leurs timings par defaut. Le cache (`audio/en/cache.json`) evite de realigner
 les segments inchanges.
+
+Le **sous-titrage** est opt-in (champ `captions` de la requete ;
+`VIDEO_API_CAPTION_MODE` n'est que le defaut serveur, surcharge par la requete et
+par le mode de production). Quand `captions != off`, `pipeline/captions.py`
+projette les timings d'alignement sur le vrai texte (casse, ponctuation, accents,
+chiffres reels), regroupe en cues lisibles (1-2 lignes equilibrees) et ecrit :
+
+- `subtitles.json` : la liste globale lue par Remotion et rendue comme **une
+  seule piste continue** au-dessus de toute la video (jamais coupee par les
+  scenes/transitions) ;
+- `final/<slug>-<langue>.srt` + `.vtt` : sidecar (meme contenu) liste dans
+  `report.subtitles`.
+
+`captions: "off"` ne produit aucun sous-titre (ni incruste, ni fichier).
+L'alignement, lui, tourne quand meme s'il est active (il pilote les `cues`).
 
 ### Generation LLM
 
