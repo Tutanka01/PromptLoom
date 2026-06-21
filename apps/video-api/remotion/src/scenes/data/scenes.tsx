@@ -827,3 +827,42 @@ export const ZoomNarrativeScene: React.FC<Base & { canvas: CanvasItem[]; path: s
     </AbsoluteFill>
   );
 };
+
+// --- NetworkMapScene: an animated node-link graph -------------------------- //
+type NetNode = { id: string; label: string; x: number; y: number; group?: string };
+type NetLink = { a: string; b: string; label?: string };
+
+const NET_GROUP_COLORS = [colors.user, colors.success, colors.purple, colors.kernel];
+
+/** Animated node-link graph; nodes light up on cue, edges draw after both ends. */
+export const NetworkMapScene: React.FC<Base & { nodes: NetNode[]; links: NetLink[] }> = ({ dur, accent, title, caption, cues, nodes, links }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const indexOf: Record<string, number> = Object.fromEntries(nodes.map((n, i) => [n.id, i]));
+  const byId: Record<string, NetNode> = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const groups = Array.from(new Set(nodes.map((n) => n.group ?? "_")));
+  const colorFor = (n: NetNode) => NET_GROUP_COLORS[groups.indexOf(n.group ?? "_") % NET_GROUP_COLORS.length] ?? ac;
+  const nodeCue = (i: number) => cueOr(cues, i, 0.12 + (i * 0.6) / Math.max(1, nodes.length));
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      {links.map((lk, i) => {
+        const a = byId[lk.a];
+        const b = byId[lk.b];
+        if (!a || !b) return null;
+        const start = Math.max(nodeCue(indexOf[lk.a] ?? 0), nodeCue(indexOf[lk.b] ?? 0));
+        const progress = beat(p, start, start + 0.16, "linear");
+        return <Arrow key={`l${i}`} from={[a.x, a.y]} to={[b.x, b.y]} color={colors.edge} width={2.5} progress={progress} opacity={0.7} />;
+      })}
+      {nodes.map((n, i) => {
+        const reveal = appear(p, nodeCue(i), nodeCue(i) + 0.1);
+        return (
+          <div key={n.id} style={{ opacity: reveal }}>
+            <Card x={n.x} y={n.y} w={1.9} h={0.82} accent={colorFor(n)} glow={reveal * 0.8} fontPx={22}>
+              {n.label}
+            </Card>
+          </div>
+        );
+      })}
+    </Shell>
+  );
+};

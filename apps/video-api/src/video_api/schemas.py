@@ -443,6 +443,7 @@ REMOTION_PALETTE = (
     "QuoteScene",
     "SplitFocusScene",
     "ZoomNarrativeScene",
+    "NetworkMapScene",
     "ImageScene",
     "FootageScene",
 )
@@ -465,6 +466,7 @@ RemotionComponent = Literal[
     "QuoteScene",
     "SplitFocusScene",
     "ZoomNarrativeScene",
+    "NetworkMapScene",
     "ImageScene",
     "FootageScene",
     "Custom",

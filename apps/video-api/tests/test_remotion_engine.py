@@ -266,6 +266,30 @@ def test_normalise_zoom_narrative_too_few_items_fallback() -> None:
     assert out["props"]["bullets"]
 
 
+def test_normalise_network_map_scene_layout_is_deterministic() -> None:
+    raw = _wrap_scene(
+        "network",
+        {
+            "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}, {"id": "c", "label": "C"}],
+            "links": [{"a": "a", "b": "b"}, {"a": "b", "b": "z-missing"}],
+        },
+    )
+    out1 = normalize_remotion_blueprint(raw, 240)["scenes"][0]
+    out2 = normalize_remotion_blueprint(raw, 240)["scenes"][0]
+    assert out1["component"] == "NetworkMapScene"
+    # positions assigned, in-bounds, deterministic
+    assert all(-6 <= n["x"] <= 6 and -3 <= n["y"] <= 3 for n in out1["props"]["nodes"])
+    assert [(n["x"], n["y"]) for n in out1["props"]["nodes"]] == [(n["x"], n["y"]) for n in out2["props"]["nodes"]]
+    # link to a missing node id dropped
+    assert out1["props"]["links"] == [{"a": "a", "b": "b"}]
+
+
+def test_normalise_network_map_empty_fallback() -> None:
+    out = normalize_remotion_blueprint(_wrap_scene("NetworkMapScene", {"nodes": []}), 240)["scenes"][0]
+    assert out["component"] == "BulletScene"
+    assert out["props"]["bullets"]
+
+
 def test_normalise_narration_field_aliases() -> None:
     raw = {
         "title": "T", "slug": "t", "scenes": [

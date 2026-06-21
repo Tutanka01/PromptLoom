@@ -143,6 +143,11 @@ _COMPONENT_ALIASES = {
     "zoomnarrativescene": "ZoomNarrativeScene",
     "canvas": "ZoomNarrativeScene",
     "map_zoom": "ZoomNarrativeScene",
+    "network": "NetworkMapScene",
+    "networkmap": "NetworkMapScene",
+    "networkmapscene": "NetworkMapScene",
+    "network_map": "NetworkMapScene",
+    "graph_map": "NetworkMapScene",
     "image": "ImageScene",
     "imagescene": "ImageScene",
     "photo": "ImageScene",
@@ -184,6 +189,7 @@ _PALETTE_LINE = (
     "                  kind props mirror the matching scene: code{code,lang?,codeTitle?}, plot{expr|points,xRange,yRange,xLabel?,yLabel?}, formula{formulas[1-2]}, bullets{bullets[2-4],heading?}, terminal{command,output?}. Beats: left, right, then inner items.\n"
     "- ZoomNarrativeScene: { canvas: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), sub?: str, detail?: str}, ...(2-8) ],\n"
     "                  path?: [id, ...], accent?: \"#hex\" }  — a camera zooms/pans across a big canvas, focusing each item in `path` order. Beats: one anchor per path stop.\n"
+    "- NetworkMapScene: { nodes: [ {id: str, label: str, group?: str}, ...(2-10) ], links: [ {a: id, b: id, label?: str} ] }  — an animated node-link graph for a complex system. Do NOT provide x/y; positions are auto-computed. Beats: one anchor per node.\n"
     "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
     "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
@@ -474,6 +480,26 @@ def _norm_panel(value: Any) -> dict[str, Any] | None:
     return out
 
 
+def _network_layout(n: int) -> list[tuple[float, float]]:
+    """Deterministic golden-angle spiral placement, squashed to 16:9 and scaled
+    to the canvas bounds. Same n -> same coordinates (render must be
+    deterministic). No randomness, no seed needed."""
+    if n <= 0:
+        return []
+    if n == 1:
+        return [(0.0, 0.0)]
+    golden = math.pi * (3.0 - math.sqrt(5.0))  # ~2.39996 rad
+    radius = min(5.0, 1.6 + n * 0.18)
+    out: list[tuple[float, float]] = []
+    for i in range(n):
+        r = radius * math.sqrt((i + 0.5) / n)
+        a = i * golden
+        x = round(max(-6.0, min(6.0, r * math.cos(a))), 3)
+        y = round(max(-3.0, min(3.0, r * 0.62 * math.sin(a))), 3)
+        out.append((x, y))
+    return out
+
+
 def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = None) -> dict[str, Any]:
     component = scene.get("component")
     props = dict(scene.get("props") or {})
@@ -660,6 +686,40 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
         if props.get("accent"):
             out["accent"] = str(props["accent"])
         return out
+    elif component == "NetworkMapScene":
+        raw_nodes = props.get("nodes") if isinstance(props.get("nodes"), list) else []
+        nodes: list[dict[str, Any]] = []
+        ids: set[str] = set()
+        for i, nd in enumerate(raw_nodes[:10]):
+            if not isinstance(nd, dict):
+                continue
+            nid = str(nd.get("id") or f"n{i}").strip()[:24]
+            if not nid or nid in ids:
+                continue
+            ids.add(nid)
+            node = {"id": nid, "label": str(nd.get("label") or nid)[:40]}
+            if nd.get("group"):
+                node["group"] = str(nd["group"])[:24]
+            nodes.append(node)
+        if not nodes:
+            degrade("NetworkMapScene without nodes — fell back to a bullet list")
+            scene["component"] = "BulletScene"
+            return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
+        coords = _network_layout(len(nodes))
+        for node, (x, y) in zip(nodes, coords):
+            node["x"], node["y"] = x, y
+        raw_links = props.get("links") if isinstance(props.get("links"), list) else []
+        links: list[dict[str, Any]] = []
+        for lk in raw_links[:20]:
+            if not isinstance(lk, dict):
+                continue
+            a, b = str(lk.get("a") or "").strip(), str(lk.get("b") or "").strip()
+            if a in ids and b in ids and a != b:
+                link = {"a": a, "b": b}
+                if lk.get("label"):
+                    link["label"] = str(lk["label"])[:32]
+                links.append(link)
+        return {"nodes": nodes, "links": links}
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]
         if not query:
