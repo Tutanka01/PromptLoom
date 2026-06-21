@@ -1,7 +1,7 @@
 [project]
-name = "kernel-video-api"
+name = "promptloom-video-api"
 version = "0.1.0"
-description = "Dockerized API and worker pipeline for generating Kernel Videos from prompts."
+description = "PromptLoom API and worker pipeline for generating educational videos from prompts."
 requires-python = ">=3.11"
 dependencies = [
   "celery[redis]>=5.4,<6",

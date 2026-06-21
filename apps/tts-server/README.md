@@ -1,6 +1,10 @@
 # MOSS TTS Server
 
-Standalone GPU microservice that serves [OpenMOSS-Team/MOSS-TTS-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5) over HTTP for the Kernel Videos pipeline. One Docker container, one model **loaded once and kept warm in VRAM**, consumed by `apps/video-api` through the `moss-remote` voice engine.
+Optional GPU microservice for PromptLoom. It serves
+[OpenMOSS-Team/MOSS-TTS-v1.5](https://huggingface.co/OpenMOSS-Team/MOSS-TTS-v1.5)
+over HTTP in one Docker container, with one model **loaded once and kept warm in
+VRAM**. The primary `apps/video-api` application consumes it through the
+`moss-remote` voice engine.
 
 Why it exists: the video worker used to load the ~8B MOSS checkpoint in-process, per job, on CPU. Moving synthesis to a dedicated GPU box removes both costs — model reload time and CPU inference — and adds a server-side audio cache so repair attempts only re-synthesize what changed.
 
@@ -79,7 +83,7 @@ ffprobe /tmp/test.wav
 
 ## Wire video-api to it
 
-In `apps/video-api/.env` on the machine running the worker:
+In the repository root `.env` on the machine running the worker:
 
 ```bash
 VIDEO_API_VOICE_ENGINE=moss-remote

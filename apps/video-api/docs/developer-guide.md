@@ -190,11 +190,10 @@ Regles :
 Les tests doivent etre lances avec Docker :
 
 ```bash
-cd apps/video-api
 docker compose run --rm test
 ```
 
-Depuis la racine du depot :
+Pour cibler explicitement le fichier du composant :
 
 ```bash
 docker compose -f apps/video-api/compose.yaml run --rm test
@@ -203,13 +202,13 @@ docker compose -f apps/video-api/compose.yaml run --rm test
 Validation Compose :
 
 ```bash
-docker compose -f apps/video-api/compose.yaml config --quiet
+docker compose config --quiet
 ```
 
 Build complet :
 
 ```bash
-docker compose -f apps/video-api/compose.yaml build
+docker compose build
 ```
 
 ## Smoke test API

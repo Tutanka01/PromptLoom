@@ -2,13 +2,15 @@
 
 Ce guide montre comment lancer l'API et creer un job video depuis un terminal.
 
+Pour un parcours plus guidé avec diagnostic, suivi des erreurs et choix de
+moteur, voir aussi [Créer sa première vidéo](../../../docs/FIRST_VIDEO.md).
+
 ## 1. Configurer l'environnement
 
 Depuis la racine du depot :
 
 ```bash
-cd apps/video-api
-cp .env.example .env
+cp apps/video-api/.env.example .env
 ```
 
 Edite `.env` pour pointer vers ton endpoint compatible OpenAI :
@@ -32,6 +34,10 @@ Ce mode genere un blueprint factice. Il sert a tester l'API et le pipeline sans 
 ```bash
 docker compose up --build
 ```
+
+Le `compose.yaml` de la racine est le point d'entree principal. Le fichier
+`apps/video-api/compose.yaml` reste utilisable directement pour travailler
+uniquement dans ce composant.
 
 Services lances :
 

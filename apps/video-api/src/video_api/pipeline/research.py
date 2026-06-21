@@ -67,7 +67,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
     request = Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "Kernel-Video-API/1.0", **headers},
+        headers={"Content-Type": "application/json", "User-Agent": "PromptLoom/0.1", **headers},
         method="POST",
     )
     try:

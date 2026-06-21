@@ -24,7 +24,10 @@ def _env_path() -> Path:
     override = os.getenv("VIDEO_API_ENV_FILE")
     if override:
         return Path(override)
-    return _default_repo_root() / "apps" / "video-api" / ".env"
+    repo_root = _default_repo_root()
+    root_env = repo_root / ".env"
+    legacy_env = repo_root / "apps" / "video-api" / ".env"
+    return root_env if root_env.exists() or not legacy_env.exists() else legacy_env
 
 
 def _unquote_env_value(value: str) -> str:
@@ -37,7 +40,7 @@ def _unquote_env_value(value: str) -> str:
 
 
 def _load_dotenv_if_present() -> None:
-    """Load apps/video-api/.env for local runs without overriding process env."""
+    """Load the root .env (or legacy app .env) without overriding process env."""
     path = _env_path()
     if not path.exists():
         return
@@ -57,7 +60,7 @@ _load_dotenv_if_present()
 
 @dataclass(frozen=True)
 class Settings:
-    app_name: str = "Kernel Video API"
+    app_name: str = "PromptLoom API"
     log_level: str = field(default_factory=lambda: os.getenv("VIDEO_API_LOG_LEVEL", "INFO"))
     database_url: str = field(
         default_factory=lambda: os.getenv(

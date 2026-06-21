@@ -48,7 +48,7 @@ class AssetManifest(BaseModel):
 def _read_json(url: str, api_key: str, timeout: float) -> dict[str, Any]:
     request = Request(
         url,
-        headers={"Authorization": api_key, "User-Agent": "Kernel-Video-API/1.0"},
+        headers={"Authorization": api_key, "User-Agent": "PromptLoom/0.1"},
     )
     with urlopen(request, timeout=timeout) as response:  # noqa: S310 - fixed Pexels endpoint
         value = json.loads(response.read().decode("utf-8"))
@@ -66,7 +66,7 @@ def _allowed_pexels_download(url: str) -> bool:
 def _download(url: str, destination: Path, timeout: float, max_bytes: int) -> tuple[str, str]:
     if not _allowed_pexels_download(url):
         raise RuntimeError("provider returned a download URL outside the Pexels domain allow-list")
-    request = Request(url, headers={"User-Agent": "Kernel-Video-API/1.0"})
+    request = Request(url, headers={"User-Agent": "PromptLoom/0.1"})
     digest = hashlib.sha256()
     total = 0
     destination.parent.mkdir(parents=True, exist_ok=True)

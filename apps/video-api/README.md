@@ -1,7 +1,12 @@
-# Academic Video API
+# PromptLoom Video API
 
-Dockerized API for turning an academic STEM prompt into a sourced Manim or
-Remotion video through a queued worker pipeline.
+Primary application of the repository. It turns an educational prompt into a
+sourced Manim or Remotion video through a queued worker pipeline. The current
+editorial contract is optimized for STEM content.
+
+New to the repository? Start with the root
+[onboarding guide](../../docs/START_HERE.md) and the
+[first-video tutorial](../../docs/FIRST_VIDEO.md).
 
 ## Documentation
 
@@ -17,11 +22,15 @@ Start here:
 
 ## Run Locally
 
+From the repository root:
+
 ```bash
-cd apps/video-api
-cp .env.example .env
+cp apps/video-api/.env.example .env
 docker compose up --build
 ```
+
+The local `cd apps/video-api && docker compose up --build` workflow remains
+supported for component-level development.
 
 Submit a job:
 

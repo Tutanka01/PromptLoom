@@ -1,8 +1,22 @@
 # Video Registry
 
-Central registry for videos in this repository.
+Historical registry for the hand-produced Linux videos that inspired the
+platform. API-generated jobs live in `/data/jobs` and are not listed here.
 
 Detailed production docs stay here, not inside the video folders.
+
+## PromptLoom Showcase
+
+Videos exposed at the top of the repository README:
+
+```text
+videos/examples/français-exemple.mp4
+videos/examples/espagnol-exemple.mp4
+```
+
+Both are 1920x1080 at 30 fps with H.264 video and AAC audio. The French example
+runs for 4 min 27; the Spanish example runs for 5 min 30. Their README preview
+images live in `docs/assets/examples/`.
 
 ## Linux Fondamentaux 001: What Is The Linux Kernel?
 

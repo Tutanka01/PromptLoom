@@ -1,0 +1,6 @@
+name: promptloom
+
+# Canonical repository entry point. The service definitions stay next to the
+# primary application so they can also be used from apps/video-api.
+include:
+  - path: apps/video-api/compose.yaml

@@ -1,11 +1,14 @@
-# Video API Documentation
+# PromptLoom Video API Documentation
 
-Cette documentation explique l'API de generation video ajoutee dans `apps/video-api/`.
+Cette documentation décrit l'application principale du dépôt, située dans
+`apps/video-api/`.
 
 Le but de cette application est de recevoir un prompt utilisateur, creer un job asynchrone, produire les sources de video, generer la voix, rendre Manim, assembler le MP4, verifier la qualite, puis exposer un lien de telechargement.
 
 ## Guides
 
+- [Commencer avec PromptLoom](../../../docs/START_HERE.md): orientation depuis la racine du dépôt.
+- [Première vidéo](../../../docs/FIRST_VIDEO.md): tutoriel complet, de `.env` au MP4.
 - [Quickstart](quickstart.md): lancer l'API avec Docker et creer une video avec `curl`.
 - [Architecture](architecture.md): services, pipeline, et cycle de vie d'un job.
 - [API Reference](api-reference.md): endpoints HTTP, schemas de requetes et reponses.
@@ -17,7 +20,8 @@ Le but de cette application est de recevoir un prompt utilisateur, creer un job 
 
 ## Principe important
 
-L'API ne remplace pas le standard video du depot. Elle automatise le meme pipeline :
+L'API est le produit principal. Elle automatise et généralise les enseignements
+du pipeline vidéo manuel historique :
 
 ```text
 prompt
@@ -33,7 +37,9 @@ prompt
   -> MP4 final
 ```
 
-Le pipeline manuel existant dans `videos/...` reste utilisable. Les jobs API sont ecrits dans le volume d'artefacts de l'application, pas directement dans les dossiers sources suivis par Git.
+Le pipeline manuel existant dans `videos/...` reste utilisable comme référence
+et banc d'essai. Les jobs API sont écrits dans le volume d'artefacts de
+l'application, pas directement dans les dossiers sources suivis par Git.
 
 ## Etat actuel
 

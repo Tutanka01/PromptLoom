@@ -2,32 +2,68 @@
 
 Ce fichier s'adresse a toute IA ou tout agent de code qui reprend ce projet.
 
-Avant de modifier quoi que ce soit, lire aussi :
+Avant de modifier quoi que ce soit, lire `README.md` et
+`docs/REPOSITORY_STRUCTURE.md`.
+
+Pour une modification du produit principal, lire aussi :
+
+```text
+apps/video-api/README.md
+apps/video-api/docs/README.md
+apps/video-api/docs/architecture.md
+apps/video-api/docs/developer-guide.md
+apps/video-api/docs/operations.md
+apps/video-api/docs/llm-contract.md
+```
+
+Pour une modification des vidéos manuelles historiques, lire aussi :
 
 ```text
 PROCEDURE.md
 docs/VIDEO_PRODUCTION_STANDARD.md
 ```
 
-`PROCEDURE.md` contient le pipeline operationnel detaille. `docs/VIDEO_PRODUCTION_STANDARD.md` contient le standard v2 complet : beats narratifs, design system, controles de fluidite et criteres d'acceptation. Ce fichier-ci fixe les regles de comportement, les priorites et les standards attendus.
+`PROCEDURE.md` contient le pipeline manuel detaille.
+`docs/VIDEO_PRODUCTION_STANDARD.md` contient le standard v2 historique : beats
+narratifs, design system, controles de fluidite et criteres d'acceptation. Ce
+fichier-ci fixe les regles de comportement, les priorites et les standards
+attendus pour tout le monorepo.
 
 La documentation reusable doit rester a la racine ou dans `docs/`. Ne pas ajouter de README, notes de voix ou documentation operationnelle dans les dossiers `videos/...`; ces dossiers ne doivent contenir que les sources de production de la video.
 
 ## Mission du projet
 
-Produire des videos explicatives de haute qualite sur Linux et les systemes bas niveau, avec :
+Construire PromptLoom, une plateforme complete qui transforme un prompt en
+video educative de haute qualite, avec :
 
-- animations Manim propres, lisibles et synchronisees ;
-- narration structuree scene par scene ;
-- voix off locale de qualite, actuellement Chatterbox principal non-turbo ;
-- rendu final assemble avec ffmpeg ;
-- verification visuelle et technique avant livraison.
+- une API de jobs asynchrones comme interface principale ;
+- generation et validation d'un blueprint pedagogique structure ;
+- rendu Manim ou Remotion lisible et synchronise ;
+- synthese vocale locale, distante ou compatible OpenAI ;
+- assemblage ffmpeg et verification visuelle et technique avant livraison.
 
 Le resultat attendu n'est pas un simple prototype. Chaque video doit pouvoir etre montree comme une vraie video pedagogique.
 
-## Point de reference
+Le contrat editorial est actuellement optimise pour les sujets STEM. Les videos
+Linux et systemes bas niveau sont l'origine du projet et des exemples de qualite,
+pas la limite fonctionnelle ni le produit principal.
 
-La video de reference actuelle est :
+## Architecture du depot
+
+```text
+compose.yaml              # entree principale de la plateforme
+apps/video-api/           # produit principal
+apps/tts-server/          # service GPU optionnel
+docs/                     # documentation transverse et historique
+videos/                   # productions Linux de reference
+```
+
+Les nouveaux jobs API vivent dans `/data/jobs/<job_id>/`, jamais dans le dossier
+source `videos/`.
+
+## References historiques de qualite
+
+Les videos manuelles de reference sont :
 
 ```text
 videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4
@@ -56,7 +92,10 @@ Ne jamais produire une video ou la voix et l'image semblent raconter deux sujets
 
 Chaque segment audio doit correspondre a une scene Manim precise. Si la narration parle de scheduler, l'image doit montrer le scheduler. Si la narration parle de virtual memory, l'image doit montrer les adresses virtuelles, les page tables et la RAM. Si ce lien n'est pas clair, la scene doit etre repensee.
 
-## Structure obligatoire
+## Structure du pipeline manuel historique
+
+Les regles de cette section s'appliquent seulement lorsqu'une video est creee
+ou maintenue manuellement hors de `video-api`.
 
 Toute nouvelle video doit etre creee dans :
 
@@ -103,7 +142,7 @@ Pour demarrer une nouvelle video, copier le boilerplate depuis :
 docs/boilerplate/
 ```
 
-## Workflow obligatoire
+## Workflow manuel obligatoire
 
 1. Comprendre le sujet et le public vise.
 2. Ecrire ou mettre a jour `docs/videos/<thematique>/<numero-slug>/plan.md`.
@@ -126,7 +165,7 @@ docs/boilerplate/
 
 Ne pas sauter les etapes de verification.
 
-## Audio et voix
+## Audio et voix du pipeline manuel
 
 Le modele prefere est :
 
@@ -155,7 +194,7 @@ Regles :
 
 La lenteur de Chatterbox principal est acceptable. L'utilisateur a explicitement prefere cette version a Turbo.
 
-## Synchronisation v2
+## Synchronisation v2 du pipeline manuel
 
 La synchro doit etre conduite par les durees audio, pas par intuition.
 
@@ -217,7 +256,7 @@ Regles :
 - eviter les longues attentes finales comme solution de synchronisation ;
 - utiliser `FadeIn` pour les labels fonctionnels si `Write` produit du texte partiellement dessine sur snapshots.
 
-## Video et Manim
+## Video et Manim du pipeline manuel
 
 Utiliser Manim Community Edition, pas ManimGL.
 
@@ -251,7 +290,7 @@ Design attendu :
 - utiliser focus/dim/flux pour guider l'attention ;
 - eviter les schemas generiques sans lien avec la phrase entendue.
 
-## Assemblage
+## Assemblage du pipeline manuel
 
 Assembler avec :
 
@@ -277,7 +316,7 @@ ou pour une nouvelle video :
 final/syscall-intro-en-final.mp4
 ```
 
-## Verifications obligatoires
+## Verifications obligatoires du pipeline manuel
 
 Apres assemblage final :
 
@@ -318,7 +357,7 @@ Ouvrir les images et verifier :
 - pas de scene visuellement statique trop longtemps ;
 - les images correspondent au sujet parle a ce moment.
 
-## Pieges connus
+## Pieges connus du pipeline manuel
 
 Lire `PROCEDURE.md` pour le detail, mais retenir surtout :
 
@@ -329,17 +368,22 @@ Lire `PROCEDURE.md` pour le detail, mais retenir surtout :
 - ne pas faire confiance a une scene dont la duree est correcte mais dont l'image reste figee ;
 - ne pas utiliser une commande ffmpeg multi-input pour extraire plusieurs timestamps, elle peut sortir plusieurs fois la meme frame.
 
-## Application video-api
+## Application principale : video-api
 
-Le depot contient maintenant une application separee :
+Le produit principal du depot est :
 
 ```text
 apps/video-api/
 ```
 
-Objectif : exposer une API Dockerisee qui recoit un prompt utilisateur, cree un job asynchrone, genere les sources de production video, lance la voix, rend Manim, assemble avec ffmpeg, verifie le resultat, puis expose un MP4 telechargeable.
+Objectif : exposer une API Dockerisee qui recoit un prompt utilisateur, cree un
+job asynchrone, genere les sources de production video, lance la voix, rend avec
+Manim ou Remotion, assemble avec ffmpeg, verifie le resultat, puis expose un MP4
+telechargeable.
 
-Cette application ne remplace pas le pipeline manuel de `videos/...`. Elle l'encapsule dans une file de jobs.
+Le pipeline manuel de `videos/...` est conserve comme reference historique et
+banc d'essai. `video-api` en automatise et generalise les principes dans une
+file de jobs.
 
 Documentation a lire avant de modifier cette partie :
 
@@ -660,7 +704,7 @@ Demander confirmation seulement si le choix change vraiment le resultat :
 
 Sinon, avancer avec les conventions existantes.
 
-## Definition de "termine"
+## Definition de "termine" pour une video manuelle
 
 Une video est terminee seulement si :
 

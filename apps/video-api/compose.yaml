@@ -6,6 +6,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: ../../.env
+        required: false
     environment:
       VIDEO_API_DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_api
       VIDEO_API_REDIS_URL: redis://redis:6379/0
@@ -31,6 +33,8 @@ services:
       dockerfile: apps/video-api/Dockerfile
     env_file:
       - path: .env
+        required: false
+      - path: ../../.env
         required: false
     environment:
       VIDEO_API_DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_api

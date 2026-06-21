@@ -2,7 +2,8 @@
 
 ## Services Docker
 
-L'application est definie dans `compose.yaml`.
+La plateforme est lancee depuis le `compose.yaml` de la racine. Celui-ci inclut
+les definitions de services maintenues dans `apps/video-api/compose.yaml`.
 
 Services :
 
@@ -13,6 +14,8 @@ Services :
 - `test`: service profile pour lancer `pytest`.
 
 ## Commandes utiles
+
+Les commandes suivantes sont a lancer depuis la racine du depot.
 
 Build :
 
@@ -384,7 +387,7 @@ docker compose down
 Une base `compose.gpu.yaml` existe :
 
 ```bash
-docker compose -f compose.yaml -f compose.gpu.yaml up
+docker compose -f compose.yaml -f apps/video-api/compose.gpu.yaml up
 ```
 
 Elle reserve des devices NVIDIA pour le worker.

@@ -1,74 +1,57 @@
 # Documentation
 
-This directory is the single home for reusable project documentation.
+La documentation est organisée autour du produit principal, `video-api`, puis
+des composants optionnels et des références historiques.
 
-Do not put operational documentation inside `videos/...` folders. Video folders contain production sources only.
+## Parcours principal
 
-## Reading Order
+1. [`START_HERE.md`](START_HERE.md) — orientation et modèle mental en 90 secondes.
+2. [`FIRST_VIDEO.md`](FIRST_VIDEO.md) — tutoriel copiable jusqu'au MP4 final.
+3. [`../README.md`](../README.md) — vision, exemples et démarrage condensé.
+4. [`REPOSITORY_STRUCTURE.md`](REPOSITORY_STRUCTURE.md) — frontières entre les
+   applications et statut des anciens dossiers Linux.
+5. [`../apps/video-api/docs/quickstart.md`](../apps/video-api/docs/quickstart.md)
+   — créer et suivre un premier job.
+6. [`../apps/video-api/docs/architecture.md`](../apps/video-api/docs/architecture.md)
+   — services et cycle de vie d'un job.
+7. [`../apps/video-api/docs/developer-guide.md`](../apps/video-api/docs/developer-guide.md)
+   — travailler sur le produit.
+8. [`../apps/video-api/docs/operations.md`](../apps/video-api/docs/operations.md)
+   — configuration, déploiement et diagnostic.
 
-1. `../AGENTS.md`  
-   Rules for agents working in the repository.
+Pour contribuer, lire aussi [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
-2. `../PROCEDURE.md`  
-   Operational checklist for producing or updating a video.
+L'index complet de l'application se trouve dans
+[`apps/video-api/docs`](../apps/video-api/docs/README.md).
 
-3. `VIDEO_PRODUCTION_STANDARD.md`  
-   Detailed v2 standard: beat-sync, Manim helpers, design system, verification, acceptance criteria.
+## Service optionnel
 
-4. `VOICE_AND_AUDIO.md`  
-   Voice model policy, Chatterbox command, regeneration rules, audio duration checks.
+[`apps/tts-server`](../apps/tts-server/README.md) déporte MOSS-TTS sur une
+machine GPU dédiée. `video-api` fonctionne sans ce service avec ses autres
+moteurs vocaux.
 
-5. `VIDEOS.md`  
-   Central registry of current videos and their status.
+## Références historiques
 
-6. `boilerplate/README.md`  
-   Files to copy when starting a new video.
+Le dépôt vient d'un pipeline manuel de vidéos sur Linux. Ces documents restent
+utiles pour maintenir les exemples et contrôler la qualité éditoriale :
 
-## Current Standard
+- [`../PROCEDURE.md`](../PROCEDURE.md) — procédure manuelle complète;
+- [`VIDEO_PRODUCTION_STANDARD.md`](VIDEO_PRODUCTION_STANDARD.md) — standard v2
+  de synchronisation et de vérification;
+- [`VOICE_AND_AUDIO.md`](VOICE_AND_AUDIO.md) — politique de voix historique;
+- [`VIDEOS.md`](VIDEOS.md) — registre des productions suivies;
+- [`boilerplate`](boilerplate/README.md) — squelette du pipeline manuel;
+- [`videos`](videos/) — plans et scripts des exemples Linux.
 
-The current standard is v2:
+Ces références ne sont pas le parcours de démarrage de la plateforme et les
+jobs de l'API ne doivent pas y être écrits.
 
-- one segment per Manim scene;
-- `audio/en/durations.json` for total scene duration;
-- `beats_en.json` for internal visual beats;
-- local style system per video;
-- low-quality iteration before final render;
-- `ffprobe`, `freezedetect`, and snapshots before delivery.
+## Politique documentaire
 
-## Documentation Policy
-
-Allowed at repository root:
-
-- `README.md`
-- `AGENTS.md`
-- `PROCEDURE.md`
-
-Allowed in `docs/`:
-
-- reusable workflow documentation;
-- boilerplate files;
-- project-wide voice/audio notes;
-- central video registry.
-
-Allowed in `videos/...`:
-
-- `segments_en.json`;
-- `beats_en.json`;
-- Manim code;
-- style code;
-- TTS/render/assemble scripts;
-- selected final MP4s.
-
-Not allowed in `videos/...`:
-
-- README files;
-- plan/script documentation;
-- general workflow documentation;
-- duplicated voice model notes;
-- obsolete notes about previous production methods.
-
-Video-specific narrative docs live in:
-
-```text
-docs/videos/<theme>/<slug>/
-```
+- La documentation transverse vit à la racine ou dans `docs/`.
+- La documentation spécifique à une application vit avec celle-ci sous
+  `apps/<application>/docs/`.
+- Les dossiers historiques `videos/...` ne contiennent que des sources de
+  production et des MP4 sélectionnés, jamais de README opérationnel.
+- Les plans et scripts des vidéos manuelles restent dans
+  `docs/videos/<theme>/<slug>/`.

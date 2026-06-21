@@ -1,4 +1,9 @@
-# Procedure operationnelle v2 pour produire une video
+# Procédure historique — production manuelle d'une vidéo
+
+> Ce document décrit le pipeline manuel qui a servi à concevoir la plateforme.
+> Le produit principal est désormais `apps/video-api`; voir `README.md` pour le
+> démarrage normal. Cette procédure reste la référence pour maintenir les
+> exemples Manim suivis dans `videos/`.
 
 Ce projet sert a produire des videos explicatives haut de gamme sur Linux avec Manim, une voix off locale, puis un assemblage audio/video synchronise.
 

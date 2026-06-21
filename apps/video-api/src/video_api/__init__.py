@@ -1,4 +1,4 @@
-"""Dockerized Kernel Videos API."""
+"""PromptLoom educational video generation API."""
 
 __all__ = ["__version__"]
 

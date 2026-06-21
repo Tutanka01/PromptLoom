@@ -1,4 +1,8 @@
-# Standard de production video v2
+# Standard historique de production vidéo manuelle v2
+
+> Ce standard s'applique aux productions manuelles conservées dans `videos/`.
+> La plateforme principale est `apps/video-api`, qui automatise ces principes et
+> possède sa propre documentation dans `apps/video-api/docs/`.
 
 Ce document decrit la nouvelle facon de produire les videos du projet : narration structuree, voix locale, synchro audio reelle, beats narratifs, design system Manim, rendu final et controles qualite.
 

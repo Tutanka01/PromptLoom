@@ -116,7 +116,7 @@ Image partagée api/worker/test → le flag marche sans rebuild.
 ## Activation
 
 ```bash
-# apps/video-api/.env ou environnement compose
+# .env a la racine ou environnement Compose
 VIDEO_API_RENDER_ENGINE=remotion
 # (optionnel) forcer 100% palette, sans code libre
 VIDEO_API_SCENE_CODER_ENABLED=0
