@@ -1,722 +1,196 @@
 # AGENTS.md
 
-Ce fichier s'adresse a toute IA ou tout agent de code qui reprend ce projet.
-
-Avant de modifier quoi que ce soit, lire `README.md` et
-`docs/REPOSITORY_STRUCTURE.md`.
-
-Pour une modification du produit principal, lire aussi :
-
-```text
-apps/video-api/README.md
-apps/video-api/docs/README.md
-apps/video-api/docs/architecture.md
-apps/video-api/docs/developer-guide.md
-apps/video-api/docs/operations.md
-apps/video-api/docs/llm-contract.md
-```
-
-Pour une modification des vidéos manuelles historiques, lire aussi :
-
-```text
-PROCEDURE.md
-docs/VIDEO_PRODUCTION_STANDARD.md
-```
-
-`PROCEDURE.md` contient le pipeline manuel detaille.
-`docs/VIDEO_PRODUCTION_STANDARD.md` contient le standard v2 historique : beats
-narratifs, design system, controles de fluidite et criteres d'acceptation. Ce
-fichier-ci fixe les regles de comportement, les priorites et les standards
-attendus pour tout le monorepo.
-
-La documentation reusable doit rester a la racine ou dans `docs/`. Ne pas ajouter de README, notes de voix ou documentation operationnelle dans les dossiers `videos/...`; ces dossiers ne doivent contenir que les sources de production de la video.
-
-## Mission du projet
-
-Construire PromptLoom, une plateforme complete qui transforme un prompt en
-video educative de haute qualite, avec :
-
-- une API de jobs asynchrones comme interface principale ;
-- generation et validation d'un blueprint pedagogique structure ;
-- rendu Manim ou Remotion lisible et synchronise ;
-- synthese vocale locale, distante ou compatible OpenAI ;
-- assemblage ffmpeg et verification visuelle et technique avant livraison.
-
-Le resultat attendu n'est pas un simple prototype. Chaque video doit pouvoir etre montree comme une vraie video pedagogique.
-
-Le contrat editorial est actuellement optimise pour les sujets STEM. Les videos
-Linux et systemes bas niveau sont l'origine du projet et des exemples de qualite,
-pas la limite fonctionnelle ni le produit principal.
-
-## Architecture du depot
-
-```text
-compose.yaml              # entree principale de la plateforme
-apps/video-api/           # produit principal
-apps/tts-server/          # service GPU optionnel
-docs/                     # documentation transverse et historique
-videos/                   # productions Linux de reference
-```
-
-Les nouveaux jobs API vivent dans `/data/jobs/<job_id>/`, jamais dans le dossier
-source `videos/`.
-
-## References historiques de qualite
-
-Les videos manuelles de reference sont :
-
-```text
-videos/linux-fondamentaux/001-c-est-quoi-le-kernel/final/kernel-intro-en-final.mp4
-videos/linux-fondamentaux/002-c-est-quoi-un-syscall/final/syscall-intro-en-final.mp4
-```
-
-La premiere sert d'exemple pour :
-
-- l'organisation des dossiers ;
-- la separation script / segments / scenes Manim / audio / final ;
-- le choix Chatterbox principal non-turbo ;
-- la synchronisation par durees audio reelles ;
-- les verifications avec `ffprobe` et snapshots.
-
-La seconde sert d'exemple pour le standard v2 :
-
-- `beats_en.json` ;
-- synchro interne avec `cue()`, `play_until()` et `hold_until()` ;
-- design system local dans `syscall_style.py` ;
-- focus/dim plutot que surlignage permanent ;
-- validation avec `freezedetect` et snapshots.
-
-## Regle principale
-
-Ne jamais produire une video ou la voix et l'image semblent raconter deux sujets differents.
-
-Chaque segment audio doit correspondre a une scene Manim precise. Si la narration parle de scheduler, l'image doit montrer le scheduler. Si la narration parle de virtual memory, l'image doit montrer les adresses virtuelles, les page tables et la RAM. Si ce lien n'est pas clair, la scene doit etre repensee.
-
-## Structure du pipeline manuel historique
-
-Les regles de cette section s'appliquent seulement lorsqu'une video est creee
-ou maintenue manuellement hors de `video-api`.
-
-Toute nouvelle video doit etre creee dans :
-
-```text
-videos/<thematique>/<numero-slug>/
-```
-
-Exemple :
-
-```text
-videos/linux-fondamentaux/002-c-est-quoi-un-syscall/
-```
-
-Ne pas mettre les fichiers d'une nouvelle video a la racine du projet.
-
-Structure documentation recommandee :
-
-```text
-docs/videos/<thematique>/<numero-slug>/
-plan.md
-script.md ou script_en.md
-```
-
-Structure production recommandee :
-
-```text
-segments_en.json
-beats_en.json
-kernel_intro_en.py
-kernel_style.py
-generate_voice_en.py
-render_en.sh
-assemble_en.sh
-audio/en/
-final/
-renders/
-```
-
-Adapter les noms Python si le sujet n'est plus `kernel_intro`, mais garder le meme principe.
-
-Pour demarrer une nouvelle video, copier le boilerplate depuis :
-
-```text
-docs/boilerplate/
-```
-
-## Workflow manuel obligatoire
-
-1. Comprendre le sujet et le public vise.
-2. Ecrire ou mettre a jour `docs/videos/<thematique>/<numero-slug>/plan.md`.
-3. Ecrire le script narratif dans `docs/videos/<thematique>/<numero-slug>/script.md`.
-4. Decouper le script dans `segments_en.json`.
-5. Creer `beats_en.json` pour relier narration et actions visuelles.
-6. Creer une classe Manim par segment audio.
-7. Creer ou mettre a jour le design system local.
-8. Generer la voix off locale.
-9. Produire `durations.json`.
-10. Synchroniser les scenes avec les durees audio et les beats narratifs.
-11. Rendre en basse qualite.
-12. Assembler l'audio et la video basse qualite.
-13. Mesurer `ffprobe`, `freezedetect`, puis inspecter les snapshots.
-14. Corriger les problemes de narration, timing et visuel.
-15. Rendre en 1080p60.
-16. Assembler l'audio et la video finale.
-17. Refaire `ffprobe`, `freezedetect` et les snapshots finaux.
-18. Donner le chemin du MP4 final.
-
-Ne pas sauter les etapes de verification.
-
-## Audio et voix du pipeline manuel
-
-Le modele prefere est :
-
-```text
-Chatterbox principal non-turbo
-```
-
-Commande type :
-
-```bash
-uv run --python 3.11 --with chatterbox-tts python generate_voice_en.py \
-  --engine chatterbox \
-  --exaggeration 0.45 \
-  --cfg-weight 0.55 \
-  --temperature 0.55 \
-  --tail-padding 0.45
-```
-
-Regles :
-
-- Ne pas utiliser `say` macOS pour une version finale.
-- Ne pas remplacer Chatterbox principal par Turbo sans demander a l'utilisateur.
-- Ne pas regenerer une voix deja acceptee sans raison.
-- Si `generate_voice_en.py` sait reutiliser les WAV existants, le laisser faire.
-- Si un segment change, regenerer seulement ce qui doit changer quand c'est possible.
-
-La lenteur de Chatterbox principal est acceptable. L'utilisateur a explicitement prefere cette version a Turbo.
-
-## Synchronisation v2 du pipeline manuel
-
-La synchro doit etre conduite par les durees audio, pas par intuition.
-
-Le fichier cle est :
-
-```text
-audio/en/durations.json
-```
-
-Pour les videos v2, ajouter aussi :
-
-```text
-beats_en.json
-```
-
-`durations.json` fixe la duree totale de chaque scene. `beats_en.json` decrit les moments internes de narration ou l'image doit changer.
-
-Chaque scene Manim doit utiliser une cle qui correspond a un segment :
-
-```python
-class SceneX_NameEN(EnglishKernelScene):
-    scene_key = "SceneX_NameEN"
-```
-
-Pattern attendu :
-
-```python
-self.begin_sync()
-# animations de la scene
-self.finish_sync()
-self.play(FadeOut(...), run_time=0.7)
-```
-
-Pattern v2 attendu pour les scenes nouvelles ou refondues :
-
-```python
-self.begin_sync()
-self.play_until(0.08, FadeIn(title))
-self.play_until(0.25, FadeIn(first_visual))
-self.play_until(0.52, Transform(...))
-self.hold_until(0.72)
-self.play_until(0.88, FadeIn(summary))
-self.finish_sync()
-self.play(FadeOut(...), run_time=0.7)
-```
-
-Attention : `finish_sync()` doit tenir compte du fade-out final. Voir l'implementation existante dans :
-
-```text
-videos/linux-fondamentaux/001-c-est-quoi-le-kernel/kernel_intro_en.py
-videos/linux-fondamentaux/002-c-est-quoi-un-syscall/syscall_intro_en.py
-```
-
-Regles :
-
-- ne pas ajouter des `wait()` aleatoires qui cassent la synchro ;
-- viser 5 a 7 beats par scene importante ;
-- faire evoluer l'image jusqu'a environ 80-90% de la narration ;
-- eviter les longues attentes finales comme solution de synchronisation ;
-- utiliser `FadeIn` pour les labels fonctionnels si `Write` produit du texte partiellement dessine sur snapshots.
-
-## Video et Manim du pipeline manuel
-
-Utiliser Manim Community Edition, pas ManimGL.
-
-Import attendu :
-
-```python
-from manim import *
-```
-
-Rendu de test :
-
-```bash
-QUALITY=ql ./render_en.sh
-```
-
-Rendu final :
-
-```bash
-QUALITY=qh ./render_en.sh
-```
-
-Le rendu final attendu est 1080p60.
-
-Si une scene echoue, corriger la scene et relancer. Ne pas contourner l'erreur en supprimant la scene sauf si le script narratif est modifie en consequence.
-
-Design attendu :
-
-- utiliser un fichier style local ;
-- garder une typographie lisible ;
-- limiter la densite ;
-- utiliser focus/dim/flux pour guider l'attention ;
-- eviter les schemas generiques sans lien avec la phrase entendue.
-
-## Assemblage du pipeline manuel
-
-Assembler avec :
-
-```bash
-./assemble_en.sh
-```
-
-Le resultat final doit etre dans :
-
-```text
-final/
-```
-
-Nommer clairement les fichiers finaux, par exemple :
-
-```text
-final/kernel-intro-en-final.mp4
-```
-
-ou pour une nouvelle video :
-
-```text
-final/syscall-intro-en-final.mp4
-```
-
-## Verifications obligatoires du pipeline manuel
-
-Apres assemblage final :
-
-```bash
-ffprobe -v error -show_entries format=duration,size -show_streams -of json final/<video>.mp4
-```
-
-Verifier :
-
-- presence d'un stream video ;
-- presence d'un stream audio ;
-- resolution 1920x1080 ;
-- framerate 60 fps ;
-- duree audio proche de la duree video ;
-- absence de video anormalement courte ou muette.
-
-Extraire plusieurs snapshots :
-
-```bash
-mkdir -p renders
-ffmpeg -y -ss 00:00:10 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0010.png
-ffmpeg -y -ss 00:01:30 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0130.png
-ffmpeg -y -ss 00:03:00 -i final/<video>.mp4 -frames:v 1 -update 1 renders/check_0300.png
-```
-
-Mesurer aussi la fluidite :
-
-```bash
-ffmpeg -i final/<video>.mp4 -vf freezedetect=n=-60dB:d=3 -an -f null -
-```
-
-Ouvrir les images et verifier :
-
-- pas de texte coupe ;
-- pas de labels hors cadre ;
-- pas de chevauchements incoherents ;
-- pas d'ecran vide ;
-- pas de scene visuellement statique trop longtemps ;
-- les images correspondent au sujet parle a ce moment.
-
-## Pieges connus du pipeline manuel
-
-Lire `PROCEDURE.md` pour le detail, mais retenir surtout :
-
-- ne pas concatener directement des MP3 separes avec `-c copy` ;
-- ne pas ajouter du padding video sans le meme padding audio ;
-- ne pas oublier que le fade-out final allonge la scene ;
-- ne pas faire confiance au rendu sans snapshots ;
-- ne pas faire confiance a une scene dont la duree est correcte mais dont l'image reste figee ;
-- ne pas utiliser une commande ffmpeg multi-input pour extraire plusieurs timestamps, elle peut sortir plusieurs fois la meme frame.
-
-## Application principale : video-api
-
-Le produit principal du depot est :
-
-```text
-apps/video-api/
-```
-
-Objectif : exposer une API Dockerisee qui recoit un prompt utilisateur, cree un
-job asynchrone, genere les sources de production video, lance la voix, rend avec
-Manim ou Remotion, assemble avec ffmpeg, verifie le resultat, puis expose un MP4
-telechargeable.
-
-Le pipeline manuel de `videos/...` est conserve comme reference historique et
-banc d'essai. `video-api` en automatise et generalise les principes dans une
-file de jobs.
-
-Documentation a lire avant de modifier cette partie :
-
-```text
-apps/video-api/README.md
-apps/video-api/docs/README.md
-apps/video-api/docs/architecture.md
-apps/video-api/docs/developer-guide.md
-apps/video-api/docs/operations.md
-apps/video-api/docs/llm-contract.md
-```
-
-### Architecture video-api
-
-Services Docker principaux :
-
-- `api` : FastAPI, creation de jobs, status, download, report.
-- `worker` : Celery, generation LLM, materialisation des fichiers, TTS, Manim, ffmpeg, verification.
-- `redis` : broker Celery.
-- `postgres` : metadonnees de jobs.
-- `test` : service Docker pour lancer `pytest`.
-
-Le code est dans :
+Guide minimal pour les agents qui travaillent sur PromptLoom. Le but est de
+donner le contexte stable et de router vers la bonne source sans charger toute
+la documentation.
+
+## Règle de lecture
+
+Lis ce fichier une fois. Ensuite, ne lis que la ligne pertinente de la table de
+routage. Ne charge pas `PROCEDURE.md` ni les documents historiques pour une
+tâche `video-api` ordinaire.
+
+## PromptLoom en bref
+
+- Produit principal : `apps/video-api/`.
+- Entrée du dépôt : `compose.yaml` à la racine.
+- API asynchrone : FastAPI crée les jobs, Celery les exécute via Redis, Postgres
+  conserve leur état.
+- Pipeline : prompt → recherche optionnelle → blueprint validé → narration et
+  scènes → TTS → Manim ou Remotion → ffmpeg → contrôles → MP4.
+- Les jobs vivent dans `/data/jobs/<job_id>/`, jamais dans le dossier source
+  `videos/`.
+- `apps/tts-server/` est un service GPU MOSS-TTS optionnel.
+- Le contrat éditorial est actuellement optimisé pour les sujets STEM.
+- `videos/examples/` contient la vitrine; `videos/linux-fondamentaux/` contient
+  l'origine manuelle historique du projet.
+
+Principe qualité central : la voix et l'image doivent expliquer la même chose
+au même moment.
+
+## Routage documentaire
+
+| Tâche | Lire uniquement |
+| --- | --- |
+| Comprendre ou présenter le produit | `README.md`, puis `docs/START_HERE.md` si nécessaire |
+| Organisation du monorepo | `docs/REPOSITORY_STRUCTURE.md` |
+| Première utilisation de l'API | `docs/FIRST_VIDEO.md` |
+| Endpoint, requête ou réponse HTTP | `apps/video-api/docs/api-reference.md`, puis `main.py` et `schemas.py` |
+| Architecture, états ou cycle d'un job | `apps/video-api/docs/architecture.md` |
+| Modifier le pipeline worker | `apps/video-api/docs/developer-guide.md`, puis le module concerné |
+| Contrat ou normalisation LLM | `apps/video-api/docs/llm-contract.md`, `schemas.py`, `pipeline/llm.py` |
+| Production éditoriale, recherche ou médias | `apps/video-api/docs/advanced-production.md` |
+| Rendu Remotion | `apps/video-api/docs/remotion-engine.md`; ajouter `remotion-catalog.md` ou `remotion-skill.md` seulement si nécessaire |
+| Génération Manim | `apps/video-api/docs/manim-generation-guidelines.md`; `manim-skill.md` seulement pour l'authoring de scènes |
+| Configuration, Docker, logs ou rétention | `apps/video-api/docs/operations.md` |
+| Service GPU TTS | `apps/tts-server/README.md` |
+| Contribution générale | `CONTRIBUTING.md` |
+| Vidéo manuelle historique | `PROCEDURE.md` et `docs/VIDEO_PRODUCTION_STANDARD.md` |
+
+## Carte du code
 
 ```text
 apps/video-api/src/video_api/
+  main.py                 HTTP, auth, création/status/download/report
+  tasks.py                tâches Celery et fan-out multilingue
+  schemas.py              contrats Pydantic publics et LLM
+  config.py               variables d'environnement et profils qualité
+  db.py / models.py       persistance, rétention, jobs périmés
+  pipeline/
+    production.py         orchestration et classification des échecs
+    llm.py                client OpenAI-compatible et normalisation
+    materialize.py        fichiers et scènes Manim
+    remotion_materialize.py / remotion_scene_coder.py
+    validate.py           garde-fous des sources générées
+    voice.py              sélection du TTS et cache par segment
+    research.py / assets.py / editorial.py
+    verify.py             ffprobe, freezedetect, snapshots
+
+apps/video-api/remotion/  catalogue et runtime React/Remotion
+apps/tts-server/src/      API, moteur, cache et file MOSS-TTS
 ```
 
-Modules importants :
+## Règles non négociables
 
-- `main.py` : endpoints HTTP.
-- `tasks.py` : entree Celery.
-- `schemas.py` : contrats Pydantic.
-- `pipeline/llm.py` : client OpenAI-compatible et normalisation des sorties LLM.
-- `pipeline/materialize.py` : generation des fichiers video et scripts Manim.
-- `pipeline/production.py` : orchestration du job.
-- `pipeline/verify.py` : `ffprobe`, `freezedetect`, snapshots.
+### Portée et données
 
-Les artefacts de jobs API vivent dans le volume Docker :
+- Préserve les changements utilisateur et les fichiers non suivis.
+- Pas de `git reset --hard`, nettoyage massif ou suppression sans demande
+  explicite.
+- Consulte `git status --short` avant de terminer.
+- N'écris jamais un job API dans `videos/`; utilise le volume `/data/jobs`.
+- Les secrets restent dans `.env`, jamais dans le code, les logs ou Git.
 
-```text
-/data/jobs/<job_id>/
-```
+### Contrats produit
 
-Ne pas ecrire les jobs API directement dans le dossier source `videos/`.
+- Le LLM produit d'abord un blueprint structuré validé par Pydantic.
+- Le scene-coder peut produire du code Manim/TSX uniquement via les validations,
+  smoke checks et fallbacks existants. Ne contourne pas ces garde-fous.
+- Une langue secondaire d'un batch traduit le blueprint maître validé; elle ne
+  régénère pas un contenu différent.
+- Une erreur TTS distante fait échouer clairement le job. Aucun fallback de voix
+  silencieux.
+- Préserve les caches audio par segment; ne régénère pas les voix inchangées.
+- Les noms historiques `segments_en.json` et `audio/en/` restent utilisés pour
+  compatibilité, même lorsque la narration n'est pas anglaise.
 
-Retention : ces workspaces sont supprimes automatiquement au-dela de
-`VIDEO_API_JOB_TTL_DAYS` (defaut 15 jours, `0` = jamais). Seuls les jobs
-terminaux sont concernes ; la ligne en base est conservee et ses chemins
-d'artefacts remis a vide (download/report -> 404 propre). Le balayage
-(`db.gc_job_workspaces`) tourne au demarrage de l'API et periodiquement dans le
-worker via Celery beat (`video_api.gc_job_artifacts`, toutes les
-`VIDEO_API_GC_INTERVAL_HOURS`, defaut 6h ; le worker tourne avec `--beat`).
+### Documentation
 
-### Videos multilingues (batch) video-api
+- Documentation transverse : racine ou `docs/`.
+- Documentation d'une application : `apps/<app>/docs/`.
+- Pas de README ou de notes opérationnelles dans une production sous `videos/`.
+- Si un comportement public, une variable ou une commande change, mets à jour
+  la documentation correspondante dans la même modification.
+- Pour un modèle, une bibliothèque ou une API susceptible d'avoir changé,
+  vérifier la documentation officielle actuelle plutôt que se fier à la mémoire.
 
-`POST /v1/videos` accepte un champ optionnel `languages` (liste de codes, ex.
-`["fr", "en", "es"]`). Avec plus d'une langue, l'API cree un **batch** : une
-video par langue, **contenu et script identiques**, seules la narration parlee
-et les textes a l'ecran sont traduits.
+## Pièges techniques à ne pas redécouvrir
 
-Principe (garantie "meme contenu") :
+- Manim Docker 0.18.1 : utiliser `self.renderer.time`, pas `self.time` au début
+  d'une scène.
+- Manim rend sous `media/videos/<nom_du_module>/...`; le module inclut le suffixe
+  de langue.
+- Les polices macOS ne sont pas présentes dans Linux; utiliser les polices déjà
+  définies par le projet.
+- Pour diagnostiquer un rendu, lire le fichier de log complet du job, pas
+  seulement `error.json` ou la dernière ligne affichée.
+- La durée audio réelle pilote la scène. Ne corrige pas une synchro avec des
+  attentes arbitraires ou un long écran figé.
+- Le matérialiseur Manim copie encore `generate_voice_en.py` depuis la vidéo
+  syscall historique. Ne déplace pas cette référence sans extraire et tester la
+  ressource dans `video-api`.
+- L'API est ouverte si `VIDEO_API_KEYS` est vide. Ne recommande pas une exposition
+  réseau sans authentification.
+- `docker compose down -v` supprime les jobs et la base locale.
 
-- la **premiere langue** est la *primaire* : elle genere le blueprint maitre
-  normalement (LLM) et est mise en file tout de suite ;
-- les **secondaires** restent en `queued` / `current_step=waiting_for_master` ;
-- quand la primaire **se termine** (`completed`), le worker fait le fan-out
-  (`tasks._fan_out_batch`) : chaque secondaire **traduit** le `blueprint.json`
-  maitre de la primaire (`engine.translate_blueprint` ->
-  `llm.translate_blueprint` / `translate_remotion_blueprint`) au lieu de
-  regenerer, puis deroule le pipeline normal (materialize -> voix dans sa langue
-  -> render -> assemble -> verify). On ne traduit que le maitre qui a **deja**
-  rendu, donc le contenu est garanti identique ;
-- si la primaire echoue, les secondaires en attente sont passes en
-  `failed_generation` (`tasks._abort_batch_secondaries`), pas de blocage.
+## Méthode de travail et validations
 
-La traduction preserve : `slug`, cles de scene, `layout`/`component`, durees,
-ratios `at` des beats, cles de props. Elle traduit : `title`, narration
-(`text`/`narration`), `text_hint`/`label`, `anchor` des beats, `visual_intent`,
-et les valeurs texte visibles dans les props Remotion.
+Fais toutes les modifications cohérentes avant de tester. Lance une seule passe
+finale proportionnée au risque; ne rebuild pas Docker après chaque fichier.
 
-Champs de jointure cote modele : `VideoJob.batch_id` et `VideoJob.is_primary`
-(migration legere via `db._ensure_compat_columns`).
-
-Reponse de creation (batch) : `batch_id` + `jobs[{job_id, language, is_primary,
-status_url}]`. Suivi global : `GET /v1/batches/<batch_id>`. Le fichier
-telecharge porte la vraie langue dans son nom (`<slug>-<lang>-final.mp4`).
-
-Requete simple (mono-langue, `language`) : comportement inchange, pas de batch.
-
-### Commandes video-api
-
-Depuis la racine du depot :
-
-```bash
-docker compose -f apps/video-api/compose.yaml config --quiet
-docker compose -f apps/video-api/compose.yaml run --rm test
-```
-
-Depuis `apps/video-api/` :
-
-```bash
-docker compose config --quiet
-docker compose run --rm test
-docker compose up --build
-```
-
-Smoke test API :
-
-```bash
-docker compose up -d redis postgres api
-curl http://localhost:8080/healthz
-docker compose down
-```
-
-Pour lancer toute la stack :
-
-```bash
-docker compose up --build
-```
-
-Si le code de `api` ou `worker` change, rebuild l'image avant de relancer un vrai job :
-
-```bash
-docker compose build api worker
-docker compose up -d
-```
-
-### Logs video-api
-
-Les logs applicatifs doivent rester suffisamment verbeux pour suivre un job avec :
-
-```bash
-docker compose logs -f worker api
-```
-
-Le worker logge notamment :
-
-- `worker.task.received` ;
-- `job.state` ;
-- `job.attempt.start` ;
-- `llm.request.start` / `llm.request.done` ;
-- `materialize.start` / `materialize.done` ;
-- `command.start` / `command.done` ;
-- `verify.probe.done` ;
-- `verify.freezedetect.done` ;
-- `job.completed` ;
-- `job.failed`.
-
-Le niveau est controle par :
-
-```text
-VIDEO_API_LOG_LEVEL=INFO
-```
-
-### LLM video-api
-
-L'API vise n'importe quel endpoint compatible OpenAI :
-
-```text
-OPENAI_BASE_URL=http://serveur/v1
-OPENAI_API_KEY=...
-OPENAI_MODEL=...
-```
-
-Le LLM ne doit pas produire directement du Python Manim arbitraire en v1. Il produit un blueprint JSON valide, puis le worker genere le code Manim depuis des templates deterministes.
-
-Le fichier cle du contrat est :
-
-```text
-apps/video-api/src/video_api/schemas.py
-```
-
-`pipeline/llm.py` normalise aussi certaines variantes courantes de sortie LLM, par exemple :
-
-- `narration`, `voiceover`, `script` -> `text` ;
-- `visual_description`, `visual_plan` -> `visual_intent` ;
-- `spoken_idea` -> `text_hint` ;
-- `visual`, `action`, `animation` -> `visual_action`.
-
-### Pieges video-api deja corriges
-
-- Manim Docker `0.18.1` n'a pas `Scene.time` au debut du `construct()`. Les templates generes doivent utiliser `self.renderer.time` via un helper, pas `self.time`.
-- Manim ecrit les videos dans `media/videos/<module_python>/...`. Pour un fichier `<slug>_en.py`, le dossier est donc `<slug>_en`, pas `<slug>`.
-- Les polices macOS `Helvetica Neue` et `Menlo` ne sont pas disponibles dans l'image Linux. Les styles generes par video-api remplacent par `DejaVu Sans` et `DejaVu Sans Mono`.
-- Une erreur `render-low.log` doit etre diagnostiquee en lisant le fichier complet dans `/data/jobs/<job_id>/logs/render-low.log`, pas seulement `error.json`.
-- Une tentative de reparation LLM peut echouer si le modele change les noms de champs. Ajouter une normalisation Pydantic/LLM avant de rendre la validation plus stricte.
-
-### Validation video-api
-
-Avant de dire que la partie API est correcte, lancer au minimum :
+Contrôles légers depuis la racine :
 
 ```bash
 python3 -m py_compile $(find apps/video-api/src apps/video-api/tests -name '*.py' -print)
-docker compose -f apps/video-api/compose.yaml config --quiet
-docker compose -f apps/video-api/compose.yaml run --rm test
+docker compose config --quiet
+git diff --check
+git status --short
 ```
 
-Quand un bug touche Manim, faire aussi un rendu smoke dans Docker, pas seulement un test unitaire. Exemple deja utilise :
+Tests `video-api` si le code Python ou le comportement change :
 
 ```bash
-docker compose -f apps/video-api/compose.yaml run --rm test bash -lc 'rm -rf /tmp/manim-smoke && python - <<'"'"'PY'"'"'
-from pathlib import Path
-from video_api.config import Settings
-from video_api.pipeline.llm import fake_blueprint
-from video_api.pipeline.materialize import Materializer
-
-settings = Settings(repo_root=Path("/workspace"))
-video_dir = Materializer(settings).materialize(
-    fake_blueprint("Explain page tables", "linux-fondamentaux"),
-    Path("/tmp/manim-smoke"),
-)
-print(video_dir)
-PY
-cd /tmp/manim-smoke/videos/linux-fondamentaux/prompt-to-kernel-video
-QUALITY=ql ./render_en.sh
-ls -lh final/prompt-to-kernel-video-en-silent.mp4'
+apps/video-api/.venv/bin/pytest -q apps/video-api/tests   # si le venv local existe
+# sinon, ou si Docker est précisément dans la portée :
+docker compose run --rm test
 ```
 
-## Serveur TTS GPU (apps/tts-server)
+Le test Docker peut construire une image lourde. Pour une modification purement
+documentaire, valider les liens, Compose et le diff suffit.
 
-Le depot contient une seconde application :
-
-```text
-apps/tts-server/
-```
-
-Objectif : sortir la synthese MOSS-TTS-v1.5 du worker video-api et la servir
-depuis une machine GPU dediee (>= 24 Go VRAM). Un seul container Docker expose
-une API HTTP FastAPI ; le modele est charge une fois au demarrage et reste en
-VRAM entre les jobs.
-
-Endpoints :
-
-- `POST /v1/tts/batch` : tous les segments d'une video en un appel -> job async ;
-- `GET /v1/jobs/<id>` : progression par segment + liens de telechargement WAV/MP3 ;
-- `POST /v1/tts` : synthese synchrone d'un segment (tests/cURL) ;
-- `GET /healthz` : etat du modele (loading/ready/error), GPU/VRAM, file d'attente.
-
-Points cles :
-
-- voix coherente geree cote serveur : 1er WAV (reference uploadee, sinon 1er
-  segment genere) = reference de clonage des suivants, comme le moteur local ;
-- cache serveur par contenu (modele + langue + texte + hash de la reference) :
-  une reparation ne resynthetise que les segments changes, et le meme texte
-  redonne exactement le meme WAV malgre le sampling stochastique de MOSS ;
-- auth par cle API (`Authorization: Bearer`), pensee pour un LAN/VPN ;
-- GPU serialise : une synthese a la fois (queue + lock) ;
-- moteur factice `TTS_SERVER_FAKE_ENGINE=1` pour tester l'API sans GPU/torch.
-
-Cote video-api, activer avec :
-
-```text
-VIDEO_API_VOICE_ENGINE=moss-remote
-VIDEO_API_TTS_SERVER_URL=http://<ip-serveur-gpu>:8100
-VIDEO_API_TTS_SERVER_API_KEY=<cle>
-```
-
-Le client est `generate_voice_en.py --engine moss-remote` (stdlib uniquement,
-pas de nouvelle dependance worker). Si une partie des WAV existe deja en local,
-il n'envoie que les segments manquants et uploade le premier WAV local comme
-reference pour garder le meme timbre. Serveur injoignable ou job TTS en echec =
-job video en echec avec l'erreur dans `logs/voice.log`, jamais de bascule
-silencieuse vers une autre voix.
-
-Doc complete : `apps/tts-server/README.md`.
-
-### Validation tts-server
+Si le rendu est touché, ajouter un smoke render dans Docker. Si seul
+`tts-server` est touché :
 
 ```bash
 python3 -m py_compile $(find apps/tts-server/src apps/tts-server/tests -name '*.py' -print)
 docker compose -f apps/tts-server/compose.yaml config --quiet
-docker compose -f apps/tts-server/compose.yaml run --rm test
+apps/tts-server/.venv/bin/pytest -q apps/tts-server/tests  # si disponible
+# sinon : docker compose -f apps/tts-server/compose.yaml run --rm test
 ```
 
-## Travail dans le depot
+## Pipeline manuel historique
 
-Le projet peut contenir des fichiers non suivis ou des changements utilisateur.
+Cette section ne s'applique qu'à une demande explicite sur une vidéo suivie dans
+`videos/linux-fondamentaux/` ou à une nouvelle production manuelle.
 
-Regles :
+- Lire `PROCEDURE.md` et `docs/VIDEO_PRODUCTION_STANDARD.md` avant d'agir.
+- Garder Chatterbox principal non-turbo sauf accord explicite pour changer de
+  voix ou de modèle.
+- Synchroniser avec `audio/en/durations.json` et `beats_en.json`.
+- Rendre d'abord en basse qualité, inspecter ffprobe/freezedetect/snapshots, puis
+  rendre et revérifier le final.
+- Ne jamais déclarer une vidéo terminée sans audio, vidéo silencieuse, MP4 final,
+  contrôles techniques et inspection de plusieurs frames.
 
-- Ne pas supprimer ou reinitialiser des fichiers sans demande explicite.
-- Ne pas faire de `git reset --hard`.
-- Ne pas nettoyer `videos/` ou `media/` sans accord.
-- Ajouter les fichiers utiles au bon endroit.
-- Eviter les refactors qui ne servent pas directement la video.
+## Quand demander confirmation
 
-Avant de finir, consulter :
+Demande seulement si le choix change matériellement le résultat ou l'autorité :
 
-```bash
-git status --short
-```
+- langue, voix ou modèle TTS;
+- forte réduction de durée ou suppression d'une scène;
+- action destructive;
+- nouveau service externe, secret ou dépense;
+- changement de portée au-delà de la demande.
 
-Ne pas pretendre que tout est commit ou propre si ce n'est pas le cas.
+Sinon, avance avec les conventions existantes.
 
-## Sources et recherche
+## Définition de terminé
 
-Si la demande concerne un choix de modele, une bibliotheque ou un outil qui peut evoluer, verifier l'information en ligne.
-
-Pour les TTS locaux/open-source, les references deja utilisees sont :
-
-- Chatterbox : https://github.com/resemble-ai/chatterbox
-- Kokoro : https://github.com/hexgrad/kokoro
-- F5-TTS : https://github.com/SWivid/F5-TTS
-
-Pour Manim, preferer la documentation Manim Community Edition et les patterns deja presents dans ce depot.
-
-## Quand demander a l'utilisateur
-
-Demander confirmation seulement si le choix change vraiment le resultat :
-
-- changer de langue ;
-- changer de voix ou de modele TTS ;
-- raccourcir fortement la video ;
-- supprimer une scene ;
-- remplacer Chatterbox principal par un autre modele ;
-- faire une action destructive.
-
-Sinon, avancer avec les conventions existantes.
-
-## Definition de "termine" pour une video manuelle
-
-Une video est terminee seulement si :
-
-- le script est present ;
-- les segments audio sont presents ;
-- `beats_en.json` est present pour les scenes v2 ou pilotes ;
-- le fichier audio global est present ;
-- le rendu video silencieux est present ;
-- le MP4 final audio+video est present ;
-- `ffprobe` confirme audio et video ;
-- `freezedetect` a ete mesure ;
-- plusieurs frames ont ete inspectees ;
-- le chemin final est donne a l'utilisateur.
-
-Si une de ces conditions manque, dire clairement ce qui manque.
+- Changement demandé réellement implémenté, sans refactor hors sujet.
+- Contrats et documentation cohérents.
+- Validation finale adaptée exécutée une fois; résultats rapportés honnêtement.
+- Aucun échec masqué et aucune affirmation de propreté si le worktree est sale.
+- Pour un job API livré : statut terminal correct, rapport disponible et MP4
+  téléchargeable.
+- Pour une vidéo manuelle : appliquer la définition complète de
+  `PROCEDURE.md`.
