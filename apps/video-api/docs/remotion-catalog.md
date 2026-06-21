@@ -49,6 +49,10 @@ The blueprint composes these by `{component, props}`. Signatures: see
 | `FlowScene` | data moving through stages (a syscall's path) |
 | `BarChartScene` | quantities / benchmarks |
 | `CounterScene` | one headline metric (throughput, size, count) |
+| `QuoteScene` | a headline quotation / punch statement (full screen, word-by-word) |
+| `SplitFocusScene` | two live panels side by side (cause/effect, code + its result) — bounded kinds: code\|plot\|formula\|bullets\|terminal |
+| `ZoomNarrativeScene` | a cinematic camera zoom/pan revealing items across a canvas |
+| `NetworkMapScene` | an animated node-link graph for a complex system (positions auto-computed) |
 
 ## Pick a building block by subject
 

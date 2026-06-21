@@ -290,6 +290,17 @@ def test_normalise_network_map_empty_fallback() -> None:
     assert out["props"]["bullets"]
 
 
+def test_new_archetypes_registered_and_advertised() -> None:
+    from video_api.schemas import REMOTION_PALETTE
+    from video_api.pipeline.remotion_blueprint import _PALETTE_LINE
+
+    registry_src = (REMOTION_DIR / "src" / "registry.ts").read_text()
+    for name in ("QuoteScene", "SplitFocusScene", "ZoomNarrativeScene", "NetworkMapScene"):
+        assert name in REMOTION_PALETTE, f"{name} missing from REMOTION_PALETTE"
+        assert f"{name}:" in registry_src, f"{name} missing from registry.ts"
+        assert name in _PALETTE_LINE, f"{name} missing from the LLM palette prompt"
+
+
 def test_normalise_narration_field_aliases() -> None:
     raw = {
         "title": "T", "slug": "t", "scenes": [

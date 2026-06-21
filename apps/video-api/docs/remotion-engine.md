@@ -56,6 +56,10 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 | `FlowScene`          | `title, stages[{label,sub?}][2-5], caption?` (paquet qui traverse) |
 | `BarChartScene`      | `title, bars[{label,value,color?}][2-6], caption?` |
 | `CounterScene`       | `title, value, prefix?, suffix?, label?, decimals?, caption?` |
+| `QuoteScene`         | `quote, author?, accent?` (citation plein écran mot-à-mot) |
+| `SplitFocusScene`    | `title?, left{kind,…}, right{kind,…}, caption?` ; kinds: `code\|plot\|formula\|bullets\|terminal` |
+| `ZoomNarrativeScene` | `canvas[{id,label,x(-6..6),y(-3..3),sub?,detail?}], path?, accent?` (caméra zoom/pan) |
+| `NetworkMapScene`    | `nodes[{id,label,group?}], links[{a,b,label?}]` (positions auto-calculées en Python) |
 | `ImageScene`         | `title, asset_query` puis `src` local, `motion?, credit?` |
 | `FootageScene`       | `title, asset_query` puis `src` local, `mediaDurationSeconds, credit?` |
 
