@@ -31,7 +31,7 @@ import uuid
 from pathlib import Path
 
 from video_api.config import Settings
-from video_api.pipeline.materialize import _TRANSITION_SFX_SCRIPT, _assemble_script, slugify
+from video_api.pipeline.materialize import _assemble_script, slugify
 from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import RemotionBlueprint, RemotionScene
 
@@ -311,10 +311,6 @@ class RemotionMaterializer:
             encoding="utf-8",
         )
         (video_dir / "build_video_json.py").write_text(_build_video_json_py(fps), encoding="utf-8")
-        (video_dir / "build_transition_sfx.py").write_text(
-            _TRANSITION_SFX_SCRIPT,
-            encoding="utf-8",
-        )
         # Default (palette-only) custom-scene index; the scene-coder overwrites it
         # together with remotion_scenes/*.tsx when there are Custom scenes.
         (video_dir / "jobScenes_index.ts").write_text(
@@ -423,7 +419,6 @@ def validate_remotion_video_source(video_dir: Path) -> None:
         "segments_en.json",
         "scenes_map.json",
         "build_video_json.py",
-        "build_transition_sfx.py",
         "render_en.sh",
         "assemble_en.sh",
     ]

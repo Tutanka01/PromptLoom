@@ -322,7 +322,6 @@ def test_materialize_writes_contract(tmp_path) -> None:
         "segments_en.json",
         "scenes_map.json",
         "build_video_json.py",
-        "build_transition_sfx.py",
         "render_en.sh",
         "assemble_en.sh",
         "generate_voice_en.py",

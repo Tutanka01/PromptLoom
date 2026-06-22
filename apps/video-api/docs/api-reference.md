@@ -110,8 +110,8 @@ Champs :
   `cinematic` choisissent Remotion. `cinematic` refuse explicitement Manim.
 - `production_mode` optionnel : `technical` (compatibilite historique),
   `editorial` ou `cinematic`. Les deux modes avances activent par defaut la
-  recherche, les sous-titres continus (`captions: "full"`), les ponts sonores et
-  le gate anti-diaporama. Le mode cinematique rend Remotion en 60 fps.
+  recherche, les sous-titres continus (`captions: "full"`) et le gate
+  anti-diaporama. Le mode cinematique rend Remotion en 60 fps.
 - `research` controle l'etape de recherche : `enabled`, `required` et
   `max_sources` (3 a 20). Les credentials et endpoints restent exclusivement
   cote serveur. En mode avance, `enabled` et `required` valent `true` par defaut.

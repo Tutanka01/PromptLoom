@@ -138,13 +138,10 @@ def validate_static_video_source(video_dir: Path) -> None:
             if action in {"make it nice", "show something", "more explanation", "animate"}:
                 raise ValueError(f"vague visual action for {segment['key']}: {action}")
 
-    transition_sfx = video_dir / "build_transition_sfx.py"
-    if not transition_sfx.exists():
-        raise ValueError("build_transition_sfx.py missing")
     py_files = (
         list(video_dir.glob("*_en.py"))
         + list(video_dir.glob("*_style.py"))
-        + [video_dir / "generate_voice_en.py", transition_sfx]
+        + [video_dir / "generate_voice_en.py"]
     )
     manim_files = [path for path in video_dir.glob("*_en.py") if path.name != "generate_voice_en.py"]
     # Scenes are now authored as free-form Manim (scene_coder); the `layout_name`

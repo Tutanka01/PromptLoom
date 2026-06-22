@@ -532,59 +532,6 @@ ffmpeg -y -f concat -safe 0 -i concat_en.txt -c copy final/{blueprint.slug}-en-s
 '''
 
 
-_TRANSITION_SFX_SCRIPT = '''#!/usr/bin/env python3
-"""Generate a subtle deterministic sound bridge at every scene boundary."""
-import json
-import math
-import random
-import sys
-import wave
-from array import array
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent
-durations = json.loads((ROOT / "audio" / "en" / "durations.json").read_text(encoding="utf-8"))
-boundaries = []
-cursor = 0.0
-values = list(durations.values())
-for seconds in values[:-1]:
-    cursor += float(seconds)
-    boundaries.append(cursor)
-
-rate = 48000
-total = max(1.0, sum(float(v) for v in values) + 0.5)
-frames = int(total * rate)
-# A four-minute timeline is ~11.5 million samples. An array('h') stays near
-# 23 MB, whereas a Python float list would consume hundreds of megabytes.
-samples = array("h", [0]) * frames
-rng = random.Random(24062026)
-length = int(0.34 * rate)
-for boundary in boundaries:
-    start = max(0, int((boundary - 0.17) * rate))
-    phase = 0.0
-    for i in range(length):
-        pos = i / max(1, length - 1)
-        envelope = math.sin(math.pi * pos) ** 2
-        frequency = 980 - 690 * pos
-        phase += 2 * math.pi * frequency / rate
-        noise = rng.uniform(-1.0, 1.0)
-        value = (0.055 * math.sin(phase) + 0.025 * noise) * envelope
-        index = start + i
-        if index < frames:
-            samples[index] = max(-32768, min(32767, samples[index] + int(value * 32767)))
-
-out = ROOT / "audio" / "en" / "transition_sfx.wav"
-with wave.open(str(out), "wb") as wav:
-    wav.setnchannels(1)
-    wav.setsampwidth(2)
-    wav.setframerate(rate)
-    if sys.byteorder != "little":
-        samples.byteswap()
-    wav.writeframes(samples.tobytes())
-print(f"Wrote {out} with {len(boundaries)} sound bridges")
-'''
-
-
 def _assemble_script(blueprint: VideoBlueprint) -> str:
     return f'''#!/usr/bin/env bash
 set -euo pipefail
@@ -599,21 +546,7 @@ OUTPUT="${{OUTPUT:-final/{blueprint.slug}-en-final.mp4}}"
 # and sidechain-ducked by the voice so narration always stays on top.
 MUSIC_FILE="${{MUSIC_FILE:-}}"
 MUSIC_DB="${{MUSIC_DB:--26}}"
-TRANSITION_SFX="${{TRANSITION_SFX:-0}}"
 VOICE_INPUT="${{AUDIO}}"
-VOICE_WITH_SFX="audio/en/voice_with_sfx.wav"
-cleanup_audio() {{ rm -f "${{VOICE_WITH_SFX}}"; }}
-trap cleanup_audio EXIT
-
-if [[ "${{TRANSITION_SFX}}" == "1" ]]; then
-  python3 build_transition_sfx.py
-  ffmpeg -y \\
-    -i "${{VOICE_INPUT}}" \\
-    -i audio/en/transition_sfx.wav \\
-    -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[mix]" \\
-    -map "[mix]" -c:a pcm_s16le "${{VOICE_WITH_SFX}}"
-  VOICE_INPUT="${{VOICE_WITH_SFX}}"
-fi
 
 # apad extends the voice stream with silence to cover the full video duration.
 # -shortest then trims everything to the video end. This prevents the audio
@@ -693,11 +626,6 @@ class Materializer:
             json.dumps(_beats_json(blueprint), indent=2) + "\n",
             encoding="utf-8",
         )
-        (video_dir / "build_transition_sfx.py").write_text(
-            _TRANSITION_SFX_SCRIPT,
-            encoding="utf-8",
-        )
-
         style_src = self.settings.repo_root / "docs" / "boilerplate" / "video" / "video_style.py"
         style_text = style_src.read_text(encoding="utf-8")
         style_text = style_text.replace('FONT = "Helvetica Neue"', 'FONT = "Inter"')

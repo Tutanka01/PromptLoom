@@ -18,7 +18,6 @@ video_dir/
   generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.mp3
   scenes_map.json       # {fps, scenes:[{key, component, custom, props}]} (ordonné)
   build_video_json.py   # durations.json + scenes_map.json -> video.json
-  build_transition_sfx.py # ponts sonores deterministes aux coupes
   render_en.sh          # build video.json, injecte l'entrée par job, npx remotion render -> final/<slug>-en-silent.mp4
   assemble_en.sh        # partagé avec Manim : mux silent + voiceover -> final/<slug>-en-final.mp4
   remotion_scenes/*.tsx # composants Custom générés (scene-coder)
@@ -75,7 +74,8 @@ equilibrees, coupees sur la ponctuation, duree bornee) affichant le **vrai texte
 la liste dans `subtitles.json` (lue par le rendu) et le meme contenu en sidecar
 `final/<slug>-<lang>.srt` + `.vtt`, donc incruste et fichier ne peuvent pas
 diverger. `captionMode` vaut `off` (masque) ou `full`/`keywords` (continu). Les
-modes avances mixent aussi un pont sonore deterministe a chaque coupe.
+transitions de scene sont purement visuelles : aucun effet sonore n'est ajoute
+aux coupes.
 
 ### Escape hatch `Custom` (code libre encadré)
 

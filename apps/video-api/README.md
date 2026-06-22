@@ -18,7 +18,7 @@ Start here:
 - [docs/developer-guide.md](docs/developer-guide.md): developer workflow and extension points.
 - [docs/operations.md](docs/operations.md): Docker, environment variables, testing, and troubleshooting.
 - [docs/remotion-engine.md](docs/remotion-engine.md): Remotion render engine (`VIDEO_API_RENDER_ENGINE=remotion`), an alternative to Manim sharing the same TTS/assemble/verify.
-- [docs/advanced-production.md](docs/advanced-production.md): per-request research, media, motion-first rendering, captions, sound bridges, and anti-slideshow gates.
+- [docs/advanced-production.md](docs/advanced-production.md): per-request research, media, motion-first rendering, captions, and anti-slideshow gates.
 
 ## Run Locally
 

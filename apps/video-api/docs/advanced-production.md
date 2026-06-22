@@ -45,7 +45,7 @@ recherche sourcee
   -> TTS + alignement mot a mot
   -> sous-titres (cues globaux + sidecar .srt/.vtt) si captions != off
   -> Remotion (motion design + piste de sous-titres continue)
-  -> voix + ponts sonores + musique duckee optionnelle
+  -> voix + musique duckee optionnelle
   -> ffprobe + freezedetect + delivery gate
 ```
 
@@ -113,8 +113,9 @@ ou il apporte une information exacte.
   (timeline globale), liste dans `report.subtitles` et telechargeable via
   `/v1/videos/{id}/artifacts/<chemin>` — incruste et fichier ne peuvent pas
   diverger ;
-- les modes avances generent des ponts sonores subtils aux coupes. Une musique
-  configuree avec `VIDEO_API_MUSIC_FILE` reste duckee sous la narration.
+- les transitions de scene sont purement visuelles (fondus, aucun effet sonore
+  ajoute aux coupes). Une musique configuree avec `VIDEO_API_MUSIC_FILE` reste
+  duckee sous la narration.
 
 ### Gate anti-diaporama
 

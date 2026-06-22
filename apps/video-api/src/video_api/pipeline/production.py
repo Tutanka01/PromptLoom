@@ -228,8 +228,6 @@ class VideoPipeline:
                     "MUSIC_DB": f"{self.settings.music_gain_db:g}",
                 }
             )
-        if self.production_options.mode in {"editorial", "cinematic"}:
-            env["TRANSITION_SFX"] = "1"
         return env or None
 
     def run(self, job_id: str) -> str:
