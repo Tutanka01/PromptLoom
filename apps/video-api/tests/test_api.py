@@ -69,6 +69,14 @@ def test_cinematic_options_are_persisted_per_job(client: TestClient) -> None:
     assert config["captions"] == "full"
 
 
+def test_cinematic_captions_default_to_off(client: TestClient) -> None:
+    job_id = _create_job(client, production_mode="cinematic")
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        config = json.loads(job.production_config)
+    assert config["captions"] == "off"
+
+
 def test_cinematic_manim_is_rejected_as_request_validation(client: TestClient) -> None:
     response = client.post(
         "/v1/videos",

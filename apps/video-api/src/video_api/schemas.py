@@ -74,7 +74,7 @@ ProductionMode = Literal["technical", "editorial", "cinematic"]
 #   "off"      -> clean video: no burned-in track AND no .srt/.vtt sidecar;
 #   "full"     -> continuous burned-in subtitle track + .srt/.vtt sidecar;
 #   "keywords" -> retained for compatibility, behaves like "full" (continuous).
-# Default (when unset): "off" in technical mode, "full" in editorial/cinematic.
+# Default (when unset): "off" in every production mode.
 CaptionMode = Literal["off", "keywords", "full"]
 AssetStrategy = Literal["diagrams", "hybrid", "motion_first"]
 
@@ -122,8 +122,7 @@ class ProductionOptions(BaseModel):
         if self.research.enabled is None:
             self.research.enabled = advanced
         if self.captions is None:
-            # Advanced modes ship continuous, homogeneous subtitles by default.
-            self.captions = "full" if advanced else "off"
+            self.captions = "off"
         if self.delivery_promise is None:
             self.delivery_promise = {
                 "technical": "technical_explainer",
@@ -159,8 +158,8 @@ class VideoCreateRequest(BaseModel):
     production_mode: ProductionMode = "technical"
     research: ResearchOptions = Field(default_factory=ResearchOptions)
     visuals: VisualOptions = Field(default_factory=VisualOptions)
-    # Subtitles, opt-in. Omit to take the per-mode default; set "off" for a clean
-    # video with no subtitles at all, or "full" to force them on. See CaptionMode.
+    # Subtitles, opt-in. Omit (or set "off") for a clean video with no subtitles
+    # at all, or set "full" to force them on. See CaptionMode.
     captions: CaptionMode | None = None
     callback_url: str | None = None
 

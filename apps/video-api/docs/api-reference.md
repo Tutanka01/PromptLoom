@@ -110,15 +110,15 @@ Champs :
   `cinematic` choisissent Remotion. `cinematic` refuse explicitement Manim.
 - `production_mode` optionnel : `technical` (compatibilite historique),
   `editorial` ou `cinematic`. Les deux modes avances activent par defaut la
-  recherche, les sous-titres continus (`captions: "full"`) et le gate
-  anti-diaporama. Le mode cinematique rend Remotion en 60 fps.
+  recherche et le gate anti-diaporama. Le mode cinematique rend Remotion en
+  60 fps.
 - `research` controle l'etape de recherche : `enabled`, `required` et
   `max_sources` (3 a 20). Les credentials et endpoints restent exclusivement
   cote serveur. En mode avance, `enabled` et `required` valent `true` par defaut.
 - `visuals.strategy` vaut `diagrams`, `hybrid` ou `motion_first` ;
   `allow_stock` autorise les requetes de medias et `max_assets` (0 a 12) borne
   leur nombre. Une acquisition impossible produit un fallback diagrammatique.
-- `captions` vaut `off`, `keywords` ou `full` (defaut `full` en mode avance). Les
+- `captions` vaut `off`, `keywords` ou `full` (defaut `off` dans tous les modes). Les
   sous-titres sont une piste continue homogene affichant le vrai texte parle
   (casse, ponctuation, accents, chiffres reels) regroupe en cues lisibles ; `full`
   et `keywords` la rendent en continu, `off` la masque. Quand l'alignement tourne,
