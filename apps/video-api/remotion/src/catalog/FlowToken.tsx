@@ -1,5 +1,5 @@
 import React from "react";
-import { colors, fonts, mu, mx, my } from "../style/tokens";
+import { alpha, colors, fonts, mu, mx, my } from "../style/tokens";
 
 /**
  * A token/packet travelling from `from` to `to` (Manim coords) at `progress`
@@ -30,7 +30,7 @@ export const FlowToken: React.FC<{
         height: d,
         borderRadius: "50%",
         background: color,
-        boxShadow: `0 0 ${d * 0.7}px ${color}aa`,
+        boxShadow: `0 0 ${d * 0.7}px ${alpha(color, 0.67)}`,
         opacity,
         display: "flex",
         alignItems: "center",

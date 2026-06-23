@@ -1,5 +1,5 @@
 import React from "react";
-import { colors, fonts } from "../style/tokens";
+import { alpha, colors, fonts } from "../style/tokens";
 
 /**
  * 2D function plot — a universal STEM primitive (calculus, physics kinematics,
@@ -55,10 +55,10 @@ export const Plot: React.FC<{
   const yStep = niceStep(yMax - yMin);
   const grid: React.ReactNode[] = [];
   for (let x = Math.ceil(xMin / xStep) * xStep; x <= xMax; x += xStep) {
-    grid.push(<line key={`gx${x}`} x1={sx(x)} y1={sy(yMin)} x2={sx(x)} y2={sy(yMax)} stroke={colors.edge} strokeWidth={1} opacity={0.4} />);
+    grid.push(<line key={`gx${x}`} x1={sx(x)} y1={sy(yMin)} x2={sx(x)} y2={sy(yMax)} style={{ stroke: colors.edge }} strokeWidth={1} opacity={0.4} />);
   }
   for (let y = Math.ceil(yMin / yStep) * yStep; y <= yMax; y += yStep) {
-    grid.push(<line key={`gy${y}`} x1={sx(xMin)} y1={sy(y)} x2={sx(xMax)} y2={sy(y)} stroke={colors.edge} strokeWidth={1} opacity={0.4} />);
+    grid.push(<line key={`gy${y}`} x1={sx(xMin)} y1={sy(y)} x2={sx(xMax)} y2={sy(y)} style={{ stroke: colors.edge }} strokeWidth={1} opacity={0.4} />);
   }
 
   // area under curve
@@ -86,7 +86,7 @@ export const Plot: React.FC<{
         y1={sy(tLine(xMin))}
         x2={sx(xMax)}
         y2={sy(tLine(xMax))}
-        stroke={colors.kernel}
+        style={{ stroke: colors.kernel }}
         strokeWidth={3}
         strokeDasharray="8 6"
       />
@@ -98,16 +98,16 @@ export const Plot: React.FC<{
     <svg width={width} height={height} style={{ overflow: "visible" }}>
       {grid}
       {/* axes */}
-      <line x1={sx(xMin)} y1={sy(0)} x2={sx(xMax)} y2={sy(0)} stroke={colors.muted} strokeWidth={2} />
-      <line x1={sx(0)} y1={sy(yMin)} x2={sx(0)} y2={sy(yMax)} stroke={colors.muted} strokeWidth={2} />
-      <text x={sx(xMax)} y={sy(0) + 26} fill={colors.muted} fontSize={22} fontFamily={fonts.sans}>{xLabel}</text>
-      <text x={sx(0) + 12} y={sy(yMax)} fill={colors.muted} fontSize={22} fontFamily={fonts.sans}>{yLabel}</text>
+      <line x1={sx(xMin)} y1={sy(0)} x2={sx(xMax)} y2={sy(0)} style={{ stroke: colors.muted }} strokeWidth={2} />
+      <line x1={sx(0)} y1={sy(yMin)} x2={sx(0)} y2={sy(yMax)} style={{ stroke: colors.muted }} strokeWidth={2} />
+      <text x={sx(xMax)} y={sy(0) + 26} style={{ fill: colors.muted }} fontSize={22} fontFamily={fonts.sans}>{xLabel}</text>
+      <text x={sx(0) + 12} y={sy(yMax)} style={{ fill: colors.muted }} fontSize={22} fontFamily={fonts.sans}>{yLabel}</text>
 
-      {areaPath && <path d={areaPath} fill={`${color}33`} stroke="none" />}
+      {areaPath && <path d={areaPath} style={{ fill: alpha(color, 0.2) }} stroke="none" />}
       <path
         d={path}
         fill="none"
-        stroke={color}
+        style={{ stroke: color }}
         strokeWidth={4}
         strokeLinecap="round"
         strokeDasharray={pathLen}
@@ -115,7 +115,7 @@ export const Plot: React.FC<{
       />
       {tangent}
       {pointAt != null && drawProgress > 0.98 && (
-        <circle cx={sx(pointAt)} cy={sy(fn(pointAt))} r={9} fill={colors.kernel} stroke={colors.bg} strokeWidth={3} />
+        <circle cx={sx(pointAt)} cy={sy(fn(pointAt))} r={9} style={{ fill: colors.kernel, stroke: colors.bg }} strokeWidth={3} />
       )}
     </svg>
   );

@@ -25,18 +25,18 @@ export const BarChart: React.FC<{
   const baseY = height - 60;
   return (
     <svg width={width} height={height} style={{ overflow: "visible" }}>
-      <line x1={0} y1={baseY} x2={width} y2={baseY} stroke={colors.edge} strokeWidth={2} />
+      <line x1={0} y1={baseY} x2={width} y2={baseY} style={{ stroke: colors.edge }} strokeWidth={2} />
       {bars.map((b, i) => {
         const h = (b.value / max) * (baseY - 40) * g;
         const x = gap + i * (barW + gap);
         const col = b.color ?? PALETTE[i % PALETTE.length];
         return (
           <g key={i}>
-            <rect x={x} y={baseY - h} width={barW} height={h} rx={8} fill={col} opacity={0.92} />
-            <text x={x + barW / 2} y={baseY + 32} fill={colors.text} fontSize={24} fontFamily={fonts.sans} fontWeight={600} textAnchor="middle">
+            <rect x={x} y={baseY - h} width={barW} height={h} rx={8} style={{ fill: col }} opacity={0.92} />
+            <text x={x + barW / 2} y={baseY + 32} style={{ fill: colors.text }} fontSize={24} fontFamily={fonts.sans} fontWeight={600} textAnchor="middle">
               {b.label}
             </text>
-            <text x={x + barW / 2} y={baseY - h - 14} fill={colors.muted} fontSize={22} fontFamily={fonts.mono} textAnchor="middle" opacity={g}>
+            <text x={x + barW / 2} y={baseY - h - 14} style={{ fill: colors.muted }} fontSize={22} fontFamily={fonts.mono} textAnchor="middle" opacity={g}>
               {Number.isInteger(b.value) ? Math.round(b.value * g) : (b.value * g).toFixed(1)}
             </text>
           </g>

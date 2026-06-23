@@ -31,7 +31,7 @@ REMOTION_DIR = REPO_ROOT / "apps" / "video-api" / "remotion"
 # Custom scene that follows the prompt fails `tsc` and silently falls back to a
 # BulletScene — which is exactly the bug this guards against.
 _PROMISED_LIB_EXPORTS = [
-    "AbsoluteFill", "tailFade", "cueOr", "colors", "mx", "my",
+    "AbsoluteFill", "tailFade", "cueOr", "colors", "alpha", "mx", "my",
     "AmbientBackground", "MathFormula", "CodeBlock", "Plot",
     "TitleBar", "Card", "Arrow", "Caption", "TextReveal", "BlurReveal",
     "MemoryGrid", "FlowToken", "BarChart", "Counter", "Zone", "Terminal",
@@ -299,6 +299,43 @@ def test_new_archetypes_registered_and_advertised() -> None:
         assert name in REMOTION_PALETTE, f"{name} missing from REMOTION_PALETTE"
         assert f"{name}:" in registry_src, f"{name} missing from registry.ts"
         assert name in _PALETTE_LINE, f"{name} missing from the LLM palette prompt"
+
+
+def test_art_direction_themes_parity() -> None:
+    """The Python art-direction enum must match the THEMES keys in tokens.ts and
+    be advertised to the LLM, so a chosen palette always has a TS counterpart."""
+    import re
+    from video_api.schemas import REMOTION_THEMES
+    from video_api.pipeline.remotion_blueprint import REMOTION_SYSTEM_PROMPT, REMOTION_OUTLINE_PROMPT
+
+    tokens = (REMOTION_DIR / "src" / "style" / "tokens.ts").read_text(encoding="utf-8")
+    block = re.search(r"export const THEMES = \{(.*?)\n\} satisfies", tokens, re.DOTALL)
+    assert block, "THEMES object not found in tokens.ts"
+    ts_themes = set(re.findall(r"^\s{2}(\w+):", block.group(1), re.MULTILINE))
+    assert ts_themes == set(REMOTION_THEMES), (
+        f"theme mismatch — tokens.ts={sorted(ts_themes)} vs REMOTION_THEMES={sorted(REMOTION_THEMES)}"
+    )
+    assert "default" in REMOTION_THEMES, "the 'default' palette must exist (no-regression baseline)"
+    for name in REMOTION_THEMES:
+        assert name in REMOTION_SYSTEM_PROMPT, f"{name} missing from the single-pass prompt"
+        assert name in REMOTION_OUTLINE_PROMPT, f"{name} missing from the outline prompt"
+
+
+def test_art_direction_clamped_to_known_theme() -> None:
+    raw = _wrap_scene("BulletScene", {"bullets": ["a", "b"]})
+    raw["art_direction"] = "not-a-real-theme"
+    assert normalize_remotion_blueprint(raw, 240)["art_direction"] == "default"
+    raw["art_direction"] = "synthwave"
+    assert normalize_remotion_blueprint(raw, 240)["art_direction"] == "synthwave"
+
+
+def test_materialize_threads_theme_into_video_json(tmp_path) -> None:
+    bp = fake_remotion_blueprint("Explain page tables", "cs", 240).model_copy(
+        update={"art_direction": "blueprint"}
+    )
+    video_dir = RemotionMaterializer(_settings()).materialize(bp, tmp_path)
+    smap = json.loads((video_dir / "scenes_map.json").read_text())
+    assert smap["theme"] == "blueprint"
 
 
 def test_normalise_narration_field_aliases() -> None:

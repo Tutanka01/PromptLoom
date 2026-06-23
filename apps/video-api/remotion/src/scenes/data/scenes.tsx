@@ -11,7 +11,7 @@ import { BarChart, type Bar } from "../../catalog/BarChart";
 import { Counter } from "../../catalog/Counter";
 import { Icon } from "../../catalog/Icon";
 import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
-import { colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
+import { alpha, colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
 import { appear, beat, cueOr, dimAt, lastCue } from "../../style/anim";
 
 /**
@@ -271,7 +271,7 @@ export const ComparisonScene: React.FC<
     const zoneStart = firstCue != null ? Math.max(0.03, firstCue - 0.08) : base;
     return (
       <>
-        <Zone x={cx} y={-0.45} w={5.7} h={4.1} color={color} fill={`${color}12`} opacity={appear(p, zoneStart, zoneStart + 0.1)} />
+        <Zone x={cx} y={-0.45} w={5.7} h={4.1} color={color} fill={alpha(color, 0.07)} opacity={appear(p, zoneStart, zoneStart + 0.1)} />
         {/* Header centered over THIS column (not the full screen). */}
         <div style={{ position: "absolute", left: mx(cx) - mu(2.85), top: my(2.05), width: mu(5.7), textAlign: "center", opacity: appear(p, zoneStart, zoneStart + 0.1) }}>
           <span style={{ color, fontFamily: fonts.sans, fontSize: 31, fontWeight: 700 }}>{side.label}</span>
@@ -319,7 +319,7 @@ export const LayeredSystemScene: React.FC<
         const color = layer.color ?? LAYER_COLORS[i % LAYER_COLORS.length];
         return (
           <React.Fragment key={i}>
-            <Zone x={0} y={cy} w={9.2} h={bandH} color={color} fill={`${color}16`} opacity={op} />
+            <Zone x={0} y={cy} w={9.2} h={bandH} color={color} fill={alpha(color, 0.09)} opacity={op} />
             <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(cy) - 24, textAlign: "center", opacity: op }}>
               <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 34, fontWeight: 700 }}>{layer.label}</span>
               {layer.sub ? <span style={{ color: colors.muted, fontFamily: fonts.sans, fontSize: 24, marginLeft: 16 }}>{layer.sub}</span> : null}

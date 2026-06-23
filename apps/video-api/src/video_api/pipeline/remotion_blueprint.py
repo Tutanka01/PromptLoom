@@ -21,7 +21,7 @@ import math
 import re
 from typing import Any
 
-from video_api.schemas import REMOTION_PALETTE, RemotionBlueprint
+from video_api.schemas import REMOTION_PALETTE, REMOTION_THEMES, RemotionBlueprint
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +212,7 @@ Return ONLY one JSON object (no prose, no markdown fences) with this shape:
   "teaching_goal": "one sentence",
   "learning_objectives": ["1 to 5 concise objectives"],
   "style_notes": "visual style in one or two sentences",
+  "art_direction": "default | blueprint | forest | synthwave | carbon | plum",
   "scenes": [
     {{ "key": "Scene1_HookEN", "title": "short scene title",
        "narration": "full spoken sentences for this scene (this is the spine)",
@@ -255,6 +256,10 @@ Rules:
   scenes with precise asset_query values. The narration of a media scene must explicitly discuss what
   the image proves or grounds. Do not add decorative media just to satisfy a quota.
 - When research_context is present, attach only its valid IDs as scene.source_ids. Never invent IDs.
+- ART DIRECTION: set "art_direction" to the palette that best fits the subject/tone — default
+  (neutral dark academic), blueprint (engineering/technical blue), forest (biology/nature/green),
+  synthwave (retro, high-energy neon), carbon (high-contrast neutral), plum (warm humanities/design).
+  When unsure, use "default". It recolours the whole video; pick ONE for the entire blueprint.
 Palette hints: user=#3A86FF, gold=#FFBE0B, success=#06D6A0, purple=#9B5DE5, danger=#FB5607."""
 
 
@@ -764,6 +769,10 @@ def normalize_remotion_blueprint(data: Any, target_duration_seconds: int) -> dic
     } else "general_stem"
     difficulty = str(coerced.get("difficulty") or "intro").strip().lower()
     coerced["difficulty"] = difficulty if difficulty in {"intro", "intermediate", "advanced"} else "intro"
+    # Clamp the art-direction palette to the known set so a stale/invalid value
+    # never fails the whole blueprint; an absent/unknown palette is the default look.
+    art_direction = str(coerced.get("art_direction") or coerced.get("palette") or "default").strip().lower()
+    coerced["art_direction"] = art_direction if art_direction in set(REMOTION_THEMES) else "default"
     coerced["learning_objectives"] = (
         coerced.get("learning_objectives") or coerced.get("objectives") or ["Explain the core idea clearly."]
     )
@@ -832,6 +841,7 @@ Return ONLY one JSON object (no prose, no fences):
   "teaching_goal": "one sentence",
   "learning_objectives": ["1 to 5 concise objectives"],
   "style_notes": "visual style in one or two sentences",
+  "art_direction": "default | blueprint | forest | synthwave | carbon | plum",
   "scenes": [
     {{ "key": "Scene1_HookEN", "title": "short scene title",
        "component": "<ComponentName>", "duration_seconds": <int>,
@@ -860,6 +870,9 @@ Rules:
   structural visual is possible. Use a varied motion-led mix. If stock media is allowed and an
   observable real-world anchor exists, plan 1-2 precise ImageScene/FootageScene scenes whose media is
   discussed by the narration; otherwise prefer bespoke or structural motion, never generic B-roll.
+- Set "art_direction" to the palette that best fits the subject/tone: default (neutral dark
+  academic), blueprint (engineering blue), forest (biology/nature green), synthwave (retro neon),
+  carbon (high-contrast neutral), plum (warm humanities). One palette for the whole video; default if unsure.
 - Respect the duration_policy scene count and per-scene durations handed in the user message."""
 
 REMOTION_SCENE_PROMPT = f"""You write ONE scene of a STEM explainer video, as STRICT JSON.

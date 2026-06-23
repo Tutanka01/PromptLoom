@@ -74,6 +74,7 @@ def _scenes_map(
         "fps": fps,
         "captionMode": caption_mode,
         "transitionProfile": transition_profile,
+        "theme": getattr(blueprint, "art_direction", "default"),
         "scenes": scenes,
     }
 
@@ -132,6 +133,7 @@ video = {
     "captionMode": scene_map.get("captionMode", "off"),
     "subtitles": subtitles,
     "transitionProfile": scene_map.get("transitionProfile", "minimal"),
+    "theme": scene_map.get("theme", "default"),
     "scenes": scenes,
 }
 (ROOT / "video.json").write_text(json.dumps(video, indent=2) + "\\n", encoding="utf-8")
@@ -161,7 +163,7 @@ const Root: React.FC = () => (
     id="Video"
     component={{JobMain}}
     schema={{videoSchema}}
-    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal" }}}}
+    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal", theme: "default" }}}}
     fps={{{fps}}}
     width={{1920}}
     height={{1080}}

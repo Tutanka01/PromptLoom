@@ -75,6 +75,7 @@ Hard rules (a violation makes the scene unusable):
 - The scene length in frames is the `dur` prop. Drive every animation from `const frame = useCurrentFrame()` and `const p = frame / dur` (0..1). Do NOT fade the whole scene in/out yourself — the composition's SceneFrame owns the scene envelope and transition; just keep your last beat settling before p≈0.9.
 - If `props.cues` (array of number|null) is present, it holds narration-synced reveal ratios per visual item: use `cueOr(cues, i, fallback)` from ../../lib so item i appears when its words are spoken.
 - 1920x1080 at 60fps. Wrap content in <AbsoluteFill>. Use `colors`, `mx(x)`, `my(y)` from ../../lib for the dark theme + coordinate mapping (x in [-6,6], y in [-3,3], origin centered, y up).
+- `colors` are themed CSS variables. For translucency use `alpha(color, 0.2)` from ../../lib — NEVER string-concatenate a hex suffix like `${color}33` (invalid on a themed colour). In SVG, set colours via `style={{ stroke, fill }}`, not `stroke=`/`fill=` presentation attributes (CSS variables do not resolve there).
 - Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox, Icon). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
 

@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { colors, WIDTH, HEIGHT } from "../style/tokens";
+import { alpha, colors, WIDTH, HEIGHT } from "../style/tokens";
 
 /**
  * Living background with continuous, slow motion. Unlike a static fill, every
@@ -32,7 +32,7 @@ export const AmbientBackground: React.FC<{ accent?: string }> = ({ accent = colo
     <AbsoluteFill style={{ backgroundColor: colors.bg }}>
       <AbsoluteFill
         style={{
-          background: `radial-gradient(720px 520px at ${gx}px ${gy}px, ${accent}1f 0%, rgba(0,0,0,0) 70%)`,
+          background: `radial-gradient(720px 520px at ${gx}px ${gy}px, ${alpha(accent, 0.12)} 0%, rgba(0,0,0,0) 70%)`,
         }}
       />
       <AbsoluteFill

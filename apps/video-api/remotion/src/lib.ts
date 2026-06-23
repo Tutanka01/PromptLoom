@@ -59,8 +59,13 @@ export {
 } from "./components/primitives";
 
 // --- Design tokens + Manim-coordinate helpers ------------------------------
+// `colors` are themed CSS variables (the active palette is set per video at the
+// composition root). For translucency use `alpha(color, 0.2)` — never the old
+// `${color}33` hex suffix, which is invalid on a `var(--c-*)` value. In SVG,
+// apply colours via `style={{ stroke/fill }}`, not presentation attributes.
 export {
   colors,
+  alpha,
   fonts,
   fontSize,
   DIM_OPACITY,

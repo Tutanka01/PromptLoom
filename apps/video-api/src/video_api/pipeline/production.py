@@ -228,6 +228,13 @@ class VideoPipeline:
                     "MUSIC_DB": f"{self.settings.music_gain_db:g}",
                 }
             )
+        env.update(
+            {
+                "LOUDNORM_ENABLED": "1" if self.settings.audio_loudnorm_enabled else "0",
+                "LOUDNESS_TARGET": f"{self.settings.audio_loudness_target_lufs:g}",
+                "LOUDNESS_TP": f"{self.settings.audio_true_peak_db:g}",
+            }
+        )
         return env or None
 
     def run(self, job_id: str) -> str:
@@ -602,6 +609,7 @@ class VideoPipeline:
                     max_single_freeze_seconds=self.settings.verify_max_single_freeze_seconds,
                     freeze_fatal=self.settings.verify_freeze_fatal,
                     expected_fps=self.engine.output_fps,
+                    audio_qc_fatal=self.settings.audio_qc_fatal,
                 )
                 if visual_review_result is not None:
                     final_report["visual_review"] = json.loads(visual_review_result.model_dump_json())

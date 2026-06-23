@@ -4,7 +4,7 @@ import { z } from "zod";
 import { AmbientBackground } from "./catalog/AmbientBackground";
 import { SubtitleTrack } from "./catalog/NarrationCaptions";
 import { SCENE_COMPONENTS } from "./registry";
-import { colors } from "./style/tokens";
+import { applyThemeVars, colors } from "./style/tokens";
 
 /**
  * Data-driven main composition. Reads the per-job `video.json` (here passed as
@@ -41,6 +41,10 @@ export const videoSchema = z.object({
   // rendered as a single continuous top-level track.
   subtitles: z.array(captionCueSchema).default([]),
   transitionProfile: z.enum(["minimal", "editorial", "cinematic"]).default("minimal"),
+  // Art-direction palette (see THEMES in style/tokens.ts). A plain string with a
+  // safe fallback: unknown values resolve to the default palette in
+  // applyThemeVars, and the allowed set is enforced upstream in the pipeline.
+  theme: z.string().default("default"),
 });
 
 export type VideoProps = z.infer<typeof videoSchema>;
@@ -143,6 +147,7 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
   captionMode,
   subtitles,
   transitionProfile,
+  theme,
   registry,
 }) => {
   const components = registry ?? SCENE_COMPONENTS;
@@ -155,7 +160,7 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
   const {fps} = useVideoConfig();
   const overlayFrames = Math.max(12, Math.round(fps * 0.36));
   return (
-    <AbsoluteFill style={{ backgroundColor: colors.bg }}>
+    <AbsoluteFill style={{ ...applyThemeVars(theme), backgroundColor: colors.bg }}>
       {/* Persistent living background, BEHIND every scene. SceneFrame fades each
           scene's content in/out at its edges; during that dip this continuous
           background shows through, so scene-to-scene boundaries hand off

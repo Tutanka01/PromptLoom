@@ -548,6 +548,27 @@ MUSIC_FILE="${{MUSIC_FILE:-}}"
 MUSIC_DB="${{MUSIC_DB:--26}}"
 VOICE_INPUT="${{AUDIO}}"
 
+# Loudness normalisation (EBU R128, single-pass loudnorm). Calibrates every
+# video to the same perceived loudness so the level no longer depends on the TTS
+# engine's raw output. LOUDNESS_TARGET is integrated loudness in LUFS (default
+# -14, the YouTube/streaming norm), LOUDNESS_TP the true-peak ceiling in dBTP.
+# Set LOUDNORM_ENABLED=0 to fall back to the raw (unnormalised) mux.
+LOUDNORM_ENABLED="${{LOUDNORM_ENABLED:-1}}"
+LOUDNESS_TARGET="${{LOUDNESS_TARGET:--14}}"
+LOUDNESS_TP="${{LOUDNESS_TP:--1.5}}"
+LOUDNESS_LRA="${{LOUDNESS_LRA:-11}}"
+LOUDNORM="loudnorm=I=${{LOUDNESS_TARGET}}:TP=${{LOUDNESS_TP}}:LRA=${{LOUDNESS_LRA}}"
+if [[ "${{LOUDNORM_ENABLED}}" == "1" ]]; then
+  # Voice-only branch: normalise the voice first, THEN pad with silence.
+  VOICE_CHAIN="${{LOUDNORM}},apad"
+  # Music branch: normalise the FINAL mix (voice + ducked music) so the whole
+  # programme hits the target, not just the voice.
+  MIX_STAGE=";[a_mix]${{LOUDNORM}}[a_out]"
+else
+  VOICE_CHAIN="apad"
+  MIX_STAGE=";[a_mix]anull[a_out]"
+fi
+
 # apad extends the voice stream with silence to cover the full video duration.
 # -shortest then trims everything to the video end. This prevents the audio
 # track from ending before the video (which caused freezedetect
@@ -557,7 +578,7 @@ if [[ -n "${{MUSIC_FILE}}" && -f "${{MUSIC_FILE}}" ]]; then
     -i "${{VIDEO}}" \\
     -i "${{VOICE_INPUT}}" \\
     -stream_loop -1 -i "${{MUSIC_FILE}}" \\
-    -filter_complex "[1:a]apad,asplit=2[voice_mix][voice_key];[2:a]volume=${{MUSIC_DB}}dB[music];[music][voice_key]sidechaincompress=threshold=0.03:ratio=8:attack=5:release=400[ducked];[voice_mix][ducked]amix=inputs=2:duration=first:normalize=0[a_out]" \\
+    -filter_complex "[1:a]apad,asplit=2[voice_mix][voice_key];[2:a]volume=${{MUSIC_DB}}dB[music];[music][voice_key]sidechaincompress=threshold=0.03:ratio=8:attack=5:release=400[ducked];[voice_mix][ducked]amix=inputs=2:duration=first:normalize=0[a_mix]${{MIX_STAGE}}" \\
     -map 0:v:0 \\
     -map "[a_out]" \\
     -c:v copy \\
@@ -569,7 +590,7 @@ else
   ffmpeg -y \\
     -i "${{VIDEO}}" \\
     -i "${{VOICE_INPUT}}" \\
-    -filter_complex "[1:a]apad[a_padded]" \\
+    -filter_complex "[1:a]${{VOICE_CHAIN}}[a_padded]" \\
     -map 0:v:0 \\
     -map "[a_padded]" \\
     -c:v copy \\

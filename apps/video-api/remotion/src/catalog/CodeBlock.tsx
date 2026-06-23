@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { continueRender, delayRender, interpolate, useCurrentFrame } from "remotion";
 import type { ThemedToken } from "shiki";
 import { createHighlighter, type Highlighter } from "shiki";
-import { colors, fonts } from "../style/tokens";
+import { alpha, colors, fonts } from "../style/tokens";
 
 /**
  * Real syntax-highlighted, progressively-revealed code — the single biggest
@@ -61,9 +61,9 @@ export const CodeBlock: React.FC<{
     <div
       style={{
         background: "#0E1420",
-        border: `1.5px solid ${accent}55`,
+        border: `1.5px solid ${alpha(accent, 0.33)}`,
         borderRadius: 16,
-        boxShadow: `0 22px 60px rgba(0,0,0,0.55), 0 0 0 1px ${accent}22`,
+        boxShadow: `0 22px 60px rgba(0,0,0,0.55), 0 0 0 1px ${alpha(accent, 0.13)}`,
         padding: "26px 30px",
         fontFamily: fonts.mono,
         fontSize,

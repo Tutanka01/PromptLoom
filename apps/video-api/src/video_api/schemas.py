@@ -483,6 +483,29 @@ RemotionComponent = Literal[
 RemotionTransition = Literal["auto", "fade", "rise", "slide-left", "scale", "slide-right", "wipe"]
 
 
+# Art-direction palettes the LLM may pick from to suit a video's subject/tone.
+# Mirror of THEMES in remotion/src/style/tokens.ts (parity enforced by
+# tests/test_remotion_themes_parity.py). "default" reproduces the original
+# dark-academic look exactly, so an un-themed render never regresses.
+REMOTION_THEMES = (
+    "default",
+    "blueprint",
+    "forest",
+    "synthwave",
+    "carbon",
+    "plum",
+)
+
+RemotionArtDirection = Literal[
+    "default",
+    "blueprint",
+    "forest",
+    "synthwave",
+    "carbon",
+    "plum",
+]
+
+
 class RemotionBeat(BaseModel):
     """A narration anchor marking when the i-th visual item should appear.
 
@@ -549,6 +572,10 @@ class RemotionBlueprint(BaseModel):
         max_length=5,
     )
     style_notes: str = Field(min_length=10, max_length=700)
+    # Art-direction palette (see THEMES in remotion/src/style/tokens.ts). The LLM
+    # picks one to suit the subject/tone; "default" keeps the original look.
+    # Unknown/invalid values are clamped to "default" in remotion_blueprint.py.
+    art_direction: RemotionArtDirection = "default"
     scenes: list[RemotionScene] = Field(min_length=3, max_length=14)
     # Quality degradations recorded during generation (placeholder props that
     # survived targeted retries, dropped anchors, ...). Empty on a clean

@@ -144,6 +144,23 @@ class Settings:
     # (no asset ships with the repo).
     music_file: str = field(default_factory=lambda: os.getenv("VIDEO_API_MUSIC_FILE", ""))
     music_gain_db: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_MUSIC_DB", "-26")))
+    # Loudness normalisation (EBU R128) applied by assemble_en.sh so every video
+    # ships at the same perceived loudness regardless of the TTS engine's raw
+    # level. Target is integrated loudness in LUFS (-14 = YouTube/streaming norm),
+    # true_peak the ceiling in dBTP. Disable with VIDEO_API_AUDIO_LOUDNORM_ENABLED=0.
+    audio_loudnorm_enabled: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_AUDIO_LOUDNORM_ENABLED", True)
+    )
+    audio_loudness_target_lufs: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_AUDIO_LOUDNESS_TARGET", "-14"))
+    )
+    audio_true_peak_db: float = field(
+        default_factory=lambda: float(os.getenv("VIDEO_API_AUDIO_TRUE_PEAK", "-1.5"))
+    )
+    # Post-render audio QC in verify_mp4: measures integrated loudness + true peak
+    # of the final file and warns on clipping / near-silence. Off-by-default fatal
+    # mode (VIDEO_API_AUDIO_QC_FATAL=1) turns those warnings into a hard failure.
+    audio_qc_fatal: bool = field(default_factory=lambda: _bool_env("VIDEO_API_AUDIO_QC_FATAL", False))
     default_target_duration_seconds: int = field(
         default_factory=lambda: int(
             os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", str(timing.DEFAULT_TARGET_DURATION_SECONDS))

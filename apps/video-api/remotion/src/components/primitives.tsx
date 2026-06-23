@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
-import { colors, fonts, fontSize, mu, mx, my, WIDTH, HEIGHT } from "../style/tokens";
+import { alpha, colors, fonts, fontSize, mu, mx, my, WIDTH, HEIGHT } from "../style/tokens";
 
 /**
  * Reusable visual primitives — the component library the generator composes.
@@ -114,7 +114,7 @@ export const Card: React.FC<BoxProps> = ({
       border: `${strokeWidth}px solid ${stroke}`,
       boxShadow:
         glow > 0
-          ? `${shadow}, 0 0 ${18 + glow * 26}px ${glow * 7}px ${accent}66`
+          ? `${shadow}, 0 0 ${18 + glow * 26}px ${glow * 7}px ${alpha(accent, 0.4)}`
           : shadow,
       opacity,
       display: "flex",
@@ -211,7 +211,7 @@ export const KernelBadge: React.FC<{
         borderRadius: "50%",
         border: `5px solid ${colors.kernel}`,
         opacity,
-        boxShadow: glow > 0 ? `0 0 ${20 + glow * 30}px ${glow * 8}px ${colors.kernel}66` : shadow,
+        boxShadow: glow > 0 ? `0 0 ${20 + glow * 30}px ${glow * 8}px ${alpha(colors.kernel, 0.4)}` : shadow,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -370,12 +370,14 @@ export const Arrow: React.FC<{
   const y2f = my(to[1]);
   const x2 = x1 + (x2f - x1) * progress;
   const y2 = y1 + (y2f - y1) * progress;
-  const id = `arrow-${color.replace("#", "")}-${Math.round(x1)}-${Math.round(y1)}`;
+  // Coordinate-based id (not colour-based): `color` may be a `var(--c-*)` token,
+  // which is not a valid SVG id/URL fragment.
+  const id = `arrow-${Math.round(x1)}-${Math.round(y1)}-${Math.round(x2f)}-${Math.round(y2f)}`;
   return (
     <svg width={WIDTH} height={HEIGHT} style={{ position: "absolute", overflow: "visible", opacity }}>
       <defs>
         <marker id={id} markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
-          <path d="M0,0 L7,3 L0,6 Z" fill={color} />
+          <path d="M0,0 L7,3 L0,6 Z" style={{ fill: color }} />
         </marker>
       </defs>
       <line
@@ -383,7 +385,7 @@ export const Arrow: React.FC<{
         y1={y1}
         x2={x2}
         y2={y2}
-        stroke={color}
+        style={{ stroke: color }}
         strokeWidth={width}
         strokeDasharray={dashed ? "10 8" : undefined}
         markerEnd={progress > 0.85 ? `url(#${id})` : undefined}

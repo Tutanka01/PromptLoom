@@ -1,5 +1,5 @@
 import React from "react";
-import { colors, fonts, mu, mx, my } from "../style/tokens";
+import { alpha, colors, fonts, mu, mx, my } from "../style/tokens";
 
 /**
  * A grid of labelled cells — the workhorse primitive for low-level/kernel
@@ -48,9 +48,9 @@ export const MemoryGrid: React.FC<{
               width: mu(cellW),
               height: mu(cellH),
               borderRadius: mu(0.08),
-              background: cell.highlight ? `${col}22` : colors.panel,
+              background: cell.highlight ? alpha(col, 0.13) : colors.panel,
               border: `${cell.highlight ? 3 : 2}px solid ${col}`,
-              boxShadow: cell.highlight ? `0 0 ${mu(0.14)}px ${col}88` : "0 4px 14px rgba(0,0,0,0.30)",
+              boxShadow: cell.highlight ? `0 0 ${mu(0.14)}px ${alpha(col, 0.53)}` : "0 4px 14px rgba(0,0,0,0.30)",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",

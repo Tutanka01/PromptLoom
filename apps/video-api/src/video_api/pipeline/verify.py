@@ -51,6 +51,41 @@ def extract_frame(
     return out_path
 
 
+def _measure_loudness(runner: CommandRunner, video_path: Path) -> dict | None:
+    """Measure integrated loudness (LUFS) and true peak (dBTP) of *video_path*.
+
+    Uses a single ``loudnorm`` analysis pass (``print_format=json``) which prints
+    a JSON block to stderr. Returns the parsed measurement, or ``None`` if the
+    block can't be read (measurement is best-effort QC, never fatal on its own).
+    """
+    result = runner.run(
+        ["ffmpeg", "-i", str(video_path), "-af", "loudnorm=print_format=json", "-f", "null", "-"],
+        cwd=video_path.parent,
+        log_name=f"loudness-{video_path.stem}.log",
+    )
+    match = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", result.stderr, re.DOTALL)
+    if not match:
+        return None
+    try:
+        raw = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+    def _num(key: str) -> float | None:
+        try:
+            value = float(raw.get(key))
+        except (TypeError, ValueError):
+            return None  # loudnorm prints "-inf" for silence
+        return value
+
+    return {
+        "integrated_lufs": _num("input_i"),
+        "true_peak_dbtp": _num("input_tp"),
+        "loudness_range_lu": _num("input_lra"),
+        "threshold_lufs": _num("input_thresh"),
+    }
+
+
 def verify_mp4(
     video_path: Path,
     runner: CommandRunner,
@@ -62,6 +97,7 @@ def verify_mp4(
     max_single_freeze_seconds: float = 12.0,
     freeze_fatal: bool = False,
     expected_fps: float = 60.0,
+    audio_qc_fatal: bool = False,
 ) -> dict:
     report_dir.mkdir(parents=True, exist_ok=True)
     quality_warnings: list[str] = []
@@ -192,6 +228,38 @@ def verify_mp4(
             snapshots.append(str(out))
             logger.info("verify.snapshot.done video=%s timestamp=%.3fs path=%s", video_path, timestamp, out)
 
+    # Audio QC (final render only): measure realised loudness + true peak and
+    # flag clipping / near-silence. Best-effort by default — a real video that
+    # measures fine ships unchanged; fatal only when audio_qc_fatal is set.
+    audio_stats: dict | None = None
+    if final_quality:
+        audio_stats = _measure_loudness(runner, video_path)
+        if audio_stats is not None:
+            (report_dir / "audio_stats.json").write_text(
+                json.dumps(audio_stats, indent=2) + "\n", encoding="utf-8"
+            )
+            true_peak = audio_stats.get("true_peak_dbtp")
+            integrated = audio_stats.get("integrated_lufs")
+            audio_reasons: list[str] = []
+            if true_peak is not None and true_peak > 0.0:
+                audio_reasons.append(f"true peak {true_peak:.1f} dBTP exceeds 0 dBTP (clipping)")
+            if integrated is None or integrated < -45.0:
+                shown = "silence" if integrated is None else f"{integrated:.1f} LUFS"
+                audio_reasons.append(f"integrated loudness reads as near-silence ({shown})")
+            if audio_reasons:
+                message = "audio quality issue: " + "; ".join(audio_reasons) + " [see audio_stats.json]"
+                if audio_qc_fatal:
+                    raise RuntimeError(message)
+                quality_warnings.append(message)
+                logger.warning("verify.audio.warning video=%s %s", video_path, message)
+            else:
+                logger.info(
+                    "verify.audio.done video=%s integrated=%s LUFS true_peak=%s dBTP",
+                    video_path,
+                    integrated,
+                    true_peak,
+                )
+
     report = {
         "video": str(video_path),
         "duration": duration,
@@ -200,6 +268,7 @@ def verify_mp4(
         "video_stream": video_streams[0],
         "audio_stream": audio_streams[0],
         "freezedetect": freeze_summary,
+        "audio": audio_stats,
         "snapshots": snapshots,
         "quality_warnings": quality_warnings,
     }

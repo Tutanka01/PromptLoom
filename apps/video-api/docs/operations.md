@@ -319,6 +319,23 @@ VIDEO_API_MUSIC_FILE=             # chemin d'un fichier audio visible du worker
 VIDEO_API_MUSIC_DB=-26            # niveau de base ; ducking automatique sous la voix
 ```
 
+### Loudness audio (normalisation EBU R128)
+
+`assemble_en.sh` applique un etage `loudnorm` (single-pass) pour que chaque video
+sorte au meme niveau percu, independamment du moteur TTS. Sans musique la voix est
+normalisee ; avec musique c'est le mix final (voix + musique duckee) qui l'est.
+
+```text
+VIDEO_API_AUDIO_LOUDNORM_ENABLED=1   # 0 = mux brut sans normalisation (comportement historique)
+VIDEO_API_AUDIO_LOUDNESS_TARGET=-14  # loudness integre cible en LUFS (-14 = norme YouTube/streaming)
+VIDEO_API_AUDIO_TRUE_PEAK=-1.5       # plafond true-peak en dBTP
+VIDEO_API_AUDIO_QC_FATAL=0           # 1 = un clipping / quasi-silence mesure fait echouer le job
+```
+
+Le QC audio mesure le rendu final (loudness integre + true peak), ecrit
+`reports/final/audio_stats.json`, et signale (warning par defaut) un true peak > 0 dBTP
+(clipping) ou un quasi-silence.
+
 ### API et exploitation
 
 ```text

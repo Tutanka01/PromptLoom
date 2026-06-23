@@ -18,10 +18,33 @@ def _freeze_stderr(segments: list[tuple[float, float]]) -> str:
     return "\n".join(lines)
 
 
+def _loudnorm_stderr(integrated: float, true_peak: float) -> str:
+    # Mirrors the JSON block ffmpeg's `loudnorm=print_format=json` prints to stderr.
+    return (
+        "[Parsed_loudnorm_0 @ 0x0] \n"
+        "{\n"
+        f'\t"input_i" : "{integrated:.2f}",\n'
+        f'\t"input_tp" : "{true_peak:.2f}",\n'
+        '\t"input_lra" : "5.00",\n'
+        '\t"input_thresh" : "-24.00",\n'
+        '\t"output_i" : "-14.00",\n'
+        '\t"normalization_type" : "dynamic",\n'
+        '\t"target_offset" : "0.00"\n'
+        "}\n"
+    )
+
+
 class FakeRunner:
-    def __init__(self, duration: float, freeze_segments: list[tuple[float, float]] | None = None):
+    def __init__(
+        self,
+        duration: float,
+        freeze_segments: list[tuple[float, float]] | None = None,
+        audio: dict[str, float] | None = None,
+    ):
         self.duration = duration
         self.freeze_segments = freeze_segments or []
+        # Default to clean, on-target audio so freeze-focused tests don't trip the QC.
+        self.audio = {"integrated": -14.0, "true_peak": -1.5} if audio is None else audio
 
     def run(self, args: list[str], cwd: Path, log_name: str, env: dict[str, str] | None = None):
         if args[0] == "ffprobe":
@@ -46,6 +69,13 @@ class FakeRunner:
             )
         if args[0] == "ffmpeg" and "-vf" in args:
             return CompletedProcess(args, 0, stdout="", stderr=_freeze_stderr(self.freeze_segments))
+        if args[0] == "ffmpeg" and "-af" in args:
+            # Loudness measurement (`-af loudnorm=print_format=json ... -f null -`).
+            # Output goes to stdout ("-"); it must NOT create a file.
+            if not self.audio:
+                return CompletedProcess(args, 0, stdout="", stderr="")
+            stderr = _loudnorm_stderr(self.audio["integrated"], self.audio["true_peak"])
+            return CompletedProcess(args, 0, stdout="", stderr=stderr)
         if args[0] == "ffmpeg":
             Path(args[-1]).write_bytes(b"png")
             return CompletedProcess(args, 0, stdout="", stderr="")
@@ -152,3 +182,86 @@ def test_cumulative_freeze_over_ratio_is_rejected_when_fatal(tmp_path: Path) -> 
             max_single_freeze_seconds=12.0,
             freeze_fatal=True,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Audio QC (loudness + true peak)
+# --------------------------------------------------------------------------- #
+def test_audio_qc_records_stats_for_clean_audio(tmp_path: Path) -> None:
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"mp4")
+
+    report = verify_mp4(
+        video,
+        FakeRunner(duration=120, audio={"integrated": -14.0, "true_peak": -1.5}),
+        final_quality=True,
+        report_dir=tmp_path / "report",
+        min_duration_seconds=30,
+    )
+
+    assert report["audio"]["integrated_lufs"] == -14.0
+    assert report["audio"]["true_peak_dbtp"] == -1.5
+    assert (tmp_path / "report" / "audio_stats.json").exists()
+    assert report["quality_warnings"] == []
+
+
+def test_audio_qc_warns_on_clipping_by_default(tmp_path: Path) -> None:
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"mp4")
+
+    report = verify_mp4(
+        video,
+        FakeRunner(duration=120, audio={"integrated": -14.0, "true_peak": 0.8}),
+        final_quality=True,
+        report_dir=tmp_path / "report",
+        min_duration_seconds=30,
+    )
+
+    assert any("clipping" in w for w in report["quality_warnings"])
+
+
+def test_audio_qc_clipping_is_fatal_when_enabled(tmp_path: Path) -> None:
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"mp4")
+
+    with pytest.raises(RuntimeError, match="clipping"):
+        verify_mp4(
+            video,
+            FakeRunner(duration=120, audio={"integrated": -14.0, "true_peak": 0.8}),
+            final_quality=True,
+            report_dir=tmp_path / "report",
+            min_duration_seconds=30,
+            audio_qc_fatal=True,
+        )
+
+
+def test_audio_qc_warns_on_near_silence(tmp_path: Path) -> None:
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"mp4")
+
+    report = verify_mp4(
+        video,
+        FakeRunner(duration=120, audio={"integrated": -60.0, "true_peak": -40.0}),
+        final_quality=True,
+        report_dir=tmp_path / "report",
+        min_duration_seconds=30,
+    )
+
+    assert any("near-silence" in w for w in report["quality_warnings"])
+
+
+def test_audio_qc_skipped_on_low_quality_pass(tmp_path: Path) -> None:
+    # The low-quality verify is the cheap ffprobe contract only — no loudness pass,
+    # so no audio_stats are produced and nothing writes to a "-" stdout sink.
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"mp4")
+
+    report = verify_mp4(
+        video,
+        FakeRunner(duration=120),
+        final_quality=False,
+        report_dir=tmp_path / "report",
+        min_duration_seconds=30,
+    )
+
+    assert report["audio"] is None

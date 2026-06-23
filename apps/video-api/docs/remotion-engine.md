@@ -77,6 +77,24 @@ diverger. `captionMode` vaut `off` (masque) ou `full`/`keywords` (continu). Les
 transitions de scene sont purement visuelles : aucun effet sonore n'est ajoute
 aux coupes.
 
+### Direction artistique (thèmes bornés)
+
+Le blueprint choisit une palette via le champ `art_direction` (un de `default`,
+`blueprint`, `forest`, `synthwave`, `carbon`, `plum` — defini dans `THEMES` de
+`remotion/src/style/tokens.ts`, miroir Python `REMOTION_THEMES`, parite testee).
+`default` reproduit exactement l'ancien look dark-academic ; un thème invalide est
+ramene a `default` (`normalize_remotion_blueprint`). Le LLM en choisit un selon le
+sujet/ton ; c'est une palette par video, complementaire de `accent` (toujours par
+scene).
+
+Mecanique : `colors.*` sont des variables CSS (`var(--c-x, <defaut>)`) ; la racine
+`MainComposition` pose les `--c-*` du thème actif via `applyThemeVars(theme)`. Les
+~112 usages `colors.x` restent inchanges. **Regles d'authoring** (palette comme
+Custom) : pour la translucidite utiliser `alpha(color, 0.2)` (depuis `../../lib`,
+base `color-mix`) — jamais `${color}33` (invalide sur une variable CSS) ; en SVG
+appliquer les couleurs via `style={{ stroke, fill }}`, pas via les attributs
+`stroke=`/`fill=` (les variables CSS n'y resolvent pas).
+
 ### Escape hatch `Custom` (code libre encadré)
 
 Quand aucune palette ne convient, le blueprint met `component:"Custom"` + un
