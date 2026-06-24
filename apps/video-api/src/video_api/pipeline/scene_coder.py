@@ -4,7 +4,6 @@ import ast
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 from video_api.config import Settings
@@ -119,7 +118,6 @@ class SceneCoder:
                 from openai import OpenAI
             except ImportError as exc:
                 raise RuntimeError("openai package required for scene coding") from exc
-            model = self.settings.scene_coder_model or self.settings.openai_model
             self._client = OpenAI(
                 api_key=self.settings.openai_api_key,
                 base_url=self.settings.openai_base_url,

@@ -33,7 +33,7 @@ from pathlib import Path
 from video_api.config import Settings
 from video_api.pipeline.materialize import _assemble_script, slugify
 from video_api.pipeline.voice import prune_stale_audio, voice_signature
-from video_api.schemas import RemotionBlueprint, RemotionScene
+from video_api.schemas import RemotionBlueprint
 
 logger = logging.getLogger(__name__)
 

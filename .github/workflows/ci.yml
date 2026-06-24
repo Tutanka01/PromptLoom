@@ -1,0 +1,96 @@
+name: CI
+
+# Solidité du pipeline. Concerne la branche main : on lance les contrôles aussi
+# bien sur les pull requests qui la ciblent (pour bloquer AVANT le merge) que sur
+# les push directs sur main (filet de sécurité après merge). Pour ne valider QUE
+# les push sur main, supprimer le bloc `pull_request:`.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Lecture seule : la CI n'a besoin d'aucun droit d'écriture sur le dépôt.
+permissions:
+  contents: read
+
+# Une exécution par ref ; un nouveau push annule la précédente encore en cours.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Épinglé : ruff fait évoluer ses règles entre versions, on veut une CI stable
+  # et reproductible. Relever ce numéro est un changement volontaire.
+  RUFF_VERSION: "0.15.19"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  video-api:
+    name: video-api · lint + tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/video-api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/video-api/pyproject.toml
+
+      - name: Install (deps de base + extra de test, sans le stack worker GPU)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" "ruff==${RUFF_VERSION}"
+
+      - name: Ruff (lint)
+        run: ruff check src tests
+
+      - name: Compile-check (pas d'erreur de syntaxe cachée)
+        run: python -m py_compile $(find src tests -name '*.py' -print)
+
+      - name: Pytest
+        # sqlite en mémoire + fake LLM (conftest) : aucun service externe requis.
+        run: pytest -q tests
+
+  tts-server:
+    name: tts-server · lint + tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/tts-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/tts-server/pyproject.toml
+
+      - name: Install (deps de base + extra de test, sans l'extra `gpu`)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" "ruff==${RUFF_VERSION}"
+
+      - name: Ruff (lint)
+        run: ruff check src tests
+
+      - name: Pytest
+        # Le moteur tourne en fake_engine : ni GPU ni torch.
+        run: pytest -q tests
+
+  compose:
+    name: compose · validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valider la stack Compose racine
+        run: docker compose config --quiet
+
+      - name: Valider la stack Compose tts-server
+        run: docker compose -f apps/tts-server/compose.yaml config --quiet

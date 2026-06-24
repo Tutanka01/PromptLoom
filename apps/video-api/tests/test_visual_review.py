@@ -6,8 +6,6 @@ from subprocess import CompletedProcess
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from video_api.pipeline.visual_review import (
     VisualReviewer,
     _compute_score,
