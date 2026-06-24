@@ -2,6 +2,10 @@
 
 **Turn prompts into educational videos.**
 
+[![CI](https://github.com/Tutanka01/manim-video-voice-generator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tutanka01/manim-video-voice-generator/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-249%20passing-brightgreen)](https://github.com/Tutanka01/manim-video-voice-generator/actions/workflows/ci.yml)
+[![python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
+
 PromptLoom transforme un prompt en vidéo éducative complète : recherche,
 scénario, narration multilingue, scènes animées, voix, rendu, assemblage et
 contrôles qualité. Le tout est exposé par une API asynchrone et reproductible.
