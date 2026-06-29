@@ -41,7 +41,7 @@ def _is_terminal(status: str) -> bool:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info("api.startup app=%s jobs_root=%s", settings.app_name, settings.jobs_root)
-    init_db()
+    init_db(max_attempts=30, delay_seconds=2.0)
     settings.jobs_root.mkdir(parents=True, exist_ok=True)
     reaped = reap_stale_jobs(settings.stale_job_hours)
     if reaped:
