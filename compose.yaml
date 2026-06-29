@@ -4,3 +4,4 @@ name: promptloom
 # primary application so they can also be used from apps/video-api.
 include:
   - path: apps/video-api/compose.yaml
+  - path: apps/studio/compose.yaml

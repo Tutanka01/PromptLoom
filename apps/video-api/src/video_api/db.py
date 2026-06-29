@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 
@@ -30,9 +31,24 @@ engine = create_engine(settings.database_url, **_engine_kwargs(settings.database
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
-def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
-    _ensure_compat_columns()
+def init_db(max_attempts: int = 1, delay_seconds: float = 1.0) -> None:
+    attempts = max(1, max_attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            Base.metadata.create_all(bind=engine)
+            _ensure_compat_columns()
+            return
+        except Exception as exc:
+            if attempt >= attempts:
+                raise
+            logger.warning(
+                "db.init.retry attempt=%d/%d delay_seconds=%s error=%s",
+                attempt,
+                attempts,
+                delay_seconds,
+                type(exc).__name__,
+            )
+            time.sleep(delay_seconds)
 
 
 def reap_stale_jobs(max_age_hours: float) -> int:

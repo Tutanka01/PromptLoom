@@ -21,6 +21,7 @@ tâche `video-api` ordinaire.
 - Les jobs vivent dans `/data/jobs/<job_id>/`, jamais dans le dossier source
   `videos/`.
 - `apps/tts-server/` est un service GPU MOSS-TTS optionnel.
+- `apps/studio/` est le front-end web (React/Vite/Tailwind) de pilotage de l'API.
 - Le contrat éditorial est actuellement optimisé pour les sujets STEM.
 - `videos/examples/` contient la vitrine; `videos/linux-fondamentaux/` contient
   l'origine manuelle historique du projet.
@@ -44,6 +45,7 @@ au même moment.
 | Génération Manim | `apps/video-api/docs/manim-generation-guidelines.md`; `manim-skill.md` seulement pour l'authoring de scènes |
 | Configuration, Docker, logs ou rétention | `apps/video-api/docs/operations.md` |
 | Service GPU TTS | `apps/tts-server/README.md` |
+| Front-end web de pilotage | `apps/studio/README.md` |
 | Contribution générale | `CONTRIBUTING.md` |
 | Vidéo manuelle historique | `PROCEDURE.md` et `docs/VIDEO_PRODUCTION_STANDARD.md` |
 
