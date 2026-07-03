@@ -50,7 +50,7 @@ def minimum_final_duration(
     """Lower bound (seconds) the rendered video must clear in `verify_mp4`."""
     if 180 <= target_duration_seconds <= 300:
         return max(default_min_duration_seconds, int(target_duration_seconds * 0.75))
-    return max(45, int(target_duration_seconds * 0.75))
+    return max(10, int(target_duration_seconds * 0.75))
 
 
 def required_narration_seconds(

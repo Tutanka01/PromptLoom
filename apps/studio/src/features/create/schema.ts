@@ -86,7 +86,7 @@ export const formSchema = z
     multilang: z.boolean(),
     language: z.string(),
     languages: z.array(z.string()).max(8, "8 langues maximum."),
-    target_duration_seconds: z.number().int().min(45).max(900),
+    target_duration_seconds: z.number().int().min(20).max(900),
     quality_profile: z.enum(["draft", "standard", "high"]),
     production_mode: z.enum(["technical", "editorial", "cinematic"]),
     render_engine: z.enum(["auto", "manim", "remotion"]),

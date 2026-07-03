@@ -170,9 +170,9 @@ export function CreatePage() {
                 <RangeField
                   value={field.value}
                   onChange={field.onChange}
-                  min={45}
+                  min={20}
                   max={900}
-                  step={15}
+                  step={5}
                   readout={formatDuration(field.value)}
                 />
               )}

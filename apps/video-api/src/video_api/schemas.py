@@ -146,7 +146,7 @@ class VideoCreateRequest(BaseModel):
     # the primary language (it generates the master blueprint); the rest translate
     # it. When omitted, `language` drives a single video as before.
     languages: list[str] | None = Field(default=None, max_length=MAX_BATCH_LANGUAGES)
-    target_duration_seconds: int | None = Field(default=None, ge=45, le=900)
+    target_duration_seconds: int | None = Field(default=None, ge=20, le=900)
     # draft    = fast iteration: Kokoro voice, half-res render, no visual review.
     # standard = production defaults (Chatterbox, full-res final render).
     # high     = standard + visual review forced on (needs VIDEO_API_VISION_MODEL).
@@ -304,7 +304,7 @@ class SceneSpec(BaseModel):
     key: str
     title: str = Field(min_length=2, max_length=80)
     text: str = Field(min_length=30, max_length=1600)
-    duration_seconds: int = Field(default=30, ge=15, le=75)
+    duration_seconds: int = Field(default=30, ge=8, le=75)
     layout: SceneLayout = "concept_map"
     visual_intent: str = Field(min_length=10, max_length=500)
     beats: list[BeatSpec] = Field(min_length=3, max_length=8)
@@ -332,7 +332,7 @@ class VideoBlueprint(BaseModel):
     title: str = Field(min_length=3, max_length=100)
     theme: str = Field(min_length=2, max_length=80)
     slug: str
-    target_duration_seconds: int = Field(default=240, ge=45, le=900)
+    target_duration_seconds: int = Field(default=240, ge=20, le=900)
     subject_area: SubjectArea = "general_stem"
     difficulty: Difficulty = "intro"
     audience: str = Field(min_length=5, max_length=240)
@@ -378,7 +378,7 @@ class VideoBlueprint(BaseModel):
             raise ValueError("3-5 minute videos should use at most 12 scenes")
 
         planned_duration = sum(scene.duration_seconds for scene in self.scenes)
-        lower = max(45, int(self.target_duration_seconds * 0.75))
+        lower = max(10, int(self.target_duration_seconds * 0.75))
         upper = int(self.target_duration_seconds * 1.25)
         if planned_duration < lower or planned_duration > upper:
             raise ValueError(
@@ -525,7 +525,7 @@ class RemotionScene(BaseModel):
     # Spoken narration for this scene. Exposed downstream as `.text` so the
     # shared segments/TTS code can treat Manim and Remotion scenes uniformly.
     narration: str = Field(min_length=30, max_length=1600)
-    duration_seconds: int = Field(default=30, ge=12, le=90)
+    duration_seconds: int = Field(default=30, ge=8, le=90)
     component: RemotionComponent = "BulletScene"
     props: dict[str, Any] = Field(default_factory=dict)
     # Narration anchors, one per visual item in display order. Optional: empty
@@ -561,7 +561,7 @@ class RemotionBlueprint(BaseModel):
     title: str = Field(min_length=3, max_length=100)
     theme: str = Field(min_length=2, max_length=80)
     slug: str
-    target_duration_seconds: int = Field(default=240, ge=45, le=900)
+    target_duration_seconds: int = Field(default=240, ge=20, le=900)
     subject_area: SubjectArea = "general_stem"
     difficulty: Difficulty = "intro"
     audience: str = Field(min_length=5, max_length=240)
@@ -616,7 +616,7 @@ class RemotionBlueprint(BaseModel):
             raise ValueError("3-5 minute videos should use at most 12 scenes")
 
         planned_duration = sum(scene.duration_seconds for scene in self.scenes)
-        lower = max(45, int(self.target_duration_seconds * 0.75))
+        lower = max(10, int(self.target_duration_seconds * 0.75))
         upper = int(self.target_duration_seconds * 1.25)
         if planned_duration < lower or planned_duration > upper:
             raise ValueError(

@@ -94,7 +94,7 @@ Parametres utiles :
 - `language` choisit la langue de sortie, pas la langue du prompt. Exemple :
   `language: "it"` produit narration et textes visibles en italien, meme avec un
   prompt en francais.
-- `target_duration_seconds` est une cible de duree entre 45 et 900 secondes. La
+- `target_duration_seconds` est une cible de duree entre 20 et 900 secondes. La
   duree finale depend ensuite des WAV TTS reels et de `audio/en/durations.json`.
 - `quality_profile` vaut `standard` par defaut. `draft` est plus rapide mais force
   Kokoro et convient surtout a EN/FR. Pour les autres langues europeennes, utilise

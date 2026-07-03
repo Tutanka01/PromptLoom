@@ -92,7 +92,7 @@ Champs :
   maitre) ; les autres traduisent ce maitre une fois la primaire terminee. Voir
   la section *Videos multilingues (batch)* ci-dessous. Si absent, `language`
   pilote une seule video (comportement inchange).
-- `target_duration_seconds` optionnel, entre 45 et 900 secondes. C'est une cible
+- `target_duration_seconds` optionnel, entre 20 et 900 secondes. C'est une cible
   pedagogique pour le LLM, pas une duree garantie a l'image pres : le pipeline
   ecrit assez de narration pour s'approcher de cette duree, puis la duree reelle
   vient des WAV generes et de `audio/en/durations.json`. S'il est absent, l'API

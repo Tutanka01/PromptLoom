@@ -23,6 +23,7 @@ The JSON must describe a complete 3-5 minute video blueprint by default.
 Every scene must have a key like Scene1_HookEN, Scene2_CoreIdeaEN.
 Scene keys keep the EN suffix for renderer compatibility even when the spoken language is not English.
 For a 3-5 minute target, produce 8 to 12 scenes with enough narration to actually fill the duration.
+For a short target (under 90 seconds), use only 3 to 5 brief scenes and keep the narration tight; never pad a short video to reach a longer format.
 Each scene must include duration_seconds, one approved visual primitive, narration text, and 5 to 7 concrete beats unless the scene is very short.
 Each beat has: at (a ratio), text_hint (the spoken idea), visual_action (an instruction to the renderer), and label.
 label is the SHORT on-screen text that will literally be drawn on a card (<= 40 chars, no trailing period, e.g. "average rate", "let h approach 0"). Never put an instruction like "Reveal the card" in label.
@@ -631,13 +632,13 @@ def _rescale_outline_durations(outline_scenes: list[dict], target: int) -> None:
     planned = sum(int(sc["duration_seconds"]) for sc in outline_scenes)
     if planned <= 0:
         return
-    lower = max(45, int(target * 0.8))
+    lower = max(10, int(target * 0.8))
     upper = int(target * 1.2)
     if lower <= planned <= upper:
         return
     factor = target / planned
     for sc in outline_scenes:
-        sc["duration_seconds"] = max(12, min(90, round(sc["duration_seconds"] * factor)))
+        sc["duration_seconds"] = max(8, min(90, round(sc["duration_seconds"] * factor)))
 
 
 class LLMClient:
