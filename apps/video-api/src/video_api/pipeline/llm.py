@@ -677,12 +677,21 @@ class LLMClient:
             **kwargs,
         )
         content = response.choices[0].message.content or ""
+        finish = response.choices[0].finish_reason
         if not content.strip():
-            finish = response.choices[0].finish_reason
             raise ValueError(
                 f"LLM returned empty content (finish_reason={finish}). "
                 "This usually means a reasoning model exhausted its budget thinking; "
                 "set VIDEO_API_LLM_ENABLE_THINKING=0 or raise VIDEO_API_LLM_MAX_TOKENS."
+            )
+        if finish == "length":
+            # The JSON that follows is almost certainly truncated and will fail
+            # to parse — make the cause visible instead of a bare JSONDecodeError.
+            logger.warning(
+                "llm.response.truncated finish_reason=length response_chars=%d — "
+                "raise VIDEO_API_LLM_MAX_TOKENS (current %d)",
+                len(content),
+                self.settings.llm_max_tokens,
             )
         return content
 
@@ -936,7 +945,9 @@ class LLMClient:
             return RemotionBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.translate_remotion.invalid language=%s errors=%s", language, exc)
-            return self.repair_remotion_blueprint(master.get("teaching_goal", ""), data, str(exc), language)
+            return self.repair_remotion_blueprint(
+                master.get("teaching_goal", ""), data, str(exc), language, target_duration_seconds=target
+            )
 
     def generate_remotion_blueprint(
         self,
@@ -1047,6 +1058,7 @@ class LLMClient:
                 language,
                 production_context=production_context,
                 research_context=research_context,
+                target_duration_seconds=effective_target,
             )
 
     # ------------------------------------------------------------------ 2-pass
@@ -1152,6 +1164,7 @@ class LLMClient:
                 language,
                 production_context=production_context,
                 research_context=research_context,
+                target_duration_seconds=effective_target,
             )
 
     def _write_remotion_scenes(
@@ -1375,17 +1388,25 @@ class LLMClient:
         language: str = "en",
         production_context: dict[str, Any] | None = None,
         research_context: dict[str, Any] | None = None,
+        target_duration_seconds: int | None = None,
     ) -> "RemotionBlueprint":
         from video_api.pipeline import remotion_blueprint as rb
 
         if self.settings.fake_llm:
-            target = previous.get("target_duration_seconds") if isinstance(previous, dict) else None
+            target = target_duration_seconds or (
+                previous.get("target_duration_seconds") if isinstance(previous, dict) else None
+            )
             return rb.fake_remotion_blueprint(prompt, target_duration_seconds=target)
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required for LLM repair")
         client = self._build_client()
+        # The job's requested duration is authoritative. Falling back to the
+        # model's own target_duration_seconds (or the global default) shifts the
+        # narration/scene-count gates to a video the user never asked for — a
+        # 120s job then fails "3-5 minute videos need at least 8 scenes".
         target = int(
-            (isinstance(previous, dict) and previous.get("target_duration_seconds"))
+            target_duration_seconds
+            or (isinstance(previous, dict) and previous.get("target_duration_seconds"))
             or self.settings.default_target_duration_seconds
         )
         logger.info("llm.remotion.repair.start model=%s error_chars=%d", self.settings.openai_model, len(error_report))
@@ -1440,17 +1461,26 @@ class LLMClient:
         return RemotionBlueprint.model_validate(data)
 
     def repair_blueprint(
-        self, prompt: str, previous: Any, error_report: str, language: str = "en"
+        self,
+        prompt: str,
+        previous: Any,
+        error_report: str,
+        language: str = "en",
+        target_duration_seconds: int | None = None,
     ) -> VideoBlueprint:
         if self.settings.fake_llm:
             logger.info("llm.fake_repair.start prompt_chars=%d", len(prompt))
-            target = previous.get("target_duration_seconds") if isinstance(previous, dict) else None
+            target = target_duration_seconds or (
+                previous.get("target_duration_seconds") if isinstance(previous, dict) else None
+            )
             return fake_blueprint(prompt, target_duration_seconds=target)
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required for LLM repair")
         client = self._build_client()
-        target = None
-        if isinstance(previous, dict):
+        # Same rule as repair_remotion_blueprint: the job's requested duration
+        # wins over whatever the broken blueprint (or the global default) says.
+        target = target_duration_seconds
+        if not target and isinstance(previous, dict):
             target = previous.get("target_duration_seconds")
         target = int(target or self.settings.default_target_duration_seconds)
         logger.info(

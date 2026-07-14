@@ -49,6 +49,7 @@ class Engine(Protocol):
         language: str = "en",
         production_context: dict[str, Any] | None = None,
         research_context: dict[str, Any] | None = None,
+        target: int | None = None,
     ) -> Any: ...
 
     def translate_blueprint(self, master: dict, language: str) -> Any: ...
@@ -95,8 +96,11 @@ class ManimEngine:
         language: str = "en",
         production_context: dict[str, Any] | None = None,
         research_context: dict[str, Any] | None = None,
+        target: int | None = None,
     ) -> Any:
-        return self.llm.repair_blueprint(prompt, previous, hint, language)
+        return self.llm.repair_blueprint(
+            prompt, previous, hint, language, target_duration_seconds=target
+        )
 
     def translate_blueprint(self, master: dict, language: str) -> Any:
         return self.llm.translate_blueprint(master, language)
@@ -224,6 +228,7 @@ class RemotionEngine:
         language: str = "en",
         production_context: dict[str, Any] | None = None,
         research_context: dict[str, Any] | None = None,
+        target: int | None = None,
     ) -> Any:
         return self.llm.repair_remotion_blueprint(
             prompt,
@@ -232,6 +237,7 @@ class RemotionEngine:
             language,
             production_context=production_context,
             research_context=research_context,
+            target_duration_seconds=target,
         )
 
     def translate_blueprint(self, master: dict, language: str) -> Any:

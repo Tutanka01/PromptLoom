@@ -388,6 +388,7 @@ class VideoPipeline:
                             job.language,
                             self.production_options.model_dump(),
                             research.prompt_context() if research is not None else None,
+                            target=job.target_duration_seconds,
                         )
                 # Never allow an LLM to invent provenance identifiers. Fake
                 # mode attaches its deterministic fixture so advanced smoke

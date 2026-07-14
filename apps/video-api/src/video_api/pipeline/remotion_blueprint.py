@@ -832,7 +832,10 @@ def normalize_remotion_blueprint(data: Any, target_duration_seconds: int) -> dic
     if not isinstance(data, dict):
         raise ValueError("Remotion blueprint must be a JSON object")
     coerced = dict(data)
-    coerced.setdefault("target_duration_seconds", target_duration_seconds)
+    # The caller's target is authoritative (it comes from the job request). A
+    # model echoing a different target_duration_seconds would silently shift the
+    # narration/scene-count gates onto a video length the user never asked for.
+    coerced["target_duration_seconds"] = target_duration_seconds
     subject = str(coerced.get("subject_area") or coerced.get("theme") or "general_stem").strip().lower().replace("-", "_")
     coerced["subject_area"] = subject if subject in {
         "math", "physics", "cs", "biology", "chemistry", "engineering", "general_stem"

@@ -321,6 +321,15 @@ def test_art_direction_themes_parity() -> None:
         assert name in REMOTION_OUTLINE_PROMPT, f"{name} missing from the outline prompt"
 
 
+def test_normalize_forces_requested_target_duration() -> None:
+    # Regression: a model echoing its own target_duration_seconds (e.g. 240)
+    # must not shift the duration/scene-count gates away from the job's request
+    # (a 120s job then dies on "3-5 minute videos need at least 8 scenes").
+    raw = _wrap_scene("BulletScene", {"bullets": ["a", "b"]})
+    raw["target_duration_seconds"] = 240
+    assert normalize_remotion_blueprint(raw, 120)["target_duration_seconds"] == 120
+
+
 def test_art_direction_clamped_to_known_theme() -> None:
     raw = _wrap_scene("BulletScene", {"bullets": ["a", "b"]})
     raw["art_direction"] = "not-a-real-theme"
