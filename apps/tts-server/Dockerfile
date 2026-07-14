@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     ffmpeg \
+    # gcc: recent torch dispatches some *eager* ops to Triton kernels, and
+    # Triton builds its CUDA utils module at runtime — without a C compiler
+    # generation dies with "RuntimeError: Failed to find C compiler".
+    gcc \
     git \
     && rm -rf /var/lib/apt/lists/*
 
