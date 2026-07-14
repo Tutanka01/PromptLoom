@@ -13,10 +13,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     ffmpeg \
-    # gcc: recent torch dispatches some *eager* ops to Triton kernels, and
-    # Triton builds its CUDA utils module at runtime — without a C compiler
-    # generation dies with "RuntimeError: Failed to find C compiler".
+    # gcc + libc6-dev: recent torch dispatches some *eager* ops to Triton
+    # kernels, and Triton compiles its CUDA utils module at runtime. Without a
+    # C compiler generation dies with "Failed to find C compiler"; with gcc but
+    # no libc headers (--no-install-recommends skips libc6-dev) it dies with
+    # "fatal error: stdlib.h: No such file or directory".
     gcc \
+    libc6-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 
