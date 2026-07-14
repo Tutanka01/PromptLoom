@@ -19,8 +19,8 @@ export const STAGES: Stage[] = [
   { id: "research", label: "Recherche", at: 3 },
   { id: "script", label: "Script", at: 26 },
   { id: "voice", label: "Voix", at: 40 },
-  { id: "render", label: "Rendu", at: 52 },
-  { id: "verify", label: "Contrôles", at: 94 },
+  { id: "render", label: "Rendu", at: 55 },
+  { id: "verify", label: "Contrôles", at: 92 },
 ];
 
 const STATUS_TO_STAGE: Record<string, string> = {
@@ -29,12 +29,17 @@ const STATUS_TO_STAGE: Record<string, string> = {
   planning: "research",
   generating_sources: "script",
   voice_generation: "voice",
+  render_final: "render",
+  assemble_final: "render",
+  // The visual review now runs on the final assembled MP4 (after render/assemble,
+  // before verify); it still belongs to the "render" stage on the rail.
+  visual_review: "render",
+  verify_final: "verify",
+  // Legacy statuses from historical jobs still in the DB (the low-quality proxy
+  // render was removed; review now inspects the final render). Keep them mapped.
   render_low_quality: "render",
   assemble_low_quality: "render",
   verify_low_quality: "render",
-  render_final: "render",
-  assemble_final: "render",
-  verify_final: "verify",
   completed: "verify",
 };
 
@@ -90,12 +95,14 @@ const STEP_LABELS: Record<string, string> = {
   scene_codegen: "Génération des scènes",
   generating_sources: "Génération des sources",
   voice_generation: "Synthèse vocale",
+  render_final: "Rendu final",
+  assemble_final: "Assemblage final",
+  visual_review: "Revue visuelle",
+  verify_final: "Vérification finale",
+  // Legacy steps from historical jobs (low-quality proxy render removed).
   render_low_quality: "Rendu brouillon",
   assemble_low_quality: "Assemblage brouillon",
   verify_low_quality: "Vérification brouillon",
-  render_final: "Rendu final",
-  assemble_final: "Assemblage final",
-  verify_final: "Vérification finale",
   completed: "Terminé",
 };
 

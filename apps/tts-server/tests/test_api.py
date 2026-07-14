@@ -128,6 +128,38 @@ def test_second_identical_batch_hits_the_cache(client: TestClient) -> None:
     assert len(client.app.state.engine.calls) == synth_calls  # no new synthesis
 
 
+def test_batching_preserves_anchor_and_completes(tmp_path: Path) -> None:
+    settings = Settings(
+        api_keys=("test-key",),
+        fake_engine=True,
+        data_dir=tmp_path / "data",
+        model_id="OpenMOSS-Team/MOSS-TTS-v1.5",
+        batch_size=4,
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        _wait_for_ready(client)
+        payload = _batch_payload(
+            segments=[
+                {"key": "Scene1_IntroEN", "text": "The kernel sits between hardware and programs."},
+                {"key": "Scene2_SyscallEN", "text": "A system call crosses that boundary."},
+                {"key": "Scene3_ReturnEN", "text": "Then control returns to the program."},
+            ]
+        )
+        response = client.post("/v1/tts/batch", json=payload, headers=AUTH)
+        job_id = response.json()["job_id"]
+        state = _wait_for_job(client, job_id)
+
+        assert state["status"] == "completed"
+        assert [segment["status"] for segment in state["segments"]] == ["done", "done", "done"]
+
+        calls = client.app.state.engine.calls
+        # First segment defines the anchor (no reference); the batched rest share it.
+        assert calls[0][2] == ""
+        assert calls[1][2].endswith("Scene1_IntroEN.wav")
+        assert calls[2][2].endswith("Scene1_IntroEN.wav")
+
+
 def test_sync_endpoint_returns_wav_bytes(client: TestClient) -> None:
     response = client.post(
         "/v1/tts", json={"text": "Hello kernel.", "language": "en"}, headers=AUTH

@@ -99,13 +99,10 @@ generating_sources
 static_validation
 voice_generation
 audio_alignment
-render_low_quality
-assemble_low_quality
-verify_low_quality
-visual_review
 repairing
 render_final
 assemble_final
+visual_review
 verify_final
 completed
 failed_generation
@@ -245,43 +242,26 @@ audio/en/voiceover_en.mp3
 
 `durations.json` pilote ensuite la synchronisation Manim.
 
-### 6. Rendu basse qualite
+### 6. Rendu final
 
-Le worker lance :
-
-```bash
-QUALITY=ql ./render_en.sh
-./assemble_en.sh
-```
-
-Puis il verifie le MP4 basse qualite.
-
-### 7. Rendu final
-
-Si la basse qualite passe :
+Le worker rend directement en qualite finale (il n'y a plus de rendu basse
+qualite : la revue visuelle inspecte desormais le fichier exact qui est livre) :
 
 ```bash
 QUALITY=qh ./render_en.sh
 ./assemble_en.sh
 ```
 
-La video finale doit etre en 1080p60 avec audio.
+La video finale doit etre en 1080p60 avec audio. Un job qui passe est rendu
+exactement une fois ; une revue visuelle en echec coute un rendu complet
+supplementaire (par choix : les scenes fautives sont reecrites puis re-rendues).
 
-### 8. Verification
+### 7. Revue visuelle (optionnelle)
 
-Le worker execute :
+Activee par `VIDEO_API_VISION_ENABLED=1`. Elle s'execute apres l'assemblage final
+et avant la verification, sur le MP4 final assemble (le fichier qui sera livre) :
 
-- `ffprobe` pour confirmer les streams, durees, resolution, fps ;
-- `freezedetect` pour detecter les longues parties statiques ;
-- extraction de snapshots une par une.
-
-Si les controles echouent, le job passe dans une boucle d'auto-reparation.
-
-### 8b. Revue visuelle (optionnelle)
-
-Activee par `VIDEO_API_VISION_ENABLED=1`. Apres la verification basse qualite et avant le rendu 1080p60, le worker :
-
-1. Extrait une frame par scene au milieu narratif (via `audio/en/durations.json`).
+1. Extrait trois frames par scene (debut / milieu / fin, via `audio/en/durations.json`).
 2. Envoie toutes les frames + le contexte narration/beats a un modele vision (`VIDEO_API_VISION_MODEL`).
 3. Le modele note chaque scene sur 5 dimensions (poids entre parentheses) :
    - `narration_match` (0.35) : l'image correspond a ce qui est dit.
@@ -291,9 +271,10 @@ Activee par `VIDEO_API_VISION_ENABLED=1`. Apres la verification basse qualite et
    - `not_blank` (0.10) : ecran non vide.
 4. Le worker calcule le score pondere 0-100 et applique la regle blocker :
    - `passed = score >= VIDEO_API_VISION_MIN_SCORE (defaut 75) ET aucun defaut "blocker"`.
-5. Si `passed=False`, le job repart en reparation avec un `repair_hint` listant les problemes par scene.
+5. Si `passed=False`, le job repart en reparation avec un `repair_hint` listant les problemes par scene
+   (reparation au niveau scene : seules les scenes fautives sont reecrites, puis re-rendues).
    Apres epuisement des tentatives : `failed_visual_review`.
-6. Si `passed=True`, le rendu 1080p60 demarre.
+6. Si `passed=True`, le job passe a la verification.
 
 Variables d'environnement :
 
@@ -304,7 +285,19 @@ VIDEO_API_VISION_MIN_SCORE=75
 VIDEO_API_VISION_MAX_TOKENS=1500
 ```
 
-Le rapport est ecrit dans `reports/low/visual_review.json` et attache sous la cle `visual_review` dans `report.json` final.
+Les frames de revue sont ecrites sous `reports/review/vision/`, le rapport dans
+`reports/visual_review.json`, et le resultat est attache sous la cle
+`visual_review` dans `report.json` final.
+
+### 8. Verification
+
+Le worker execute :
+
+- `ffprobe` pour confirmer les streams, durees, resolution, fps ;
+- `freezedetect` pour detecter les longues parties statiques ;
+- extraction de snapshots une par une.
+
+Si les controles echouent, le job passe dans une boucle d'auto-reparation.
 
 ### 9. Auto-reparation
 

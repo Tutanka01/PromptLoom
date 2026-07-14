@@ -312,29 +312,42 @@ VIDEO_API_BLUEPRINT_SCENE_ATTEMPTS=2  # retries cibles par scene invalide
 VIDEO_API_LLM_PARALLEL=3          # appels LLM concurrents (scene coders + pass 2)
 ```
 
-### Musique de fond (optionnelle)
+### Mastering voix et loudness (bande-son 100 % voix)
+
+La bande-son est volontairement voix seule : pas de musique, pas d'effets
+sonores. Tout l'effort porte sur la voix, en deux etages appliques par
+`assemble_en.sh` au voiceover concatene (jamais aux WAV par segment, dont le
+cache reste intact) :
+
+1. **Mastering** — chaine de diffusion classique : high-pass 80 Hz (coupe le
+   rumble sous les fondamentales de la voix), de-esser (adoucit les sibilantes
+   du TTS), compression douce 2.5:1 (les syllabes faibles restent intelligibles,
+   sans pompage). Aucun gain de rattrapage : le niveau final appartient au
+   loudnorm. La chaine complete est surchargeable via `VOICE_MASTER_CHAIN`
+   (variable du script, pour le tuning manuel d'une production).
+2. **Normalisation** — `loudnorm` en deux passes (EBU R128) pour que chaque
+   video sorte au meme niveau percu, independamment du moteur TTS. La passe de
+   mesure analyse le graphe exact qui sera livre (mastering inclus), puis la
+   passe finale reinjecte ces mesures avec `linear=true` (gain lineaire vers la
+   cible plutot que la compression dynamique d'un passage unique) : plus precis
+   et sans pompage. Si la mesure ou son parsing echoue (sortie non nulle, cles
+   manquantes, valeurs `-inf`), le script bascule automatiquement sur le
+   `loudnorm` single-pass et le signale dans les logs d'assemblage.
 
 ```text
-VIDEO_API_MUSIC_FILE=             # chemin d'un fichier audio visible du worker
-VIDEO_API_MUSIC_DB=-26            # niveau de base ; ducking automatique sous la voix
-```
-
-### Loudness audio (normalisation EBU R128)
-
-`assemble_en.sh` applique un etage `loudnorm` (single-pass) pour que chaque video
-sorte au meme niveau percu, independamment du moteur TTS. Sans musique la voix est
-normalisee ; avec musique c'est le mix final (voix + musique duckee) qui l'est.
-
-```text
+VIDEO_API_VOICE_MASTERING_ENABLED=1  # 0 = voix brute sans mastering
 VIDEO_API_AUDIO_LOUDNORM_ENABLED=1   # 0 = mux brut sans normalisation (comportement historique)
 VIDEO_API_AUDIO_LOUDNESS_TARGET=-14  # loudness integre cible en LUFS (-14 = norme YouTube/streaming)
 VIDEO_API_AUDIO_TRUE_PEAK=-1.5       # plafond true-peak en dBTP
-VIDEO_API_AUDIO_QC_FATAL=0           # 1 = un clipping / quasi-silence mesure fait echouer le job
+VIDEO_API_AUDIO_QC_FATAL=1           # defaut : un clipping / quasi-silence mesure fait echouer le job ; 0 = avertir seulement
 ```
 
 Le QC audio mesure le rendu final (loudness integre + true peak), ecrit
-`reports/final/audio_stats.json`, et signale (warning par defaut) un true peak > 0 dBTP
-(clipping) ou un quasi-silence.
+`reports/final/audio_stats.json`, et signale un true peak > 0 dBTP (clipping) ou un
+quasi-silence (< -45 LUFS). Ces conditions sont des defauts non ambigus que loudnorm
+garantit normalement d'eviter, donc le gate est **bloquant par defaut** : le profil
+`draft` l'assouplit (avertissement) et `VIDEO_API_AUDIO_QC_FATAL=0` desactive la
+fatalite ailleurs.
 
 ### API et exploitation
 
@@ -370,6 +383,7 @@ artefacts sont gardes indefiniment).
 ```text
 video_jobs
 postgres_data
+model_cache
 ```
 
 `video_jobs` contient :
@@ -384,6 +398,12 @@ postgres_data
 ```
 
 `postgres_data` contient la base locale.
+
+`model_cache` contient les caches de modeles du worker (`HF_HOME` et
+`TORCH_HOME` pointent dedans) : poids MOSS-TTS (~17 Go), modeles d'alignement,
+etc. Sans ce volume, chaque recreation du conteneur (`docker compose up
+--build`) retelechargait tout depuis Hugging Face. Le premier job apres un
+`docker compose down -v` repaie donc le telechargement complet.
 
 ## Trouver les artefacts d'un job
 
@@ -487,7 +507,6 @@ Ca peut venir :
 Consulter :
 
 ```text
-/data/jobs/<job_id>/logs/render-low.log
 /data/jobs/<job_id>/logs/render-final.log
 ```
 
@@ -508,15 +527,15 @@ Consulter :
 Le job peut finir en `failed_quality` si `ffprobe` (pistes manquantes, resolution/fps,
 duree sous le minimum) ou les snapshots echouent. Ces controles techniques restent bloquants.
 
-Le `freezedetect`, lui, est par defaut un **avertissement, pas un echec** : une formule maths
-tenue immobile compte comme "gelee", donc on prefere livrer le MP4 et laisser l'utilisateur
-juger. Le detail va dans `report.json` -> `quality_warnings` et dans `reports/<low|final>/freeze.json`
-(nombre, total, plus long gel + timestamp). Pour rebloquer le job sur un gel excessif, mettre
-`VIDEO_API_FREEZE_FATAL=1`. Le seuil utilise deux signaux : total gele >
+Le `freezedetect`, lui, est **bloquant par defaut** sur les deux moteurs (Manim comme
+Remotion). Les seuils restent tolerants des formules maths tenues immobiles (total gele >
 `max(VIDEO_API_FREEZE_FLOOR_SECONDS, duree * VIDEO_API_MAX_FREEZE_RATIO)` OU un seul gel >
-`VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`. Pour des videos legitimement statiques, augmente
-`VIDEO_API_MAX_FREEZE_RATIO` et/ou `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`. Un gel unique tres
-long reste le signal d'une scene reellement morte (a refaire).
+`VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`, tous deux genereux), donc un declenchement signale une
+scene reellement morte plutot qu'un visuel tenu. Le detail va dans `report.json` ->
+`quality_warnings` et dans `reports/final/freeze.json` (nombre, total, plus long gel +
+timestamp). Le profil `draft` assouplit le gate pour l'iteration, et `VIDEO_API_FREEZE_FATAL=0`
+desactive la fatalite. Pour des videos legitimement statiques, augmente plutot
+`VIDEO_API_MAX_FREEZE_RATIO` et/ou `VIDEO_API_MAX_FREEZE_SINGLE_SECONDS`.
 
 ## Notes de performance
 

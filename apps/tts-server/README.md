@@ -102,6 +102,8 @@ See `.env.example`. Key variables:
 | `TTS_SERVER_API_KEYS` | empty (auth off) | Comma-separated keys. Empty is for trusted LAN only. |
 | `TTS_SERVER_MODEL` | `OpenMOSS-Team/MOSS-TTS-v1.5` | Model loaded at startup. |
 | `TTS_SERVER_DEVICE` / `TTS_SERVER_DTYPE` | `auto` / `auto` | `auto` = CUDA + BF16 on the GPU box. |
+| `TTS_SERVER_MAX_NEW_TOKENS` | `4096` | Hard token ceiling. The server also derives a per-segment cap from the text length, bounding runaway generations that never emit an end token. |
+| `TTS_SERVER_BATCH_SIZE` | `1` | Same-reference segments generated per batched pass. `1` = sequential. Higher values speed up bandwidth-bound GPUs (DGX Spark / GB10) by reading the weights once for several segments; raise carefully and validate audio. |
 | `TTS_SERVER_JOB_TTL_HOURS` | `48` | Terminal jobs (audio included) are purged after this. |
 | `TTS_SERVER_CACHE_TTL_DAYS` | `30` | WAV cache retention (`0` = keep forever). |
 | `TTS_SERVER_FAKE_ENGINE` | `0` | `1` = silent-WAV fake engine, runs without GPU/torch (tests). |

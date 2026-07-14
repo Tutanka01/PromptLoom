@@ -17,12 +17,15 @@ export type JobStatus =
   | "planning"
   | "generating_sources"
   | "voice_generation"
+  | "render_final"
+  | "assemble_final"
+  | "visual_review"
+  | "verify_final"
+  // Legacy statuses from historical jobs still in the DB (the low-quality proxy
+  // render was removed; the visual review now inspects the final render).
   | "render_low_quality"
   | "assemble_low_quality"
   | "verify_low_quality"
-  | "render_final"
-  | "assemble_final"
-  | "verify_final"
   | "completed"
   | "cancelled"
   | "failed_generation"

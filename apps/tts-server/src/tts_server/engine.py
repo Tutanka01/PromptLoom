@@ -63,6 +63,32 @@ def moss_language_name(language: str) -> str:
     return MOSS_LANGUAGE_NAMES[code]
 
 
+# MOSS-TTS-v1.5 emits audio codes at ~12.5 tokens per second of speech.
+AUDIO_TOKENS_PER_SECOND = 12.5
+# Deliberately LOW chars/second and a headroom factor so the token budget always
+# over-covers a legitimate segment (slow speech, and CJK packs more audio per
+# character). The goal is only to bound *runaway* generations that never emit an
+# end token — not to truncate real narration. A 300-char segment needs ~250
+# tokens; this grants ~1100, while a global cap of 4096 would let a runaway burn
+# ~5 minutes of audio.
+_MIN_CHARS_PER_SECOND = 5.0
+_TOKEN_HEADROOM = 1.5
+_MIN_NEW_TOKENS = 256
+
+
+def estimate_new_tokens(text: str, ceiling: int) -> int:
+    """Per-segment ``max_new_tokens`` derived from the text length.
+
+    Bounded by ``ceiling`` (the configured hard cap) above and ``_MIN_NEW_TOKENS``
+    below so short segments still get a usable budget.
+    """
+    seconds = max(1.0, len(text) / _MIN_CHARS_PER_SECOND)
+    estimate = int(seconds * AUDIO_TOKENS_PER_SECOND * _TOKEN_HEADROOM)
+    # The hard ceiling always wins, even over the floor (a ceiling below the
+    # floor is unusual but must still be honoured).
+    return min(ceiling, max(_MIN_NEW_TOKENS, estimate))
+
+
 class EngineNotReady(RuntimeError):
     pass
 
@@ -123,8 +149,38 @@ class BaseEngine:
         with self._lock:
             self._synthesize(text, language, reference, out_path)
 
+    def synthesize_batch(
+        self,
+        texts: list[str],
+        language: str,
+        reference: Path | None,
+        out_paths: list[Path],
+    ) -> None:
+        """Generate several segments that share one reference in a single pass.
+
+        All items in a batch use the *same* cloning reference (the job's anchor),
+        which is the only grouping the pipeline ever needs. The base
+        implementation renders them one by one; engines with true batched
+        generation override :meth:`_synthesize_batch`.
+        """
+        if len(texts) != len(out_paths):
+            raise ValueError("texts and out_paths must have the same length")
+        self.ensure_ready()
+        with self._lock:
+            self._synthesize_batch(texts, language, reference, out_paths)
+
     def _synthesize(self, text: str, language: str, reference: Path | None, out_path: Path) -> None:
         raise NotImplementedError
+
+    def _synthesize_batch(
+        self,
+        texts: list[str],
+        language: str,
+        reference: Path | None,
+        out_paths: list[Path],
+    ) -> None:
+        for text, out_path in zip(texts, out_paths):
+            self._synthesize(text, language, reference, out_path)
 
     def info(self) -> dict:
         return {"engine": self.name, "model": self.settings.model_id, "state": self.state}
@@ -219,6 +275,24 @@ class MossEngine(BaseEngine):
         self._dtype_name = str(dtype)
 
     def _synthesize(self, text: str, language: str, reference: Path | None, out_path: Path) -> None:
+        self._run([text], language, reference, [out_path])
+
+    def _synthesize_batch(
+        self,
+        texts: list[str],
+        language: str,
+        reference: Path | None,
+        out_paths: list[Path],
+    ) -> None:
+        self._run(texts, language, reference, out_paths)
+
+    def _run(
+        self,
+        texts: list[str],
+        language: str,
+        reference: Path | None,
+        out_paths: list[Path],
+    ) -> None:
         import soundfile as sf
         import torch
 
@@ -226,32 +300,46 @@ class MossEngine(BaseEngine):
         device = next(model.parameters()).device
         language_name = moss_language_name(language)
         reference_list = [str(reference)] if reference else None
-        conversation = [
-            processor.build_user_message(text=text, language=language_name, reference=reference_list)
+        conversations = [
+            [processor.build_user_message(text=text, language=language_name, reference=reference_list)]
+            for text in texts
         ]
+        # A batch runs until its longest sequence stops, so the budget is the max
+        # over its segments; short ones still stop early on their own end token.
+        max_new = max(estimate_new_tokens(text, self.settings.max_new_tokens) for text in texts)
         with torch.no_grad():
-            batch = processor([conversation], mode="generation")
+            batch = processor(conversations, mode="generation")
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             outputs = model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                max_new_tokens=self.settings.max_new_tokens,
+                max_new_tokens=max_new,
             )
-            messages = [message for message in processor.decode(outputs) if message is not None]
-            if not messages or not messages[0].audio_codes_list:
+            messages = processor.decode(outputs)
+        if len(messages) != len(out_paths):
+            raise RuntimeError(
+                f"MOSS TTS returned {len(messages)} messages for {len(out_paths)} segments."
+            )
+        sampling_rate = processor.model_config.sampling_rate
+        cap_seconds = max_new / AUDIO_TOKENS_PER_SECOND
+        for message, text, out_path in zip(messages, texts, out_paths):
+            if message is None or not message.audio_codes_list:
                 raise RuntimeError("MOSS TTS returned no decoded audio.")
-            audio = messages[0].audio_codes_list[0]
+            samples = message.audio_codes_list[0].to(torch.float32).cpu().numpy()
             # Written via soundfile, not torchaudio.save: torchaudio >= 2.9
             # delegates saving to the optional `torchcodec` package, absent from
             # the image. PCM16 keeps the WAV readable by the stdlib `wave`
             # duration probe and halves the size vs float32.
-            sf.write(
-                str(out_path),
-                audio.to(torch.float32).cpu().numpy(),
-                processor.model_config.sampling_rate,
-                subtype="PCM_16",
-            )
+            sf.write(str(out_path), samples, sampling_rate, subtype="PCM_16")
+            if len(samples) / float(sampling_rate) >= 0.95 * cap_seconds:
+                logger.warning(
+                    "engine.generate.hit_token_cap chars=%d max_new=%d seconds=%.1f "
+                    "(audio may be truncated or the model failed to stop)",
+                    len(text),
+                    max_new,
+                    len(samples) / float(sampling_rate),
+                )
 
     def info(self) -> dict:
         data = super().info()

@@ -113,13 +113,14 @@ ou il apporte une information exacte.
   (timeline globale), liste dans `report.subtitles` et telechargeable via
   `/v1/videos/{id}/artifacts/<chemin>` — incruste et fichier ne peuvent pas
   diverger ;
-- les transitions de scene sont purement visuelles (fondus, aucun effet sonore
-  ajoute aux coupes). Une musique configuree avec `VIDEO_API_MUSIC_FILE` reste
-  duckee sous la narration ;
-- **loudness** : `assemble_en.sh` normalise le rendu (EBU R128, `loudnorm`) a une
-  cible commune (`VIDEO_API_AUDIO_LOUDNESS_TARGET`, defaut -14 LUFS), donc le
-  niveau percu ne depend plus du moteur TTS. Le QC mesure le final et signale
-  clipping / quasi-silence (`reports/final/audio_stats.json`). Voir operations.md ;
+- la bande-son est 100 % voix par choix editorial : aucune musique, aucun effet
+  sonore, transitions de scene purement visuelles (fondus) ;
+- **mastering voix + loudness** : `assemble_en.sh` masterise le voiceover
+  (high-pass, de-esser, compression douce) puis le normalise (EBU R128,
+  `loudnorm` deux passes) a une cible commune (`VIDEO_API_AUDIO_LOUDNESS_TARGET`,
+  defaut -14 LUFS), donc le niveau percu ne depend plus du moteur TTS. Le QC
+  mesure le final et signale clipping / quasi-silence
+  (`reports/final/audio_stats.json`). Voir operations.md ;
 - **direction artistique** : le blueprint choisit une palette `art_direction`
   (default/blueprint/forest/synthwave/carbon/plum) adaptee au sujet ; `default`
   garde le look historique. Detail dans remotion-engine.md.

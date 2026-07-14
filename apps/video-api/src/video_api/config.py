@@ -137,13 +137,14 @@ class Settings:
     # are non-fatal (scenes keep their default timings).
     align_enabled: bool = field(default_factory=lambda: _bool_env("VIDEO_API_ALIGN_ENABLED", True))
     align_device: str = field(default_factory=lambda: os.getenv("VIDEO_API_ALIGN_DEVICE", "auto"))
-    # Optional background music under the voiceover. Point VIDEO_API_MUSIC_FILE
-    # at an audio file readable from the worker (e.g. a CC0 ambient loop under
-    # /data); it is looped, attenuated by VIDEO_API_MUSIC_DB (default -26 dB)
-    # and sidechain-ducked by the voice in assemble_en.sh. Empty = no music
-    # (no asset ships with the repo).
-    music_file: str = field(default_factory=lambda: os.getenv("VIDEO_API_MUSIC_FILE", ""))
-    music_gain_db: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_MUSIC_DB", "-26")))
+    # Voice mastering applied by assemble_en.sh to the concatenated voiceover at
+    # mux time (high-pass, de-esser, gentle compression — see the script for the
+    # exact chain). Runs before loudnorm so the measure pass sees the mastered
+    # voice. Per-segment WAV caches are untouched. The soundtrack is voice-only
+    # by design: no music, no SFX.
+    voice_mastering_enabled: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_VOICE_MASTERING_ENABLED", True)
+    )
     # Loudness normalisation (EBU R128) applied by assemble_en.sh so every video
     # ships at the same perceived loudness regardless of the TTS engine's raw
     # level. Target is integrated loudness in LUFS (-14 = YouTube/streaming norm),
@@ -158,9 +159,12 @@ class Settings:
         default_factory=lambda: float(os.getenv("VIDEO_API_AUDIO_TRUE_PEAK", "-1.5"))
     )
     # Post-render audio QC in verify_mp4: measures integrated loudness + true peak
-    # of the final file and warns on clipping / near-silence. Off-by-default fatal
-    # mode (VIDEO_API_AUDIO_QC_FATAL=1) turns those warnings into a hard failure.
-    audio_qc_fatal: bool = field(default_factory=lambda: _bool_env("VIDEO_API_AUDIO_QC_FATAL", False))
+    # of the final file. The conditions it flags are unambiguous defects — a true
+    # peak > 0 dBTP is clipping, an integrated level < -45 LUFS is near-silence —
+    # and loudnorm normally guarantees compliance, so shipping despite them is
+    # never right outside draft iteration. Fatal by default; the draft profile
+    # relaxes it and VIDEO_API_AUDIO_QC_FATAL=0 opts out.
+    audio_qc_fatal: bool = field(default_factory=lambda: _bool_env("VIDEO_API_AUDIO_QC_FATAL", True))
     default_target_duration_seconds: int = field(
         default_factory=lambda: int(
             os.getenv("VIDEO_API_DEFAULT_TARGET_DURATION_SECONDS", str(timing.DEFAULT_TARGET_DURATION_SECONDS))
@@ -185,16 +189,14 @@ class Settings:
     verify_max_single_freeze_seconds: float = field(
         default_factory=lambda: float(os.getenv("VIDEO_API_MAX_FREEZE_SINGLE_SECONDS", "12"))
     )
-    # Freeze fatality. On the Remotion engine a long freeze is a real bug (the
-    # AmbientBackground guarantees continuous motion, so a frozen stretch means a
-    # scene crashed or rendered nothing) — fatal by default. On Manim, held
-    # formulas legitimately read as "frozen" — warning by default. Override with
-    # VIDEO_API_FREEZE_FATAL=0/1.
+    # Freeze fatality — fatal by default on BOTH engines. The thresholds above stay
+    # tolerant of legitimately held Manim formulas (cumulative frozen time must
+    # exceed max(30s, 50% of duration), OR one single stretch must exceed 12s — both
+    # generous), so a trip is a genuinely dead scene rather than a held visual, on
+    # either engine. The draft profile relaxes the gate for fast iteration and
+    # VIDEO_API_FREEZE_FATAL=0 opts out.
     verify_freeze_fatal: bool = field(
-        default_factory=lambda: _bool_env(
-            "VIDEO_API_FREEZE_FATAL",
-            os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower() == "remotion",
-        )
+        default_factory=lambda: _bool_env("VIDEO_API_FREEZE_FATAL", True)
     )
 
     openai_base_url: str | None = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL"))
@@ -370,10 +372,13 @@ def apply_quality_profile(settings: Settings, profile: str) -> Settings:
 
     - draft: fast iteration — Kokoro voice (~5x real-time on CPU), half-res
       render (QUALITY=ql), no visual review, fastest x264 preset, lenient final
-      verify (no 1080p/fps assertion). For testing a prompt, not for shipping.
-    - standard (alias: final): the configured defaults.
+      verify (no 1080p/fps assertion) and lenient quality gates (freeze + audio QC
+      warn instead of failing, so an iteration never dies on them). Not for shipping.
+    - standard (alias: final): the configured defaults — fatal freeze + audio QC
+      gates, and visual review only if a vision model is configured.
     - high: standard + visual review forced on (requires VIDEO_API_VISION_MODEL;
-      without a model it stays off) + fatal freeze gate.
+      without a model it stays off). The gates are already fatal in standard, so
+      nothing else to add here.
     """
     import dataclasses
 
@@ -384,12 +389,13 @@ def apply_quality_profile(settings: Settings, profile: str) -> Settings:
             voice_engine="kokoro",
             visual_review_enabled=False,
             render_x264_preset="ultrafast",
+            verify_freeze_fatal=False,
+            audio_qc_fatal=False,
         )
     if profile == "high":
         return dataclasses.replace(
             settings,
             visual_review_enabled=bool(settings.visual_review_model),
-            verify_freeze_fatal=True,
         )
     return settings
 

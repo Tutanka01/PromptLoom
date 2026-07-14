@@ -83,14 +83,13 @@ def test_repair_scenes_picks_up_low_scoring_scene(monkeypatch) -> None:
     assert engine.repair_scenes(blueprint.model_dump(), review) is not None
 
 
-def test_freeze_fatal_defaults_by_engine(monkeypatch) -> None:
+def test_freeze_fatal_defaults_fatal_on_both_engines(monkeypatch) -> None:
     monkeypatch.delenv("VIDEO_API_FREEZE_FATAL", raising=False)
     monkeypatch.setenv("VIDEO_API_RENDER_ENGINE", "remotion")
     assert Settings().verify_freeze_fatal is True
     monkeypatch.setenv("VIDEO_API_RENDER_ENGINE", "manim")
-    assert Settings().verify_freeze_fatal is False
+    assert Settings().verify_freeze_fatal is True
     monkeypatch.setenv("VIDEO_API_FREEZE_FATAL", "0")
-    monkeypatch.setenv("VIDEO_API_RENDER_ENGINE", "remotion")
     assert Settings().verify_freeze_fatal is False
 
 

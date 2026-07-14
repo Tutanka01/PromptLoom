@@ -220,22 +220,12 @@ class VideoPipeline:
             logger.exception("job.webhook.error job_id=%s", job.id)
 
     def _assemble_env(self) -> dict[str, str] | None:
-        env: dict[str, str] = {}
-        if self.settings.music_file:
-            env.update(
-                {
-                    "MUSIC_FILE": self.settings.music_file,
-                    "MUSIC_DB": f"{self.settings.music_gain_db:g}",
-                }
-            )
-        env.update(
-            {
-                "LOUDNORM_ENABLED": "1" if self.settings.audio_loudnorm_enabled else "0",
-                "LOUDNESS_TARGET": f"{self.settings.audio_loudness_target_lufs:g}",
-                "LOUDNESS_TP": f"{self.settings.audio_true_peak_db:g}",
-            }
-        )
-        return env or None
+        return {
+            "VOICE_MASTERING_ENABLED": "1" if self.settings.voice_mastering_enabled else "0",
+            "LOUDNORM_ENABLED": "1" if self.settings.audio_loudnorm_enabled else "0",
+            "LOUDNESS_TARGET": f"{self.settings.audio_loudness_target_lufs:g}",
+            "LOUDNESS_TP": f"{self.settings.audio_true_peak_db:g}",
+        }
 
     def run(self, job_id: str) -> str:
         with SessionLocal() as session:
@@ -481,7 +471,15 @@ class VideoPipeline:
 
                 cued_scenes = 0
                 subtitle_files: dict[str, str] = {}
-                if self.engine.name == "remotion" and self.settings.align_enabled:
+                subtitle_cues = 0
+                # "skipped" when the engine has no alignment stage; "ok"/"failed"
+                # once the stage runs. Alignment stays non-fatal, but the outcome
+                # is surfaced in final_report["alignment"] and quality_warnings so
+                # a silently degraded (even-grid, caption-less) job is visible.
+                align_enabled = self.engine.name == "remotion" and self.settings.align_enabled
+                alignment_status = "skipped"
+                alignment_error: str | None = None
+                if align_enabled:
                     self._update(session, job, "audio_alignment", 44, "audio_alignment")
                     try:
                         from video_api.pipeline.align import align_segments
@@ -495,24 +493,26 @@ class VideoPipeline:
                         # a clean video with no burned-in track AND no .srt/.vtt.
                         # Alignment/beats above still run — they drive the visual
                         # cue timing regardless of subtitles.
-                        n_cues = 0
                         if self.settings.caption_mode != "off":
-                            n_cues = write_subtitles(
+                            subtitle_cues = write_subtitles(
                                 video_dir, slug=blueprint.slug, language=job.language
                             )
                             subtitle_files = _subtitle_artifacts(
                                 workspace, video_dir, blueprint.slug, job.language
                             )
+                        alignment_status = "ok"
                         logger.info(
                             "job.align.done job_id=%s scenes_with_cues=%d caption_mode=%s subtitle_cues=%d",
                             job.id,
                             len(cued),
                             self.settings.caption_mode,
-                            n_cues,
+                            subtitle_cues,
                         )
                     except Exception as align_exc:
                         # Non-fatal: scenes keep their default item timings and the
                         # job ships without burned-in captions / sidecar subtitles.
+                        alignment_status = "failed"
+                        alignment_error = str(align_exc)
                         logger.warning(
                             "job.align.failed job_id=%s error=%s (continuing without cues)",
                             job.id,
@@ -525,42 +525,49 @@ class VideoPipeline:
                     self.settings.default_min_duration_seconds,
                 )
 
-                # Render policy: the low-quality render only exists to feed the
-                # visual review. With review off, skip straight to the final
-                # render (one full render less ~= a third of the job time).
+                # Render policy: the visual review now inspects the exact file
+                # that ships, so there is no separate proxy render. A passing job
+                # renders exactly once (previously the review cost an extra
+                # half-resolution render); a failing review costs a full
+                # re-render by design — the repair loop rewrites the flagged
+                # scenes and the next attempt re-renders them at full quality.
                 review_enabled = self.settings.visual_review_enabled and not self.settings.fake_llm
                 visual_review_result: VisualReviewResult | None = None
+
+                self._update(session, job, "render_final", 55, "render_final")
+                final_render_quality = render_quality_for_profile(self.quality_profile)
+                runner.run(
+                    ["./render_en.sh"],
+                    cwd=video_dir,
+                    log_name="render-final.log",
+                    env={"QUALITY": final_render_quality},
+                )
+                logger.info(
+                    "job.render_final.done job_id=%s quality=%s", job.id, final_render_quality
+                )
+
+                self._update(session, job, "assemble_final", 72, "assemble_final")
+                runner.run(
+                    ["./assemble_en.sh"],
+                    cwd=video_dir,
+                    log_name="assemble-final.log",
+                    env=self._assemble_env(),
+                )
+                logger.info("job.assemble_final.done job_id=%s", job.id)
+
+                final_video = video_dir / "final" / f"{blueprint.slug}-en-final.mp4"
+
+                # Review the final assembled MP4 before verify_final so a rejected
+                # video is repaired (scene rewrite + re-render on the next
+                # attempt) instead of reporting verify stats on a video that is
+                # about to be thrown away.
                 if review_enabled:
-                    self._update(session, job, "render_low_quality", 52, "render_low_quality")
-                    runner.run(["./render_en.sh"], cwd=video_dir, log_name="render-low.log", env={"QUALITY": "ql"})
-                    logger.info("job.render_low_quality.done job_id=%s", job.id)
-
-                    self._update(session, job, "assemble_low_quality", 62, "assemble_low_quality")
-                    runner.run(
-                        ["./assemble_en.sh"],
-                        cwd=video_dir,
-                        log_name="assemble-low.log",
-                        env=self._assemble_env(),
-                    )
-                    logger.info("job.assemble_low_quality.done job_id=%s", job.id)
-
-                    final_low = video_dir / "final" / f"{blueprint.slug}-en-final.mp4"
-                    self._update(session, job, "verify_low_quality", 68, "verify_low_quality")
-                    verify_mp4(
-                        final_low,
-                        runner,
-                        final_quality=False,
-                        report_dir=reports_dir / "low",
-                        min_duration_seconds=minimum_duration,
-                    )
-                    logger.info("job.verify_low_quality.done job_id=%s video=%s", job.id, final_low)
-
-                    self._update(session, job, "visual_review", 72, "visual_review")
+                    self._update(session, job, "visual_review", 80, "visual_review")
                     vr = self.visual_reviewer.review(
                         blueprint,
-                        final_low,
+                        final_video,
                         runner,
-                        reports_dir / "low",
+                        reports_dir / "review",
                     )
                     visual_review_result = vr
                     vr_path = reports_dir / "visual_review.json"
@@ -575,29 +582,7 @@ class VideoPipeline:
                     if not vr.passed:
                         raise VisualReviewError(vr)
 
-                self._update(session, job, "render_final", 78, "render_final")
-                final_render_quality = render_quality_for_profile(self.quality_profile)
-                runner.run(
-                    ["./render_en.sh"],
-                    cwd=video_dir,
-                    log_name="render-final.log",
-                    env={"QUALITY": final_render_quality},
-                )
-                logger.info(
-                    "job.render_final.done job_id=%s quality=%s", job.id, final_render_quality
-                )
-
-                self._update(session, job, "assemble_final", 88, "assemble_final")
-                runner.run(
-                    ["./assemble_en.sh"],
-                    cwd=video_dir,
-                    log_name="assemble-final.log",
-                    env=self._assemble_env(),
-                )
-                logger.info("job.assemble_final.done job_id=%s", job.id)
-
-                final_video = video_dir / "final" / f"{blueprint.slug}-en-final.mp4"
-                self._update(session, job, "verify_final", 94, "verify_final")
+                self._update(session, job, "verify_final", 92, "verify_final")
                 final_report = verify_mp4(
                     final_video,
                     runner,
@@ -622,6 +607,19 @@ class VideoPipeline:
                     "source_count": len(getattr(research, "sources", []) or []),
                 }
                 final_report["motion_plan"] = motion_plan
+                final_report["alignment"] = {
+                    "enabled": align_enabled,
+                    "status": alignment_status,
+                    "error": alignment_error,
+                    "scenes_with_cues": cued_scenes,
+                    "total_scenes": len(blueprint.scenes),
+                    "subtitle_cues": subtitle_cues,
+                }
+                if alignment_status == "failed":
+                    final_report["quality_warnings"].append(
+                        f"audio alignment failed ({alignment_error}): scenes shipped with "
+                        "default even-grid timings and no subtitles"
+                    )
                 from video_api.pipeline.editorial import evaluate_rendered_delivery
 
                 final_report["delivery"] = evaluate_rendered_delivery(motion_plan, final_report)

@@ -35,6 +35,12 @@ class Settings:
     max_new_tokens: int = field(
         default_factory=lambda: int(os.getenv("TTS_SERVER_MAX_NEW_TOKENS", "4096"))
     )
+    # Number of same-reference segments generated in one batched forward pass.
+    # 1 keeps the strictly-sequential behaviour. On a bandwidth-bound GPU (e.g.
+    # DGX Spark / GB10) autoregressive decode is memory-bound, so batching reads
+    # the weights once for several segments and can be several times faster.
+    # Raise carefully and watch VRAM; validate audio before trusting it in prod.
+    batch_size: int = field(default_factory=lambda: max(1, int(os.getenv("TTS_SERVER_BATCH_SIZE", "1"))))
     # Per-segment guard rails: a segment is one narration paragraph, not a book.
     max_text_chars: int = field(
         default_factory=lambda: int(os.getenv("TTS_SERVER_MAX_TEXT_CHARS", "2000"))

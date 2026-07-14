@@ -1,9 +1,11 @@
-"""Batch TTS jobs: a queue, one sequential GPU worker, per-segment progress.
+"""Batch TTS jobs: a queue, one GPU worker, per-segment progress.
 
-Segments are synthesized strictly in order because of consistent-voice
-anchoring: the first available WAV (uploaded reference, else first generated
-segment) becomes the cloning reference for every following segment, exactly
-like the local ``moss`` engine in ``generate_voice_en.py``.
+Consistent-voice anchoring drives the ordering: the first available WAV
+(uploaded reference, else the first generated segment) becomes the cloning
+reference for every following segment, exactly like the local ``moss`` engine
+in ``generate_voice_en.py``. So the anchor is rendered first and alone; once it
+exists, all the remaining segments share it and are generated together in
+batches of ``TTS_SERVER_BATCH_SIZE`` (1 = strictly sequential).
 
 Job state lives in memory and is mirrored to ``<data>/jobs/<id>/job.json``
 after every segment, so polling clients see progress and a restarted server
@@ -223,43 +225,102 @@ class JobStore:
         if uploaded_reference.exists():
             anchor = uploaded_reference
 
-        for segment in job.segments:
-            segment.status = "running"
-            self._persist(job)
-            started = time.monotonic()
-            out_path = job_dir / f"{segment.key}.wav"
-            reference_hash = self.cache.file_hash(anchor)
-            fingerprint = self.cache.fingerprint(
-                model_id=job.model_id,
-                language=job.language,
-                text=segment.text,
-                reference_hash=reference_hash,
-            )
-            cached = self.cache.lookup(fingerprint)
-            if cached is not None:
-                shutil.copyfile(cached, out_path)
-                segment.cached = True
-            else:
-                self.engine.synthesize(segment.text, job.language, anchor, out_path)
-                self.cache.store(fingerprint, out_path)
-            encode_mp3(out_path, job_dir / f"{segment.key}.mp3")
-            segment.duration_seconds = wav_duration_seconds(out_path)
-            segment.status = "done"
-            if job.consistent_voice and anchor is None:
-                anchor = out_path
-            self._persist(job)
-            logger.info(
-                "job.segment.done id=%s key=%s cached=%s seconds=%.1f",
-                job.id,
-                segment.key,
-                segment.cached,
-                time.monotonic() - started,
-            )
+        segments = job.segments
+        start_index = 0
+        # Consistent voice without an uploaded reference: the first segment must
+        # be rendered alone because its WAV becomes the cloning anchor for every
+        # following segment. Once that anchor exists, all the rest share it and
+        # can be generated in one batched pass.
+        if job.consistent_voice and anchor is None and segments:
+            self._render_segment(job, job_dir, segments[0], anchor)
+            anchor = job_dir / f"{segments[0].key}.wav"
+            start_index = 1
+
+        self._render_remaining(job, job_dir, segments[start_index:], anchor)
 
         job.status = "completed"
         job.finished_at = time.time()
         self._persist(job)
         logger.info("job.completed id=%s segments=%d", job.id, len(job.segments))
+
+    def _fingerprint(self, job: Job, text: str, anchor: Path | None) -> str:
+        return self.cache.fingerprint(
+            model_id=job.model_id,
+            language=job.language,
+            text=text,
+            reference_hash=self.cache.file_hash(anchor),
+        )
+
+    def _finalize_segment(self, job: Job, job_dir: Path, segment: SegmentState, out_path: Path) -> None:
+        encode_mp3(out_path, job_dir / f"{segment.key}.mp3")
+        segment.duration_seconds = wav_duration_seconds(out_path)
+        segment.status = "done"
+        self._persist(job)
+
+    def _render_segment(
+        self, job: Job, job_dir: Path, segment: SegmentState, anchor: Path | None
+    ) -> None:
+        segment.status = "running"
+        self._persist(job)
+        started = time.monotonic()
+        out_path = job_dir / f"{segment.key}.wav"
+        fingerprint = self._fingerprint(job, segment.text, anchor)
+        cached = self.cache.lookup(fingerprint)
+        if cached is not None:
+            shutil.copyfile(cached, out_path)
+            segment.cached = True
+        else:
+            self.engine.synthesize(segment.text, job.language, anchor, out_path)
+            self.cache.store(fingerprint, out_path)
+        self._finalize_segment(job, job_dir, segment, out_path)
+        logger.info(
+            "job.segment.done id=%s key=%s cached=%s seconds=%.1f",
+            job.id,
+            segment.key,
+            segment.cached,
+            time.monotonic() - started,
+        )
+
+    def _render_remaining(
+        self, job: Job, job_dir: Path, segments: list[SegmentState], anchor: Path | None
+    ) -> None:
+        # Serve cached segments immediately; only the misses feed the batch.
+        pending: list[tuple[SegmentState, Path, str]] = []
+        for segment in segments:
+            segment.status = "running"
+        if segments:
+            self._persist(job)
+        for segment in segments:
+            out_path = job_dir / f"{segment.key}.wav"
+            fingerprint = self._fingerprint(job, segment.text, anchor)
+            cached = self.cache.lookup(fingerprint)
+            if cached is not None:
+                shutil.copyfile(cached, out_path)
+                segment.cached = True
+                self._finalize_segment(job, job_dir, segment, out_path)
+            else:
+                pending.append((segment, out_path, fingerprint))
+
+        batch_size = max(1, self.settings.batch_size)
+        for start in range(0, len(pending), batch_size):
+            chunk = pending[start : start + batch_size]
+            started = time.monotonic()
+            self.engine.synthesize_batch(
+                [segment.text for segment, _, _ in chunk],
+                job.language,
+                anchor,
+                [out_path for _, out_path, _ in chunk],
+            )
+            for segment, out_path, fingerprint in chunk:
+                self.cache.store(fingerprint, out_path)
+                self._finalize_segment(job, job_dir, segment, out_path)
+            logger.info(
+                "job.batch.done id=%s keys=%s size=%d seconds=%.1f",
+                job.id,
+                ",".join(segment.key for segment, _, _ in chunk),
+                len(chunk),
+                time.monotonic() - started,
+            )
 
     def _persist(self, job: Job) -> None:
         job_dir = self.job_dir(job.id)

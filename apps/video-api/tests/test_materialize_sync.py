@@ -39,6 +39,11 @@ def test_generated_manim_uses_renderer_time_compatibility(tmp_path: Path) -> Non
     assemble_script = (video_dir / "assemble_en.sh").read_text(encoding="utf-8")
     assert "apad" in assemble_script, "assemble script must pad audio to prevent truncation"
     assert "-shortest" in assemble_script
+    # Two-pass EBU R128 loudnorm: an apply filter carrying measured_* values in
+    # linear mode, plus the automatic single-pass fallback.
+    assert "measured_I=" in assemble_script
+    assert "linear=true" in assemble_script
+    assert "using single-pass" in assemble_script
 
     voice_script = (video_dir / "generate_voice_en.py").read_text(encoding="utf-8")
     assert '"openai"' in voice_script

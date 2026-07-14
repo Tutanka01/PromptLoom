@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from video_api import config
-from video_api.config import Settings
+from video_api.config import Settings, apply_quality_profile
 
 
 def test_settings_reads_environment_when_instantiated(monkeypatch):
@@ -69,6 +69,64 @@ def test_retention_reads_environment(monkeypatch):
 
     assert settings.job_ttl_days == 7
     assert settings.gc_interval_hours == 12
+
+
+def test_quality_gates_are_fatal_by_default_on_both_engines(monkeypatch):
+    monkeypatch.delenv("VIDEO_API_FREEZE_FATAL", raising=False)
+    monkeypatch.delenv("VIDEO_API_AUDIO_QC_FATAL", raising=False)
+
+    monkeypatch.setenv("VIDEO_API_RENDER_ENGINE", "manim")
+    settings = Settings()
+    assert settings.verify_freeze_fatal is True
+    assert settings.audio_qc_fatal is True
+
+    monkeypatch.setenv("VIDEO_API_RENDER_ENGINE", "remotion")
+    settings = Settings()
+    assert settings.verify_freeze_fatal is True
+    assert settings.audio_qc_fatal is True
+
+
+def test_voice_mastering_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("VIDEO_API_VOICE_MASTERING_ENABLED", raising=False)
+    assert Settings().voice_mastering_enabled is True
+
+    monkeypatch.setenv("VIDEO_API_VOICE_MASTERING_ENABLED", "0")
+    assert Settings().voice_mastering_enabled is False
+
+
+def test_quality_gates_respect_env_overrides(monkeypatch):
+    monkeypatch.setenv("VIDEO_API_FREEZE_FATAL", "0")
+    monkeypatch.setenv("VIDEO_API_AUDIO_QC_FATAL", "0")
+    settings = Settings()
+    assert settings.verify_freeze_fatal is False
+    assert settings.audio_qc_fatal is False
+
+    monkeypatch.setenv("VIDEO_API_FREEZE_FATAL", "1")
+    monkeypatch.setenv("VIDEO_API_AUDIO_QC_FATAL", "1")
+    settings = Settings()
+    assert settings.verify_freeze_fatal is True
+    assert settings.audio_qc_fatal is True
+
+
+def test_draft_profile_relaxes_quality_gates(monkeypatch):
+    monkeypatch.delenv("VIDEO_API_FREEZE_FATAL", raising=False)
+    monkeypatch.delenv("VIDEO_API_AUDIO_QC_FATAL", raising=False)
+    draft = apply_quality_profile(Settings(), "draft")
+    assert draft.verify_freeze_fatal is False
+    assert draft.audio_qc_fatal is False
+
+
+def test_standard_and_high_profiles_keep_fatal_gates(monkeypatch):
+    monkeypatch.delenv("VIDEO_API_FREEZE_FATAL", raising=False)
+    monkeypatch.delenv("VIDEO_API_AUDIO_QC_FATAL", raising=False)
+
+    standard = apply_quality_profile(Settings(), "standard")
+    assert standard.verify_freeze_fatal is True
+    assert standard.audio_qc_fatal is True
+
+    high = apply_quality_profile(Settings(), "high")
+    assert high.verify_freeze_fatal is True
+    assert high.audio_qc_fatal is True
 
 
 def test_dotenv_loads_missing_values_without_overriding(monkeypatch, tmp_path):

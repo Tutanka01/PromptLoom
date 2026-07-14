@@ -541,64 +541,107 @@ cd "$(dirname "$0")"
 VIDEO="${{VIDEO:-final/{blueprint.slug}-en-silent.mp4}}"
 AUDIO="${{AUDIO:-audio/en/voiceover_en.mp3}}"
 OUTPUT="${{OUTPUT:-final/{blueprint.slug}-en-final.mp4}}"
-# Optional background music: set MUSIC_FILE to a readable audio file to mix it
-# under the voiceover. The music is looped, attenuated (MUSIC_DB, default -26),
-# and sidechain-ducked by the voice so narration always stays on top.
-MUSIC_FILE="${{MUSIC_FILE:-}}"
-MUSIC_DB="${{MUSIC_DB:--26}}"
 VOICE_INPUT="${{AUDIO}}"
 
-# Loudness normalisation (EBU R128, single-pass loudnorm). Calibrates every
-# video to the same perceived loudness so the level no longer depends on the TTS
-# engine's raw output. LOUDNESS_TARGET is integrated loudness in LUFS (default
-# -14, the YouTube/streaming norm), LOUDNESS_TP the true-peak ceiling in dBTP.
-# Set LOUDNORM_ENABLED=0 to fall back to the raw (unnormalised) mux.
+# Voice mastering: a broadcast-style chain applied to the concatenated voiceover
+# at mux time (never to the cached per-segment WAVs, so segment caches stay
+# byte-identical and reusable):
+#   highpass     removes rumble/DC below the voice fundamentals (~80 Hz);
+#   deesser      tames TTS sibilance ("s"/"sh" harshness at speech peaks);
+#   acompressor  gentle 2.5:1 levelling so quiet syllables stay intelligible
+#                without pumping (threshold 0.06 linear ~ -24 dBFS).
+# No makeup gain here: the loudnorm stage below owns the final level. The chain
+# is included in the loudnorm measure pass so the measurement matches the graph
+# that ships. VOICE_MASTERING_ENABLED=0 keeps the raw voice; VOICE_MASTER_CHAIN
+# overrides the whole filter chain for tuning.
+VOICE_MASTERING_ENABLED="${{VOICE_MASTERING_ENABLED:-1}}"
+VOICE_MASTER_CHAIN="${{VOICE_MASTER_CHAIN:-highpass=f=80,deesser=i=0.4,acompressor=threshold=0.06:ratio=2.5:attack=9:release=200}}"
+MASTER_PREFIX=""
+if [[ "${{VOICE_MASTERING_ENABLED}}" == "1" ]]; then
+  MASTER_PREFIX="${{VOICE_MASTER_CHAIN}},"
+fi
+
+# Loudness normalisation (EBU R128, two-pass loudnorm). A first "measure" pass
+# analyses the exact audio graph that will ship and reports its integrated
+# loudness / true-peak / LRA; the apply pass then feeds those measurements back
+# into loudnorm with linear=true, which applies a single linear gain toward the
+# target instead of the dynamic compression a blind one-pass run does. This is
+# measurably more accurate and free of the pumping artefacts of single-pass. If
+# the measure pass or its JSON parsing fails for any reason (non-zero exit,
+# missing keys, non-finite "-inf" values), the script falls back to the original
+# single-pass filter and prints a note. LOUDNESS_TARGET is integrated loudness in
+# LUFS (default -14, the YouTube/streaming norm), LOUDNESS_TP the true-peak
+# ceiling in dBTP. Set LOUDNORM_ENABLED=0 to fall back to the raw (unnormalised)
+# mux.
 LOUDNORM_ENABLED="${{LOUDNORM_ENABLED:-1}}"
 LOUDNESS_TARGET="${{LOUDNESS_TARGET:--14}}"
 LOUDNESS_TP="${{LOUDNESS_TP:--1.5}}"
 LOUDNESS_LRA="${{LOUDNESS_LRA:-11}}"
-LOUDNORM="loudnorm=I=${{LOUDNESS_TARGET}}:TP=${{LOUDNESS_TP}}:LRA=${{LOUDNESS_LRA}}"
-if [[ "${{LOUDNORM_ENABLED}}" == "1" ]]; then
-  # Voice-only branch: normalise the voice first, THEN pad with silence.
-  VOICE_CHAIN="${{LOUDNORM}},apad"
-  # Music branch: normalise the FINAL mix (voice + ducked music) so the whole
-  # programme hits the target, not just the voice.
-  MIX_STAGE=";[a_mix]${{LOUDNORM}}[a_out]"
-else
-  VOICE_CHAIN="apad"
-  MIX_STAGE=";[a_mix]anull[a_out]"
-fi
+# Single-pass filter: the automatic fallback whenever a measure pass fails.
+LOUDNORM_SINGLE="loudnorm=I=${{LOUDNESS_TARGET}}:TP=${{LOUDNESS_TP}}:LRA=${{LOUDNESS_LRA}}"
+
+# parse_loudnorm turns a loudnorm print_format=json report ($1 = captured ffmpeg
+# stderr) into the second-pass "loudnorm=...:measured_*:...:linear=true" filter.
+# It exits non-zero when a required key is missing or a value is non-finite
+# (loudnorm prints "-inf" for silence, which float() parses as -inf), so the
+# caller can fall back to single-pass. jq is not guaranteed in the worker image;
+# python3 is (build_video_json.py already relies on it).
+parse_loudnorm() {{
+  python3 -c 'import sys
+raw = sys.argv[1]
+target, tp, lra = sys.argv[2], sys.argv[3], sys.argv[4]
+wanted = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+q = chr(34)
+vals = dict()
+for line in raw.splitlines():
+    if ":" not in line:
+        continue
+    left, _sep, right = line.partition(":")
+    key = left.replace(q, "").replace(",", "").strip()
+    if key not in wanted:
+        continue
+    v = right.replace(q, "").replace(",", "").strip()
+    try:
+        f = float(v)
+    except ValueError:
+        continue
+    if f != f or f == float("inf") or f == float("-inf"):
+        continue
+    vals[key] = v
+if len(vals) != len(wanted):
+    sys.exit(1)
+sys.stdout.write("loudnorm=I=" + target + ":TP=" + tp + ":LRA=" + lra + ":measured_I=" + vals["input_i"] + ":measured_TP=" + vals["input_tp"] + ":measured_LRA=" + vals["input_lra"] + ":measured_thresh=" + vals["input_thresh"] + ":offset=" + vals["target_offset"] + ":linear=true")
+' "$1" "${{LOUDNESS_TARGET}}" "${{LOUDNESS_TP}}" "${{LOUDNESS_LRA}}"
+}}
 
 # apad extends the voice stream with silence to cover the full video duration.
 # -shortest then trims everything to the video end. This prevents the audio
 # track from ending before the video (which caused freezedetect
 # false-positives on the silent last seconds).
-if [[ -n "${{MUSIC_FILE}}" && -f "${{MUSIC_FILE}}" ]]; then
-  ffmpeg -y \\
-    -i "${{VIDEO}}" \\
-    -i "${{VOICE_INPUT}}" \\
-    -stream_loop -1 -i "${{MUSIC_FILE}}" \\
-    -filter_complex "[1:a]apad,asplit=2[voice_mix][voice_key];[2:a]volume=${{MUSIC_DB}}dB[music];[music][voice_key]sidechaincompress=threshold=0.03:ratio=8:attack=5:release=400[ducked];[voice_mix][ducked]amix=inputs=2:duration=first:normalize=0[a_mix]${{MIX_STAGE}}" \\
-    -map 0:v:0 \\
-    -map "[a_out]" \\
-    -c:v copy \\
-    -c:a aac \\
-    -b:a 192k \\
-    -shortest \\
-    "${{OUTPUT}}"
-else
-  ffmpeg -y \\
-    -i "${{VIDEO}}" \\
-    -i "${{VOICE_INPUT}}" \\
-    -filter_complex "[1:a]${{VOICE_CHAIN}}[a_padded]" \\
-    -map 0:v:0 \\
-    -map "[a_padded]" \\
-    -c:v copy \\
-    -c:a aac \\
-    -b:a 192k \\
-    -shortest \\
-    "${{OUTPUT}}"
+VOICE_CHAIN="${{MASTER_PREFIX}}apad"
+if [[ "${{LOUDNORM_ENABLED}}" == "1" ]]; then
+  # Measure the MASTERED voice without apad: loudnorm's gating excludes the
+  # trailing silence, so padding does not change the integrated loudness we
+  # measure — but the mastering chain does, hence it precedes the measure.
+  if MEASURED_JSON=$(ffmpeg -nostdin -hide_banner -i "${{VOICE_INPUT}}" -af "${{MASTER_PREFIX}}${{LOUDNORM_SINGLE}}:print_format=json" -f null - 2>&1 >/dev/null) \\
+     && MEASURED=$(parse_loudnorm "${{MEASURED_JSON}}"); then
+    VOICE_CHAIN="${{MASTER_PREFIX}}${{MEASURED}},apad"
+  else
+    echo "loudnorm: two-pass measure failed for the voiceover; using single-pass."
+    VOICE_CHAIN="${{MASTER_PREFIX}}${{LOUDNORM_SINGLE}},apad"
+  fi
 fi
+ffmpeg -y \\
+  -i "${{VIDEO}}" \\
+  -i "${{VOICE_INPUT}}" \\
+  -filter_complex "[1:a]${{VOICE_CHAIN}}[a_padded]" \\
+  -map 0:v:0 \\
+  -map "[a_padded]" \\
+  -c:v copy \\
+  -c:a aac \\
+  -b:a 192k \\
+  -shortest \\
+  "${{OUTPUT}}"
 
 echo "Wrote ${{OUTPUT}}"
 '''
