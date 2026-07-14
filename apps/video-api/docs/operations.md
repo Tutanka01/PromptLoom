@@ -131,6 +131,39 @@ choisit la langue de sortie demandee au LLM et transmise au TTS. Pour les langue
 au-dela de EN/FR, utiliser `VIDEO_API_VOICE_ENGINE=moss` et eviter
 `quality_profile=draft`, car `draft` force Kokoro pour accelerer les iterations.
 
+#### Selection de voix par requete
+
+Le moteur reste un choix de deploiement, mais la *voix* est un choix par
+requete : `GET /v1/voices` liste les voix selectionnables et `POST /v1/videos`
+accepte un champ `voice` (voir `docs/api-reference.md`). Sources des voix :
+
+- `kokoro` : catalogue statique cure (EN + FR, voix les mieux notees du modele).
+  Sans champ `voice`, un job FR bascule automatiquement sur `ff_siwis` si la
+  voix configuree (`VIDEO_API_KOKORO_VOICE`) ne couvre pas le francais.
+- `openai` : les voix classiques de `/audio/speech`. Si ton serveur
+  OpenAI-compatible expose d'autres noms, declare-les :
+
+  ```text
+  VIDEO_API_OPENAI_TTS_VOICES=narrator,calm-fr,studio-m
+  ```
+
+- `moss` / `moss-remote` : la **banque de voix** — un dossier de WAV de
+  reference monte en lecture seule dans `api` et `worker`
+  (`apps/video-api/voice-bank` -> `/data/voices` par defaut) :
+
+  ```text
+  VIDEO_API_VOICE_BANK_DIR=/data/voices
+  ```
+
+  Chaque `<id>.wav` (+ sidecar `<id>.json` optionnel : label, description,
+  languages, reference_text) devient une voix ; format detaille dans
+  `apps/video-api/voice-bank/README.md`. La reference est passee au moteur
+  local ou uploadee au serveur GPU (`reference_audio_b64`), ce qui fixe aussi
+  le timbre MOSS, sinon non deterministe d'un job a l'autre. Le cache audio par
+  segment est fingerprinte sur le chemin de la reference : pour changer le
+  contenu d'un WAV, renomme-le (nouvel id) plutot que de le remplacer en place.
+- `chatterbox` : timbre unique, aucune voix selectionnable.
+
 Pour utiliser un modele de
 synthese vocale multilingue MOSS-TTS :
 

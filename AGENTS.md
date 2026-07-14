@@ -57,6 +57,7 @@ apps/video-api/src/video_api/
   tasks.py                tâches Celery et fan-out multilingue
   schemas.py              contrats Pydantic publics et LLM
   config.py               variables d'environnement et profils qualité
+  voices.py               catalogue de voix TTS et sélection par requête
   db.py / models.py       persistance, rétention, jobs périmés
   pipeline/
     production.py         orchestration et classification des échecs

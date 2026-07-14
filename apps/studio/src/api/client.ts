@@ -10,6 +10,7 @@ import type {
   VideoListResponse,
   VideoReport,
   VideoStatus,
+  VoicesResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -87,6 +88,10 @@ export const api = {
 
   getHealth(): Promise<HealthResponse> {
     return request("/healthz");
+  },
+
+  getVoices(): Promise<VoicesResponse> {
+    return request("/v1/voices");
   },
 
   // Native <video>/<a> can't carry the X-API-Key header, so pull bytes with the

@@ -22,9 +22,11 @@ from video_api.schemas import (
     VideoCreateRequest,
     VideoCreateResponse,
     VideoStatusResponse,
+    VoicesResponse,
 )
 from video_api.storage import ensure_within, job_root
 from video_api.tasks import run_video_job
+from video_api.voices import VoiceSelectionError, resolve_voice, voices_payload
 
 
 settings = get_settings()
@@ -114,6 +116,21 @@ def healthz() -> JSONResponse:
     )
 
 
+@app.get(
+    "/v1/voices",
+    response_model=VoicesResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def list_available_voices() -> VoicesResponse:
+    """Selectable narration voices for the deployed TTS engine(s).
+
+    Clients should pick from here before POSTing a `voice`: the effective
+    engine depends on the quality profile (draft forces Kokoro), and MOSS
+    voices are reference WAVs of the server-side voice bank.
+    """
+    return VoicesResponse(**voices_payload(settings))
+
+
 @app.post(
     "/v1/videos",
     response_model=VideoCreateResponse,
@@ -122,6 +139,11 @@ def healthz() -> JSONResponse:
 )
 def create_video(request: VideoCreateRequest, session: Session = Depends(get_session)) -> VideoCreateResponse:
     languages = request.resolved_languages()
+    if request.voice:
+        try:
+            resolve_voice(settings, request.quality_profile, request.voice, languages)
+        except VoiceSelectionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if len(languages) > 1:
         return _create_batch(request, languages, session)
 

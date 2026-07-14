@@ -97,6 +97,9 @@ export const formSchema = z
     visuals_allow_stock: z.boolean(),
     visuals_max_assets: z.number().int().min(0).max(12),
     captions: z.enum(["off", "keywords", "full"]),
+    // "auto" = laisser le serveur choisir (défaut moteur); sinon un id de
+    // GET /v1/voices, validé côté serveur (422 si incompatible).
+    voice: z.string(),
     callback_url: z
       .string()
       .trim()
@@ -132,6 +135,7 @@ export const defaultValues: FormValues = {
   visuals_allow_stock: false,
   visuals_max_assets: 4,
   captions: "off",
+  voice: "auto",
   callback_url: "",
 };
 
@@ -157,6 +161,7 @@ export function toRequest(v: FormValues): VideoCreateRequest {
   };
   if (v.theme?.trim()) body.theme = v.theme.trim();
   if (v.render_engine !== "auto") body.render_engine = v.render_engine;
+  if (v.voice && v.voice !== "auto") body.voice = v.voice;
   if (v.callback_url?.trim()) body.callback_url = v.callback_url.trim();
 
   if (v.multilang) {

@@ -60,7 +60,30 @@ export interface VideoCreateRequest {
   research?: ResearchOptions;
   visuals?: VisualOptions;
   captions?: CaptionMode | null;
+  // Narration voice id from GET /v1/voices. Omit for the engine default.
+  voice?: string | null;
   callback_url?: string | null;
+}
+
+// Engine families exposed by GET /v1/voices (moss covers moss + moss-remote).
+export type VoiceEngine = "kokoro" | "openai" | "moss" | "chatterbox" | (string & {});
+
+export interface VoiceInfo {
+  id: string;
+  label: string;
+  engine: VoiceEngine;
+  // null = the voice covers every language the API accepts (voice cloning).
+  languages: string[] | null;
+  description: string;
+  is_default: boolean;
+}
+
+export interface VoicesResponse {
+  // Engine family under the standard profile.
+  engine: VoiceEngine;
+  // Effective family per quality profile (draft forces kokoro).
+  engine_by_profile: Record<string, VoiceEngine>;
+  voices: VoiceInfo[];
 }
 
 export interface BatchJobRef {

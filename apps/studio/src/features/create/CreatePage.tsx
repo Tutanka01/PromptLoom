@@ -6,7 +6,7 @@ import { ArrowLeft, ChevronDown, Sparkles, Wand2 } from "lucide-react";
 import { Button, Card, SectionLabel } from "../../components/ui";
 import { Field, TextInput, TextArea, Select, Segmented, Toggle, RangeField } from "../../components/form";
 import { useToast } from "../../components/Toast";
-import { useCreateVideo } from "../../api/queries";
+import { useCreateVideo, useVoices } from "../../api/queries";
 import { ApiError } from "../../api/client";
 import { LanguagePicker } from "./LanguagePicker";
 import {
@@ -48,6 +48,31 @@ export function CreatePage() {
   const mode = watch("production_mode");
   const multilang = watch("multilang");
   const researchEnabled = watch("research_enabled");
+  const qualityProfile = watch("quality_profile");
+  const language = watch("language");
+  const languages = watch("languages");
+  const voice = watch("voice");
+
+  // Narration voices: deployment-defined catalog, filtered down to the engine
+  // that will actually synthesize under the selected profile (draft forces
+  // Kokoro server-side) and to the requested language(s).
+  const voicesQuery = useVoices();
+  const selectedLanguages = multilang ? languages : [language];
+  const voiceEngine =
+    voicesQuery.data?.engine_by_profile?.[qualityProfile] ?? voicesQuery.data?.engine;
+  const engineVoices = (voicesQuery.data?.voices ?? []).filter((v) => v.engine === voiceEngine);
+  const compatibleVoices = engineVoices.filter(
+    (v) => v.languages === null || selectedLanguages.every((code) => v.languages!.includes(code)),
+  );
+  const compatibleIds = compatibleVoices.map((v) => v.id).join(",");
+
+  // A selection invalidated by a profile/language change falls back to auto
+  // instead of shipping a voice the server would reject with a 422.
+  useEffect(() => {
+    if (voice !== "auto" && !compatibleIds.split(",").includes(voice)) {
+      setValue("voice", "auto");
+    }
+  }, [voice, compatibleIds, setValue]);
 
   // Mirror the server's ProductionOptions.resolve_defaults: advanced modes turn
   // research on, prefer hybrid visuals + stock, and forbid Manim for cinematic.
@@ -152,6 +177,38 @@ export function CreatePage() {
                     {LANGUAGES.map((l) => (
                       <option key={l.code} value={l.code}>
                         {l.name} ({l.code})
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              />
+            </Field>
+          )}
+          {engineVoices.length > 0 && (
+            <Field
+              label="Voix de narration"
+              htmlFor="voice"
+              hint={
+                compatibleVoices.length === 0
+                  ? "Aucune voix du moteur ne couvre ces langues — la voix par défaut du serveur sera utilisée."
+                  : `Moteur TTS : ${voiceEngine}. « Automatique » laisse le serveur choisir.`
+              }
+            >
+              <Controller
+                control={control}
+                name="voice"
+                render={({ field }) => (
+                  <Select
+                    id="voice"
+                    value={field.value}
+                    onChange={(e) => field.onChange(e.target.value)}
+                    disabled={compatibleVoices.length === 0}
+                  >
+                    <option value="auto">Automatique (défaut du moteur)</option>
+                    {compatibleVoices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                        {v.is_default ? " — défaut" : ""}
                       </option>
                     ))}
                   </Select>

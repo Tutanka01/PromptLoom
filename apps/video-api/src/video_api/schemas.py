@@ -108,6 +108,9 @@ class ProductionOptions(BaseModel):
     research: ResearchOptions = Field(default_factory=ResearchOptions)
     visuals: VisualOptions = Field(default_factory=VisualOptions)
     captions: CaptionMode | None = None
+    # Requested narration voice id (see GET /v1/voices). None = engine default
+    # (which for MOSS means the free-running, non-pinned timbre).
+    voice: str | None = Field(default=None, max_length=80)
     delivery_promise: Literal[
         "technical_explainer", "editorial_explainer", "motion_led_explainer"
     ] | None = None
@@ -161,7 +164,19 @@ class VideoCreateRequest(BaseModel):
     # Subtitles, opt-in. Omit (or set "off") for a clean video with no subtitles
     # at all, or set "full" to force them on. See CaptionMode.
     captions: CaptionMode | None = None
+    # Narration voice id, one of GET /v1/voices for the engine that will run
+    # under the requested quality_profile. Omit for the engine default. In a
+    # multi-language batch the same voice narrates every video, so it must
+    # cover every requested language (422 otherwise).
+    voice: str | None = Field(default=None, max_length=80)
     callback_url: str | None = None
+
+    @field_validator("voice")
+    @classmethod
+    def normalize_voice(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator("language")
     @classmethod
@@ -209,6 +224,7 @@ class VideoCreateRequest(BaseModel):
             research=self.research,
             visuals=self.visuals,
             captions=self.captions,
+            voice=self.voice,
         )
 
 
@@ -247,6 +263,25 @@ class BatchStatusResponse(BaseModel):
     batch_id: str
     languages: list[str]
     jobs: list[VideoStatusResponse]
+
+
+class VoiceInfo(BaseModel):
+    id: str
+    label: str
+    engine: str  # canonical family: kokoro | openai | moss
+    # None = the voice covers every language the API accepts (voice cloning /
+    # true multilingual voices).
+    languages: list[str] | None = None
+    description: str = ""
+    is_default: bool = False
+
+
+class VoicesResponse(BaseModel):
+    # Engine family that synthesizes under the standard profile.
+    engine: str
+    # Effective family per quality profile (the draft profile forces kokoro).
+    engine_by_profile: dict[str, str]
+    voices: list[VoiceInfo]
 
 
 class BeatSpec(BaseModel):

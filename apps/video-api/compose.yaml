@@ -16,11 +16,16 @@ services:
       # Artifact retention (job workspaces under /data/jobs). The API sweeps at
       # startup; the worker sweeps periodically (Celery beat). 0 = keep forever.
       VIDEO_API_JOB_TTL_DAYS: ${VIDEO_API_JOB_TTL_DAYS:-15}
+      # Voice bank (MOSS reference WAVs) — the API lists it (GET /v1/voices).
+      VIDEO_API_VOICE_BANK_DIR: ${VIDEO_API_VOICE_BANK_DIR:-/data/voices}
     command: uvicorn video_api.main:app --host 0.0.0.0 --port 8080
     ports:
       - "8080:8080"
     volumes:
       - video_jobs:/data/jobs
+      # Drop <voice-id>.wav (+ optional <voice-id>.json) here to expose MOSS
+      # voices; see apps/video-api/voice-bank/README.md.
+      - ./voice-bank:/data/voices:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +67,9 @@ services:
       VIDEO_API_MOSS_TTS_DEVICE: ${VIDEO_API_MOSS_TTS_DEVICE:-auto}
       VIDEO_API_MOSS_TTS_DTYPE: ${VIDEO_API_MOSS_TTS_DTYPE:-auto}
       VIDEO_API_MOSS_TTS_COMMAND: ${VIDEO_API_MOSS_TTS_COMMAND:-}
+      # Voice bank (MOSS reference WAVs) — the worker reads the WAV of the
+      # per-job selected voice from here (same mount as the API).
+      VIDEO_API_VOICE_BANK_DIR: ${VIDEO_API_VOICE_BANK_DIR:-/data/voices}
       # Persistent model caches (named volume below). Without this, HF/torch
       # models (MOSS-TTS alone is ~17 GB) live in the container FS and are
       # re-downloaded from scratch every time the container is recreated
@@ -100,6 +108,7 @@ services:
     volumes:
       - video_jobs:/data/jobs
       - model_cache:/data/model-cache
+      - ./voice-bank:/data/voices:ro
     depends_on:
       postgres:
         condition: service_healthy

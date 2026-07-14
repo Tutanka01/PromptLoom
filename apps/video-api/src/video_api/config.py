@@ -290,6 +290,15 @@ class Settings:
         )
     )
     voice_tail_padding: float = field(default_factory=lambda: float(os.getenv("VIDEO_API_VOICE_TAIL_PADDING", "0.45")))
+    # Voice bank for the MOSS engines: a directory of reference WAVs (plus an
+    # optional <id>.json sidecar) exposed as selectable voices by GET /v1/voices.
+    # Must be readable by both the API (listing) and the worker (synthesis) —
+    # compose mounts apps/video-api/voice-bank there on both services.
+    voice_bank_dir: str = field(default_factory=lambda: os.getenv("VIDEO_API_VOICE_BANK_DIR", "/data/voices"))
+    # Comma-separated voice ids advertised for the openai engine. Empty = the
+    # classic /audio/speech voices (alloy, echo, ...); set it when the
+    # OpenAI-compatible server exposes different names.
+    openai_tts_voices: str = field(default_factory=lambda: os.getenv("VIDEO_API_OPENAI_TTS_VOICES", ""))
     moss_tts_model: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_MOSS_TTS_MODEL", "OpenMOSS-Team/MOSS-TTS-v1.5")
     )

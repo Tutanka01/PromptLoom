@@ -16,6 +16,7 @@ import type {
   VideoCreateResponse,
   VideoListResponse,
   VideoStatus,
+  VoicesResponse,
 } from "./types";
 import { isActive } from "../lib/steps";
 
@@ -63,6 +64,17 @@ export function useHealth(): UseQueryResult<HealthResponse> {
     queryKey: ["health"],
     queryFn: () => api.getHealth(),
     refetchInterval: 30000,
+    retry: false,
+  });
+}
+
+// The catalog is deployment-defined (engine + voice bank): cache it hard and
+// swallow errors — an older API without /v1/voices simply hides the selector.
+export function useVoices(): UseQueryResult<VoicesResponse> {
+  return useQuery({
+    queryKey: ["voices"],
+    queryFn: () => api.getVoices(),
+    staleTime: 5 * 60 * 1000,
     retry: false,
   });
 }

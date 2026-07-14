@@ -31,6 +31,7 @@ from video_api.pipeline.voice import voice_command_for_settings
 from video_api.schemas import VisualReviewResult
 from video_api.schemas import ProductionOptions
 from video_api.storage import job_root
+from video_api.voices import VoiceSelectionError, apply_job_voice
 
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,18 @@ class VideoPipeline:
             self._apply_profile(getattr(job, "quality_profile", None))
             self._apply_production_config(getattr(job, "production_config", None))
             self.settings = dataclasses.replace(self.settings, voice_language=job.language or "en")
+            try:
+                # Freeze the requested (or language-appropriate default) voice
+                # into the snapshot BEFORE the engine is rebuilt: the engine and
+                # the audio-cache signature both read these settings. A voice
+                # that disappeared since request time fails the job clearly —
+                # no silent fallback to another timbre.
+                self.settings = apply_job_voice(self.settings, self.production_options.voice)
+            except VoiceSelectionError as exc:
+                logger.error("job.voice.unavailable job_id=%s error=%s", job_id, exc)
+                self._update(session, job, "failed_generation", job.progress or 0, "voice_selection", error=str(exc))
+                self._notify_terminal(session, job)
+                return job.status
             self.llm = LLMClient(self.settings)
             self.engine = make_engine(self.settings, self.llm)
             self.visual_reviewer = VisualReviewer(self.settings)

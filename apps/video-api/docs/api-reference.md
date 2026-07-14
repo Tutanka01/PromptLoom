@@ -29,6 +29,48 @@ Reponse :
 
 HTTP `503` avec `"status":"degraded"` si une dependance ne repond pas.
 
+## `GET /v1/voices`
+
+Liste les voix de narration selectionnables pour le(s) moteur(s) TTS deployes.
+Le client devrait piocher ici avant de renseigner le champ `voice` de
+`POST /v1/videos`.
+
+```bash
+curl http://localhost:8080/v1/voices -H 'X-API-Key: <cle>'
+```
+
+Reponse :
+
+```json
+{
+  "engine": "moss",
+  "engine_by_profile": {"draft": "kokoro", "standard": "moss", "high": "moss", "final": "moss"},
+  "voices": [
+    {"id": "sarah", "label": "Sarah — femme (FR)", "engine": "moss",
+     "languages": null, "description": "Voix clonee depuis la banque de voix.",
+     "is_default": false},
+    {"id": "af_bella", "label": "Bella — femme (EN)", "engine": "kokoro",
+     "languages": ["en"], "description": "...", "is_default": true}
+  ]
+}
+```
+
+- `engine` : famille de moteur effective sous le profil `standard`
+  (`kokoro`, `openai`, `moss` — cette famille couvre `moss` local et
+  `moss-remote` —, ou `chatterbox`).
+- `engine_by_profile` : la famille reellement utilisee par profil de qualite —
+  le profil `draft` force Kokoro, donc les voix selectionnables en draft ne
+  sont pas celles du moteur principal.
+- `voices[].languages` : `null` signifie que la voix couvre toutes les langues
+  acceptees par l'API (clonage MOSS, voix OpenAI multilingues) ; sinon la liste
+  des codes couverts.
+- `voices[].is_default` : voix utilisee quand la requete n'en precise aucune.
+- Provenance des voix : `kokoro` = catalogue statique cure (EN + FR) ;
+  `openai` = voix classiques de `/audio/speech`, surchargable via
+  `VIDEO_API_OPENAI_TTS_VOICES` ; `moss` = un WAV de reference par voix dans la
+  banque de voix serveur (`VIDEO_API_VOICE_BANK_DIR`, voir
+  `apps/video-api/voice-bank/README.md`). `chatterbox` n'expose aucune voix.
+
 ## `POST /v1/videos`
 
 Cree un job de generation video.
@@ -123,6 +165,14 @@ Champs :
   (casse, ponctuation, accents, chiffres reels) regroupe en cues lisibles ; `full`
   et `keywords` la rendent en continu, `off` la masque. Quand l'alignement tourne,
   le job exporte aussi un sidecar `.srt` + `.vtt` (voir `report.subtitles`).
+- `voice` optionnel : id d'une voix de `GET /v1/voices`, pour le moteur qui
+  tournera reellement sous le `quality_profile` demande (`draft` force Kokoro).
+  Omis = voix par defaut du moteur (pour MOSS : timbre libre non deterministe,
+  echantillonne au premier segment puis clone sur le reste de la video). Dans
+  un batch multilingue, la meme voix narre toutes les videos : elle doit couvrir
+  toutes les langues demandees. Voix inconnue ou incompatible = `422` avec le
+  detail. Si le WAV de reference d'une voix MOSS disparait entre la creation et
+  l'execution, le job echoue clairement (pas de fallback de voix silencieux).
 - `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
   (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
   dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
