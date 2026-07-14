@@ -45,7 +45,7 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 | `BulletScene`        | `title, bullets[2-5], caption?, accent?` |
 | `FormulaScene`       | `title, formulas[1-3] (LaTeX/KaTeX), caption?` |
 | `CodeScene`          | `title, code, lang, codeTitle?, caption?` |
-| `PlotScene`          | `title, expr|points, xRange, yRange, sweep?, area?, xLabel?, yLabel?` |
+| `PlotScene`          | `title, expr|points|curves[{expr\|points,label,dash?,color?}], markers?[{x,y,label?,guides?}], xRange, yRange? (omit → auto-fit), sweep?, area?, xLabel?, yLabel?` |
 | `DiagramScene`       | `title, nodes[{id,label,x(-6..6),y(-3..3),color?}], edges[{from,to,label?}]` |
 | `ComparisonScene`    | `title, left{label,items[2-5]}, right{label,items[2-5]}, caption?` |
 | `LayeredSystemScene` | `title, layers[{label,sub?,color?}][2-5], caption?` |

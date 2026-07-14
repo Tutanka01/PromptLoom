@@ -363,11 +363,44 @@ that matches the sentence — never a generic row of cards.
 
 - **Math / equations** (any field): `<MathFormula tex="…" />` (KaTeX).
 - **Functions, data, physics over time**: `<Plot fn={…} … />` (axes, animated
-  curve, tangent, area, moving point).
+  curve, tangent, area, moving point) — see "Graphs with axes" below.
 - **Code / algorithms**: `<CodeBlock lang="…" />` (Shiki, line-by-line reveal).
 - **Systems, processes, relationships**: `Card` + `Arrow` + `Zone` nodes/edges.
 - **Quantities / comparison**: bars/pills, counters.
 Compose these; they cover most STEM explanations.
+
+## Graphs with axes (REQUIRED: use `<Plot>`)
+
+Any chart with x/y axes MUST be the catalog `<Plot>` — never hand-rolled SVG
+axes, gridlines or curves. Hand-rolled charts have shipped visibly broken:
+curves overflowing the frame, empty grids, axes with no scale.
+
+`<Plot>` handles clipping (a curve can never escape the plot area), numeric
+tick labels, an automatic legend and named markers:
+
+```tsx
+<Plot
+  xRange={[0, 10]}                       // omit yRange → axes auto-fit the data
+  series={[
+    { fn: (q) => 10 - 0.8 * q, label: "Demande",
+      drawProgress: beat(p, c0, c0 + 0.3) },        // each curve on its cue
+    { fn: (q) => 1 + 0.7 * q, label: "Offre",
+      drawProgress: beat(p, c1, c1 + 0.3) },
+  ]}
+  markers={[{ x: 5, y: 4.5, label: "E", guides: true,   // dashed guides to both
+              progress: appear(p, c2, c2 + 0.1) }]}     // axes + values shown
+  xLabel="Quantité" yLabel="Prix"
+  width={1000} height={580}
+/>
+```
+
+- One curve: the legacy `fn={…} drawProgress={…}` API still works (plus
+  `tangentAt`, `pointAt`, `areaTo` for calculus scenes).
+- If you DO set `yRange`, it must contain every plotted value over `xRange` —
+  the plot area is clipped, anything outside is cut off.
+- Give axes real names (`xLabel`/`yLabel`), label every curve in a multi-curve
+  chart, and mark the point the narration talks about (intersection,
+  equilibrium, optimum) with a `marker` + `guides`.
 
 ## Mandatory techniques
 

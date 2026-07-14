@@ -77,6 +77,7 @@ Hard rules (a violation makes the scene unusable):
 - 1920x1080 at 60fps. Wrap content in <AbsoluteFill>. Use `colors`, `mx(x)`, `my(y)` from ../../lib for the dark theme + coordinate mapping (x in [-6,6], y in [-3,3], origin centered, y up).
 - `colors` are themed CSS variables. For translucency use `alpha(color, 0.2)` from ../../lib — NEVER string-concatenate a hex suffix like `${color}33` (invalid on a themed colour). In SVG, set colours via `style={{ stroke, fill }}`, not `stroke=`/`fill=` presentation attributes (CSS variables do not resolve there).
 - Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox, Icon). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
+- Any chart with x/y axes MUST be the catalog <Plot> (multi-curve via `series`, named points via `markers`, auto-fitted axes with numeric ticks). Never hand-roll SVG axes, gridlines or curves.
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
 
 
@@ -90,8 +91,15 @@ _SPECIALIST_GUIDANCE = {
         "focus/dim the currently narrated node. Arrows must not cross labels."
     ),
     "data_visualization": (
-        "Use Plot/BarChart/Counter with truthful values and labelled axes. Animate the encoding itself, "
-        "not decorative containers, and reveal the comparison when narration reaches it."
+        "Any x/y chart MUST be the catalog <Plot> — NEVER hand-roll SVG axes, grids or curves "
+        "(hand-rolled charts ship broken: curves overflowing the frame, empty grids, no scale). "
+        "Plot gives you clipping, numeric tick labels, a legend and named markers for free: "
+        "series={[{fn: (x) => ..., label: 'Demande'}, {fn: ..., label: 'Offre', dash: true}]} for one or several "
+        "curves, markers={[{x, y, label: 'E', guides: true}]} for an intersection/equilibrium/optimum, and omit "
+        "yRange so the axes auto-fit the data (if you set yRange it MUST contain every plotted value — the plot "
+        "area is clipped). Reveal each curve on its narration cue via its own drawProgress. Use BarChart for "
+        "discrete quantities and Counter for a single metric. Values must be truthful with labelled axes; animate "
+        "the encoding itself, not decorative containers."
     ),
     "code_terminal": (
         "Use CodeBlock or Terminal with real executable-looking content. Reveal by meaningful lines or "
@@ -121,7 +129,12 @@ def _select_scene_skills(scene: Any) -> list[str]:
     selected = ["narrative_motion"]
     rules = {
         "systems_flow": ("flow", "path", "pipeline", "kernel", "network", "queue", "layer"),
-        "data_visualization": ("plot", "chart", "graph", "metric", "rate", "distribution", "counter"),
+        "data_visualization": (
+            "plot", "chart", "graph", "metric", "rate", "distribution", "counter", "curve", "axis", "axes",
+            "supply", "demand", "equilibrium", "price", "slope",
+            # narration is often French — route econ/math graph scenes too
+            "courbe", "graphique", "axe", "offre", "demande", "prix", "équilibre", "marché", "taux", "pente",
+        ),
         "code_terminal": ("code", "terminal", "command", "shell", "syscall", "function", "algorithm"),
         "memory_model": ("memory", "address", "page table", "buffer", "register", "stack", "heap"),
         "kinetic_typography": ("phrase", "word", "title", "typography", "statement", "reveal"),

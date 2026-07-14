@@ -39,7 +39,7 @@ The blueprint composes these by `{component, props}`. Signatures: see
 | `BulletScene` | a list / definition / recap |
 | `FormulaScene` | equations, a derivation (KaTeX) |
 | `CodeScene` | code / algorithms (Shiki, line-by-line) |
-| `PlotScene` | a function / data / motion over time |
+| `PlotScene` | a function / data / motion over time — multi-curve via `curves[{expr,label,dash?}]` + `markers[{x,y,label}]` (supply/demand, equilibrium) |
 | `DiagramScene` | systems, relationships (nodes + edges) |
 | `ComparisonScene` | two things contrasted (user vs kernel, before/after) |
 | `LayeredSystemScene` | stacked layers (app / syscall / kernel / hardware) |
@@ -59,7 +59,7 @@ The blueprint composes these by `{component, props}`. Signatures: see
 | If the narration is about… | Use |
 |---|---|
 | equations, definitions, derivations | `MathFormula` (KaTeX) |
-| a function / data / motion over time | `Plot` (axes, curve, tangent, area, point) |
+| a function / data / motion over time | `Plot` (axes, curve(s), legend, markers, tangent, area, point) |
 | code, algorithms, commands | `CodeBlock` (Shiki) |
 | systems, processes, relationships | `Card` + `Arrow` + `Zone` (nodes/edges) |
 | naming/labelling parts | `Caption`, `Pill`, `TitleBar` |
@@ -71,7 +71,7 @@ The blueprint composes these by `{component, props}`. Signatures: see
 |---|---|---|
 | `AmbientBackground` | `accent` | **default background** — continuous motion, never freezes |
 | `MathFormula` | `tex, display, fontSize, color, delay, align` | **any LaTeX math**: calculus, linear algebra, physics, chemistry, stats, logic |
-| `Plot` | `fn, xRange, yRange, color, drawProgress, tangentAt, pointAt, areaTo, xLabel, yLabel` | **function graphs**: derivatives/tangents, integrals/area, kinematics, distributions, signals |
+| `Plot` | `fn` or `series[{fn\|points,label,color?,dash?,drawProgress?}]`, `xRange`, `yRange?` (omit → auto-fit), `markers[{x,y,label?,guides?,progress?}]`, `color, drawProgress, tangentAt, pointAt, areaTo, xLabel, yLabel` | **ANY x/y graph** (never hand-roll axes): derivatives/tangents, integrals/area, kinematics, distributions, supply/demand + equilibrium. Clipped plot area, numeric ticks, auto legend |
 | `CodeBlock` | `code, lang, fontSize, startAt, lineReveal, title, accent` | syntax-highlighted code revealed line by line (CS/algorithms) |
 | `TextReveal` | `text, fontSize, color, delay, staggerDelay` | word-by-word heading reveal |
 | `TypewriterText` | `text, fontSize, color, speed, showCursor` | typing a command/expression |

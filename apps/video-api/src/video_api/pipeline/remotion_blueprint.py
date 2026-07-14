@@ -169,7 +169,11 @@ _PALETTE_LINE = (
     "      latex example: \"f'(x) = \\\\lim_{h \\\\to 0} \\\\frac{f(x+h)-f(x)}{h}\" (escape backslashes for JSON)\n"
     "- CodeScene:    { title: str, code: \"line1\\nline2\", lang: \"python|c|bash|tsx\", codeTitle?: str, caption?: str }\n"
     "- PlotScene:    { title: str, expr: \"python expr in x, e.g. 0.18*x**2 or sin(x)\",\n"
-    "                  xRange: [min,max], yRange: [min,max], sweep?: bool, area?: bool, xLabel?: str, yLabel?: str, caption?: str }\n"
+    "                  xRange: [min,max], yRange?: [min,max] (omit to auto-fit the data), sweep?: bool, area?: bool, xLabel?: str, yLabel?: str, caption?: str }\n"
+    "      SEVERAL curves on the same axes (supply & demand, compared functions) — use INSTEAD of expr:\n"
+    "                  curves: [ {expr: str, label: str, dash?: bool, color?: \"#hex\"}, ...(2-3) ]  — every curve needs a short label (legend is automatic)\n"
+    "                  markers?: [ {x: number, y: number, label?: str} ]  — named points (equilibrium, intersection, optimum); dashed guides to both axes are automatic.\n"
+    "                  Axes get real numeric tick labels; give economic/physical axis names via xLabel/yLabel (e.g. \"Quantité\", \"Prix\").\n"
     "- DiagramScene: { title: str,\n"
     "                  nodes: [ {id: str, label: str, x: number(-6..6), y: number(-3..3), color?: \"#hex\", icon?: icon_name} ],\n"
     "                  edges: [ {from: id, to: id, color?: \"#hex\", label?: str} ], caption?: str }\n"
@@ -304,6 +308,55 @@ def _clamp_range(value: Any, lo: float, hi: float, fallback: tuple[float, float]
     if b <= a:
         return list(fallback)
     return [round(a, 3), round(b, 3)]
+
+
+def _norm_plot_curves(value: Any, x_range: list[float]) -> list[dict[str, Any]]:
+    """Multi-curve PlotScene: sample each curve's expr (or pass its points),
+    dropping entries with no usable data. At most 3 curves stay readable."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for curve in value[:3]:
+        if not isinstance(curve, dict):
+            continue
+        pts = curve.get("points")
+        expr = str(curve.get("expr") or "").strip()
+        if (not isinstance(pts, list) or not pts) and expr:
+            pts = sample_expr(expr, x_range[0], x_range[1])
+        if not isinstance(pts, list) or not pts:
+            continue
+        entry: dict[str, Any] = {"points": pts}
+        if curve.get("label"):
+            entry["label"] = str(curve["label"])[:40]
+        if curve.get("dash"):
+            entry["dash"] = True
+        if curve.get("color"):
+            entry["color"] = str(curve["color"])[:24]
+        out.append(entry)
+    return out
+
+
+def _norm_plot_markers(value: Any, x_range: list[float]) -> list[dict[str, Any]]:
+    """Named points (equilibrium/intersection). x is clamped into xRange; y is
+    kept as-is (the component auto-fits its y-range around markers too)."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for marker in value[:4]:
+        if not isinstance(marker, dict) or marker.get("x") is None or marker.get("y") is None:
+            continue
+        x = _to_float(marker.get("x"), x_range[0])
+        y = _to_float(marker.get("y"), 0.0)
+        entry: dict[str, Any] = {
+            "x": round(max(x_range[0], min(x_range[1], x)), 4),
+            "y": round(y, 4),
+        }
+        if marker.get("label"):
+            entry["label"] = str(marker["label"])[:24]
+        if marker.get("guides") is False:
+            entry["guides"] = False
+        out.append(entry)
+    return out
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -470,14 +523,15 @@ def _norm_panel(value: Any) -> dict[str, Any] | None:
         return out
     # plot
     x_range = _clamp_range(value.get("xRange"), -50, 50, (-4.0, 4.0))
-    y_range = _clamp_range(value.get("yRange"), -200, 200, (-2.0, 6.0))
     expr = value.get("expr")
     pts = value.get("points")
     if expr:
         pts = sample_expr(str(expr), x_range[0], x_range[1], n=80)
     if not isinstance(pts, list) or not pts:
         return None
-    out = {"kind": "plot", "points": pts, "xRange": x_range, "yRange": y_range}
+    out = {"kind": "plot", "points": pts, "xRange": x_range}
+    if value.get("yRange") is not None:
+        out["yRange"] = _clamp_range(value.get("yRange"), -200, 200, (-2.0, 6.0))
     if value.get("xLabel"):
         out["xLabel"] = str(value["xLabel"])[:24]
     if value.get("yLabel"):
@@ -522,17 +576,33 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
 
     if component == "PlotScene":
         x_range = _clamp_range(props.get("xRange"), -50, 50, (-4.0, 4.0))
-        y_range = _clamp_range(props.get("yRange"), -200, 200, (-2.0, 6.0))
         props["xRange"] = x_range
-        props["yRange"] = y_range
-        if not props.get("points"):
-            expr = str(props.pop("expr", "") or "")
-            if not expr:
-                degrade("PlotScene without expr/points — generic parabola injected")
-                expr = "0.18*x**2"
-            props["points"] = sample_expr(expr, x_range[0], x_range[1])
+        # yRange is optional: when absent the Plot component auto-fits the data,
+        # which is safer than an LLM guess (a wrong range clips the curve).
+        if props.get("yRange") is not None:
+            props["yRange"] = _clamp_range(props.get("yRange"), -200, 200, (-2.0, 6.0))
         else:
+            props.pop("yRange", None)
+        curves = _norm_plot_curves(props.get("curves"), x_range)
+        if curves:
+            props["curves"] = curves
             props.pop("expr", None)
+            props.pop("points", None)
+        else:
+            props.pop("curves", None)
+            if not props.get("points"):
+                expr = str(props.pop("expr", "") or "")
+                if not expr:
+                    degrade("PlotScene without expr/points/curves — generic parabola injected")
+                    expr = "0.18*x**2"
+                props["points"] = sample_expr(expr, x_range[0], x_range[1])
+            else:
+                props.pop("expr", None)
+        markers = _norm_plot_markers(props.get("markers"), x_range)
+        if markers:
+            props["markers"] = markers
+        else:
+            props.pop("markers", None)
     elif component == "BulletScene":
         bullets = _as_str_list(props.get("bullets"))[:5]
         if not bullets:
@@ -1003,8 +1073,15 @@ def validate_scene_payload(scene: dict[str, Any]) -> list[str]:
         if not command or command == "echo hello":
             errors.append("props.command must be a real, topic-specific shell command")
     elif component == "PlotScene":
-        if not props.get("expr") and not props.get("points"):
-            errors.append("PlotScene needs props.expr (python expression in x) or props.points")
+        curves = props.get("curves")
+        if isinstance(curves, (list, tuple)) and curves:
+            for i, curve in enumerate(curves):
+                if not isinstance(curve, dict) or (not curve.get("expr") and not curve.get("points")):
+                    errors.append(f"props.curves[{i}] needs expr (python expression in x) or points")
+                elif not str(curve.get("label") or "").strip():
+                    errors.append(f"props.curves[{i}] needs a short label (shown in the legend)")
+        elif not props.get("expr") and not props.get("points"):
+            errors.append("PlotScene needs props.expr (python expression in x), props.points or props.curves")
     elif component == "ComparisonScene":
         for side in ("left", "right"):
             value = props.get(side)

@@ -148,40 +148,65 @@ export const CodeScene: React.FC<Base & { code: string; lang?: string; codeTitle
   );
 };
 
-/** Axes + a curve from sampled points, with an optional sweeping marker + area. */
+/** Axes + one or several curves, with optional sweep, area and named markers.
+ * Single-curve mode: `points` (+ sweep/area). Multi-curve mode: `curves`
+ * (supply/demand, compared functions) each revealed on its own cue, then
+ * `markers` (equilibrium/intersection) with dashed guides to the axes. */
 export const PlotScene: React.FC<
   Base & {
-    points: [number, number][];
+    points?: [number, number][];
+    curves?: { points: [number, number][]; label?: string; color?: string; dash?: boolean }[];
+    markers?: { x: number; y: number; label?: string; color?: string; guides?: boolean }[];
     xRange: [number, number];
-    yRange: [number, number];
+    yRange?: [number, number];
     xLabel?: string;
     yLabel?: string;
     sweep?: boolean;
     area?: boolean;
     color?: string;
   }
-> = ({ dur, accent, title, caption, cues, points, xRange, yRange, xLabel, yLabel, sweep = false, area = false, color }) => {
+> = ({ dur, accent, title, caption, cues, points, curves, markers, xRange, yRange, xLabel, yLabel, sweep = false, area = false, color }) => {
   const { p } = useP(dur);
+  const clamp = { extrapolateLeft: "clamp" as const, extrapolateRight: "clamp" as const };
+
+  if (curves && curves.length > 0) {
+    // cues[i] = curve i drawn while spoken; next cue = markers revealed.
+    const starts = curves.map((_, i) => cueOr(cues, i, 0.12 + i * 0.18));
+    const series = curves.map((c, i) => ({
+      points: c.points,
+      label: c.label,
+      color: c.color,
+      dash: c.dash,
+      drawProgress: interpolate(p, [starts[i], starts[i] + 0.28], [0, 1], clamp),
+    }));
+    const lastStart = starts[starts.length - 1];
+    const cMark = Math.max(lastStart + 0.2, cueOr(cues, curves.length, 0.62));
+    const marks = (markers ?? []).map((m, i) => ({
+      ...m,
+      guides: m.guides ?? true,
+      progress: appear(p, cMark + i * 0.06, cMark + i * 0.06 + 0.1),
+    }));
+    return (
+      <Shell dur={dur} accent={accent ?? colors.success} title={title} caption={caption} accentDefault={colors.success}>
+        <div style={{ position: "absolute", left: 0, width: 1920, top: my(1.7), display: "flex", justifyContent: "center" }}>
+          <Plot series={series} markers={marks} xRange={xRange} yRange={yRange} width={1000} height={580} xLabel={xLabel ?? "x"} yLabel={yLabel ?? "y"} />
+        </div>
+      </Shell>
+    );
+  }
+
   // cues[0] = curve drawn while spoken; cues[1] = sweep/area while spoken.
   const c0 = cueOr(cues, 0, 0.12);
   const c1 = Math.max(c0 + 0.1, cueOr(cues, 1, 0.5));
-  const draw = interpolate(p, [c0, c0 + 0.33], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  // build an interpolating fn from points
-  const fn = (x: number) => {
-    if (points.length === 0) return 0;
-    if (x <= points[0][0]) return points[0][1];
-    for (let i = 1; i < points.length; i++) {
-      if (x <= points[i][0]) {
-        const [x0, y0] = points[i - 1];
-        const [x1, y1] = points[i];
-        const t = (x - x0) / (x1 - x0 || 1);
-        return y0 + t * (y1 - y0);
-      }
-    }
-    return points[points.length - 1][1];
-  };
-  const sweepX = sweep ? interpolate(p, [c1, Math.min(0.95, c1 + 0.4)], [xRange[0], xRange[1]], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : null;
-  const areaTo = area ? interpolate(p, [c1, Math.min(0.92, c1 + 0.35)], [xRange[0], xRange[1]], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : null;
+  const draw = interpolate(p, [c0, c0 + 0.33], [0, 1], clamp);
+  const fn = fnFromPoints(points ?? []);
+  const sweepX = sweep ? interpolate(p, [c1, Math.min(0.95, c1 + 0.4)], [xRange[0], xRange[1]], clamp) : null;
+  const areaTo = area ? interpolate(p, [c1, Math.min(0.92, c1 + 0.35)], [xRange[0], xRange[1]], clamp) : null;
+  const marks = (markers ?? []).map((m, i) => ({
+    ...m,
+    guides: m.guides ?? true,
+    progress: appear(p, c1 + i * 0.06, c1 + i * 0.06 + 0.1),
+  }));
   return (
     <Shell dur={dur} accent={accent ?? colors.success} title={title} caption={caption} accentDefault={colors.success}>
       <div style={{ position: "absolute", left: 0, width: 1920, top: my(1.7), display: "flex", justifyContent: "center" }}>
@@ -196,6 +221,7 @@ export const PlotScene: React.FC<
           tangentAt={sweepX}
           pointAt={sweepX}
           areaTo={areaTo}
+          markers={marks}
           xLabel={xLabel ?? "x"}
           yLabel={yLabel ?? "y"}
         />
@@ -635,7 +661,7 @@ export const QuoteScene: React.FC<Base & { quote: string; author?: string }> = (
 // --- SplitFocusScene: two live panels with bounded "kinds" ---------------- //
 type SplitPanel =
   | { kind: "code"; code: string; lang?: string; codeTitle?: string }
-  | { kind: "plot"; points: [number, number][]; xRange: [number, number]; yRange: [number, number]; xLabel?: string; yLabel?: string }
+  | { kind: "plot"; points: [number, number][]; xRange: [number, number]; yRange?: [number, number]; xLabel?: string; yLabel?: string }
   | { kind: "formula"; formulas: string[] }
   | { kind: "bullets"; bullets: string[]; heading?: string }
   | { kind: "terminal"; command: string; output?: string };
