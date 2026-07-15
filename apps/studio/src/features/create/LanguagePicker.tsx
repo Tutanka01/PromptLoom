@@ -1,14 +1,17 @@
 import { Star } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { LANGUAGES } from "./schema";
+import type { LanguageOption } from "../../lib/capabilities";
 
-// Ordered multi-select. Click to append, click again to remove. The first
+// Ordered multi-select over the languages the deployment can actually speak
+// (GET /v1/capabilities). Click to append, click again to remove. The first
 // selected language is the batch primary (it generates the master blueprint).
 export function LanguagePicker({
+  options,
   value,
   onChange,
   max = 8,
 }: {
+  options: LanguageOption[];
   value: string[];
   onChange: (next: string[]) => void;
   max?: number;
@@ -24,7 +27,7 @@ export function LanguagePicker({
   return (
     <div>
       <div className="flex flex-wrap gap-1.5">
-        {LANGUAGES.map((lang) => {
+        {options.map((lang) => {
           const index = value.indexOf(lang.code);
           const selected = index >= 0;
           const primary = index === 0;

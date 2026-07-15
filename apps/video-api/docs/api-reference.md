@@ -29,6 +29,67 @@ Reponse :
 
 HTTP `503` avec `"status":"degraded"` si une dependance ne repond pas.
 
+## `GET /v1/capabilities`
+
+Expose l'etat effectif du deploiement, derive de l'environnement du serveur.
+Un client (le Studio en particulier) devrait construire son formulaire de
+creation a partir de cette reponse au lieu de coder en dur ce que le serveur
+supporte peut-etre. Aucun secret n'est expose : les noms de fournisseurs
+sortent, jamais les cles.
+
+```bash
+curl http://localhost:8080/v1/capabilities -H 'X-API-Key: <cle>'
+```
+
+Reponse (extrait) :
+
+```json
+{
+  "engine": "moss",
+  "engine_by_profile": {"draft": "kokoro", "standard": "moss", "high": "moss", "final": "moss"},
+  "languages": [{"code": "en", "name": "English"}, {"code": "fr", "name": "French"}],
+  "languages_by_profile": {"draft": ["en", "fr"], "standard": ["zh", "yue", "en", "..."]},
+  "voice_selection_by_profile": {"draft": true, "standard": true, "high": true, "final": true},
+  "render_engines": ["manim", "remotion"],
+  "features": {
+    "research": {"available": true, "provider": "tavily"},
+    "stock_assets": {"available": false, "provider": null},
+    "visual_review": {"available": false, "provider": null}
+  },
+  "limits": {
+    "prompt_max_chars": 4000,
+    "theme_max_chars": 80,
+    "max_batch_languages": 8,
+    "target_duration_seconds": {"min": 20, "max": 900, "default": 240},
+    "research_max_sources": {"min": 3, "max": 20, "default": 10},
+    "visuals_max_assets": {"min": 0, "max": 12, "default": 4}
+  },
+  "defaults": {
+    "production_mode": "technical",
+    "caption_mode": "off",
+    "quality_profile": "standard",
+    "render_engine": "manim"
+  }
+}
+```
+
+- `languages` : toutes les langues que l'API accepte ; `languages_by_profile`
+  restreint cette liste a ce que le moteur TTS effectif de chaque profil sait
+  reellement parler (`chatterbox` = EN seul, `kokoro` = EN + FR, `moss`/`openai`
+  = tout le catalogue).
+- `voice_selection_by_profile` : `false` quand `GET /v1/voices` ne renverra
+  aucune voix selectionnable pour ce profil (`chatterbox`, ou banque MOSS vide).
+- `features.research` / `features.stock_assets` : disponibles seulement si un
+  fournisseur est configure (`VIDEO_API_RESEARCH_PROVIDER`,
+  `VIDEO_API_ASSET_PROVIDER`). Demander `research.required=true` sans
+  fournisseur fait echouer le job — un client devrait griser l'option.
+- `features.visual_review` : `true` si un modele vision est configure
+  (`VIDEO_API_VISION_MODEL`) ; sans lui, le profil `high` est equivalent a
+  `standard`.
+- `limits` : bornes du contrat `POST /v1/videos` (elles ne peuvent pas deriver,
+  ce sont les memes constantes cote serveur) ; `defaults` : valeurs choisies
+  par le serveur quand la requete omet le champ.
+
 ## `GET /v1/voices`
 
 Liste les voix de narration selectionnables pour le(s) moteur(s) TTS deployes.

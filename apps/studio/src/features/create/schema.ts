@@ -3,78 +3,31 @@ import type { SegOption } from "../../components/form";
 import type {
   CaptionMode,
   ProductionMode,
-  QualityProfile,
   VideoCreateRequest,
 } from "../../api/types";
-
-// MOSS-TTS v1.5 supported output languages (see api-reference.md). Primary
-// European set first for quick reach.
-export const LANGUAGES: { code: string; name: string }[] = [
-  { code: "en", name: "Anglais" },
-  { code: "fr", name: "Français" },
-  { code: "es", name: "Espagnol" },
-  { code: "it", name: "Italien" },
-  { code: "pt", name: "Portugais" },
-  { code: "de", name: "Allemand" },
-  { code: "nl", name: "Néerlandais" },
-  { code: "ro", name: "Roumain" },
-  { code: "pl", name: "Polonais" },
-  { code: "cs", name: "Tchèque" },
-  { code: "da", name: "Danois" },
-  { code: "sv", name: "Suédois" },
-  { code: "fi", name: "Finnois" },
-  { code: "el", name: "Grec" },
-  { code: "hu", name: "Hongrois" },
-  { code: "mk", name: "Macédonien" },
-  { code: "ru", name: "Russe" },
-  { code: "tr", name: "Turc" },
-  { code: "zh", name: "Chinois" },
-  { code: "yue", name: "Cantonais" },
-  { code: "ar", name: "Arabe" },
-  { code: "he", name: "Hébreu" },
-  { code: "hi", name: "Hindi" },
-  { code: "ja", name: "Japonais" },
-  { code: "ko", name: "Coréen" },
-  { code: "ms", name: "Malais" },
-  { code: "fa", name: "Persan" },
-  { code: "sw", name: "Swahili" },
-  { code: "tl", name: "Tagalog" },
-  { code: "th", name: "Thaï" },
-  { code: "vi", name: "Vietnamien" },
-];
+import type { EffectiveCaps } from "../../lib/capabilities";
 
 export const THEME_SUGGESTIONS = ["math", "cs", "physics", "biology", "chemistry", "engineering"];
 
-export const QUALITY_OPTIONS: SegOption<QualityProfile>[] = [
-  { value: "draft", label: "Brouillon", hint: "Itération rapide, demi-résolution, voix Kokoro." },
-  { value: "standard", label: "Standard", hint: "Profil de production complet." },
-  { value: "high", label: "Élevé", hint: "Standard + revue visuelle forcée." },
-];
-
 export const MODE_OPTIONS: SegOption<ProductionMode>[] = [
-  { value: "technical", label: "Technique", hint: "Pipeline historique." },
-  { value: "editorial", label: "Éditorial", hint: "Recherche + anti-diaporama, Remotion." },
-  { value: "cinematic", label: "Cinématique", hint: "Remotion 60 fps, recherche par défaut." },
-];
-
-export const ENGINE_OPTIONS: SegOption<"auto" | "manim" | "remotion">[] = [
-  { value: "auto", label: "Auto", hint: "Laisser le mode décider." },
-  { value: "manim", label: "Manim", hint: "Rendu Python/Manim." },
-  { value: "remotion", label: "Remotion", hint: "Rendu React/Remotion." },
+  { value: "technical", label: "Technique", hint: "Explication sobre, diagrammes d'abord." },
+  { value: "editorial", label: "Éditorial", hint: "Narration documentée, visuels variés." },
+  { value: "cinematic", label: "Cinématique", hint: "Montage animé, rendu Remotion." },
 ];
 
 export const STRATEGY_OPTIONS: SegOption<"diagrams" | "hybrid" | "motion_first">[] = [
-  { value: "diagrams", label: "Diagrammes" },
-  { value: "hybrid", label: "Hybride" },
-  { value: "motion_first", label: "Motion" },
+  { value: "diagrams", label: "Diagrammes", hint: "Schémas générés uniquement." },
+  { value: "hybrid", label: "Hybride", hint: "Diagrammes + médias quand pertinent." },
+  { value: "motion_first", label: "Motion", hint: "Priorité au mouvement et aux séquences." },
 ];
 
 export const CAPTION_OPTIONS: SegOption<CaptionMode>[] = [
-  { value: "off", label: "Aucun" },
-  { value: "keywords", label: "Mots-clés" },
-  { value: "full", label: "Complet" },
+  { value: "off", label: "Aucun", hint: "Vidéo propre, sans piste de sous-titres." },
+  { value: "full", label: "Incrustés", hint: "Sous-titres continus + fichier .srt/.vtt." },
 ];
 
+// The zod bounds are the API's absolute contract; the UI narrows them further
+// from /v1/capabilities (sliders, selects) so values can't drift out of range.
 export const formSchema = z
   .object({
     prompt: z
@@ -91,7 +44,6 @@ export const formSchema = z
     production_mode: z.enum(["technical", "editorial", "cinematic"]),
     render_engine: z.enum(["auto", "manim", "remotion"]),
     research_enabled: z.boolean(),
-    research_required: z.boolean(),
     research_max_sources: z.number().int().min(3).max(20),
     visuals_strategy: z.enum(["diagrams", "hybrid", "motion_first"]),
     visuals_allow_stock: z.boolean(),
@@ -118,30 +70,40 @@ export const formSchema = z
 
 export type FormValues = z.infer<typeof formSchema>;
 
-export const defaultValues: FormValues = {
-  prompt: "",
-  theme: "",
-  multilang: false,
-  language: "en",
-  languages: ["fr", "en"],
-  target_duration_seconds: 240,
-  quality_profile: "standard",
-  production_mode: "technical",
-  render_engine: "auto",
-  research_enabled: false,
-  research_required: true,
-  research_max_sources: 10,
-  visuals_strategy: "diagrams",
-  visuals_allow_stock: false,
-  visuals_max_assets: 4,
-  captions: "off",
-  voice: "auto",
-  callback_url: "",
-};
+/** Initial values derived from the deployment's effective state. */
+export function makeDefaults(caps: EffectiveCaps): FormValues {
+  const profile = caps.defaults.qualityProfile === "draft" ? "draft" : "standard";
+  const allowed = caps.languagesByProfile[profile] ?? caps.languages.map((l) => l.code);
+  const language = ["fr", "en"].find((code) => allowed.includes(code)) ?? allowed[0] ?? "en";
+  const secondary = language === "fr" ? "en" : "fr";
+  return {
+    prompt: "",
+    theme: "",
+    multilang: false,
+    language,
+    languages: allowed.includes(secondary) ? [language, secondary] : [language],
+    target_duration_seconds: caps.limits.duration.default,
+    quality_profile: profile,
+    production_mode: caps.defaults.productionMode,
+    render_engine: "auto",
+    research_enabled: false,
+    research_max_sources: caps.limits.researchMaxSources.default,
+    visuals_strategy: "diagrams",
+    visuals_allow_stock: false,
+    visuals_max_assets: caps.limits.visualsMaxAssets.default,
+    captions: caps.defaults.captionMode === "full" ? "full" : "off",
+    voice: "auto",
+    callback_url: "",
+  };
+}
 
-// Translate the flat form into the API request, dropping defaults the server
-// resolves on its own so the payload stays clean.
-export function toRequest(v: FormValues): VideoCreateRequest {
+// Translate the flat form into the API request. Features the deployment does
+// not provide are forced off (a request must never ask for what the server
+// said it cannot do), and `required` follows `enabled`: an explicitly
+// requested research that lost its provider must fail loudly, never silently.
+export function toRequest(v: FormValues, caps: EffectiveCaps): VideoCreateRequest {
+  const researchOn = caps.research.available && v.research_enabled;
+  const allowStock = caps.stockAssets.available && v.visuals_allow_stock;
   const body: VideoCreateRequest = {
     prompt: v.prompt.trim(),
     target_duration_seconds: v.target_duration_seconds,
@@ -149,13 +111,13 @@ export function toRequest(v: FormValues): VideoCreateRequest {
     production_mode: v.production_mode,
     captions: v.captions,
     research: {
-      enabled: v.research_enabled,
-      required: v.research_required,
+      enabled: researchOn,
+      required: researchOn,
       max_sources: v.research_max_sources,
     },
     visuals: {
       strategy: v.visuals_strategy,
-      allow_stock: v.visuals_allow_stock,
+      allow_stock: allowStock,
       max_assets: v.visuals_max_assets,
     },
   };

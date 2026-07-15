@@ -86,6 +86,47 @@ export interface VoicesResponse {
   voices: VoiceInfo[];
 }
 
+// Mirror of CapabilitiesResponse (GET /v1/capabilities): the effective
+// deployment state the create form is built from.
+export interface CapabilityFeature {
+  available: boolean;
+  provider: string | null;
+}
+
+export interface CapabilityRange {
+  min: number;
+  max: number;
+  default: number;
+}
+
+export interface CapabilitiesResponse {
+  engine: VoiceEngine;
+  engine_by_profile: Record<string, VoiceEngine>;
+  languages: { code: string; name: string }[];
+  languages_by_profile: Record<string, string[]>;
+  voice_selection_by_profile: Record<string, boolean>;
+  render_engines: RenderEngine[];
+  features: {
+    research: CapabilityFeature;
+    stock_assets: CapabilityFeature;
+    visual_review: CapabilityFeature;
+  };
+  limits: {
+    prompt_max_chars: number;
+    theme_max_chars: number;
+    max_batch_languages: number;
+    target_duration_seconds: CapabilityRange;
+    research_max_sources: CapabilityRange;
+    visuals_max_assets: CapabilityRange;
+  };
+  defaults: {
+    production_mode: ProductionMode;
+    caption_mode: CaptionMode;
+    quality_profile: QualityProfile;
+    render_engine: RenderEngine;
+  };
+}
+
 export interface BatchJobRef {
   job_id: string;
   language: string;

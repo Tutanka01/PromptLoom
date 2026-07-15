@@ -63,3 +63,12 @@ src/
   l'élément signature ; garde-la fidèle au pipeline réel.
 - **Formulaire** : `react-hook-form` + `zod`, schéma aligné sur le contrat
   Pydantic ; les règles inter-champs reflètent `ProductionOptions.resolve_defaults`.
+- **Piloté par l'état du serveur** : au chargement, le formulaire lit
+  `GET /v1/capabilities` (`lib/capabilities.ts`) et se construit à partir de
+  l'état effectif du déploiement — langues limitées à ce que le moteur TTS du
+  profil sait parler, recherche/médias stock grisés sans fournisseur configuré,
+  profil « Élevé » désactivé sans modèle vision, bornes et défauts (durée,
+  batch) issus du serveur. L'essentiel (sujet, langue, voix, durée, qualité)
+  est visible ; le reste vit dans « Avancé », réglé automatiquement, avec un
+  récapitulatif de ce qui sera réellement produit au-dessus du bouton de
+  lancement. Une API sans cet endpoint retombe sur un contrat intégré permissif.

@@ -16,9 +16,11 @@ from video_api.config import get_settings
 from video_api.db import SessionLocal, gc_job_workspaces, get_session, init_db, reap_stale_jobs
 from video_api.logging_setup import configure_logging
 from video_api.models import VideoJob
+from video_api.capabilities import capabilities_payload
 from video_api.schemas import (
     BatchJobRef,
     BatchStatusResponse,
+    CapabilitiesResponse,
     VideoCreateRequest,
     VideoCreateResponse,
     VideoStatusResponse,
@@ -114,6 +116,20 @@ def healthz() -> JSONResponse:
         status_code=200 if healthy else 503,
         content={"status": "ok" if healthy else "degraded", "checks": checks},
     )
+
+
+@app.get(
+    "/v1/capabilities",
+    response_model=CapabilitiesResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def get_capabilities() -> CapabilitiesResponse:
+    """Effective deployment state: which languages the configured TTS engine
+    can speak per quality profile, which optional features (research, stock
+    media, visual review) are actually configured, plus request limits and
+    defaults. Clients should drive their forms from this instead of hardcoding
+    what the server may or may not support."""
+    return CapabilitiesResponse(**capabilities_payload(settings))
 
 
 @app.get(

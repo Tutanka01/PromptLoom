@@ -68,6 +68,20 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # of it, so each one is a full render — keep the cap sane.
 MAX_BATCH_LANGUAGES = 8
 
+# Bounds of the create request, shared with GET /v1/capabilities so the
+# advertised limits can never drift from the enforced ones.
+PROMPT_MIN_CHARS = 10
+PROMPT_MAX_CHARS = 4000
+THEME_MAX_CHARS = 80
+DURATION_MIN_SECONDS = 20
+DURATION_MAX_SECONDS = 900
+RESEARCH_SOURCES_MIN = 3
+RESEARCH_SOURCES_MAX = 20
+RESEARCH_SOURCES_DEFAULT = 10
+VISUAL_ASSETS_MIN = 0
+VISUAL_ASSETS_MAX = 12
+VISUAL_ASSETS_DEFAULT = 4
+
 
 ProductionMode = Literal["technical", "editorial", "cinematic"]
 # Subtitle delivery, opt-in per request (Remotion engine):
@@ -90,13 +104,15 @@ class ResearchOptions(BaseModel):
 
     enabled: bool | None = None
     required: bool = True
-    max_sources: int = Field(default=10, ge=3, le=20)
+    max_sources: int = Field(
+        default=RESEARCH_SOURCES_DEFAULT, ge=RESEARCH_SOURCES_MIN, le=RESEARCH_SOURCES_MAX
+    )
 
 
 class VisualOptions(BaseModel):
     strategy: AssetStrategy = "diagrams"
     allow_stock: bool | None = None
-    max_assets: int = Field(default=4, ge=0, le=12)
+    max_assets: int = Field(default=VISUAL_ASSETS_DEFAULT, ge=VISUAL_ASSETS_MIN, le=VISUAL_ASSETS_MAX)
 
 
 class ProductionOptions(BaseModel):
@@ -140,8 +156,8 @@ class ProductionOptions(BaseModel):
 
 
 class VideoCreateRequest(BaseModel):
-    prompt: str = Field(min_length=10, max_length=4000)
-    theme: str | None = Field(default=None, max_length=80)
+    prompt: str = Field(min_length=PROMPT_MIN_CHARS, max_length=PROMPT_MAX_CHARS)
+    theme: str | None = Field(default=None, max_length=THEME_MAX_CHARS)
     language: str = Field(default="en", min_length=2, max_length=12)
     # Optional multi-language batch. When set with more than one language, the
     # request produces one video per language: identical content and structure,
@@ -149,7 +165,9 @@ class VideoCreateRequest(BaseModel):
     # the primary language (it generates the master blueprint); the rest translate
     # it. When omitted, `language` drives a single video as before.
     languages: list[str] | None = Field(default=None, max_length=MAX_BATCH_LANGUAGES)
-    target_duration_seconds: int | None = Field(default=None, ge=20, le=900)
+    target_duration_seconds: int | None = Field(
+        default=None, ge=DURATION_MIN_SECONDS, le=DURATION_MAX_SECONDS
+    )
     # draft    = fast iteration: Kokoro voice, half-res render, no visual review.
     # standard = production defaults (Chatterbox, full-res final render).
     # high     = standard + visual review forced on (needs VIDEO_API_VISION_MODEL).
@@ -282,6 +300,70 @@ class VoicesResponse(BaseModel):
     # Effective family per quality profile (the draft profile forces kokoro).
     engine_by_profile: dict[str, str]
     voices: list[VoiceInfo]
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/capabilities — effective deployment state (see capabilities.py).
+# ---------------------------------------------------------------------------
+
+
+class LanguageInfo(BaseModel):
+    code: str
+    name: str
+
+
+class CapabilityFeature(BaseModel):
+    """A server-side feature callers can request but never configure: it is
+    available (a provider/model is configured in the environment) or not."""
+
+    available: bool
+    provider: str | None = None
+
+
+class CapabilityFeatures(BaseModel):
+    research: CapabilityFeature
+    stock_assets: CapabilityFeature
+    visual_review: CapabilityFeature
+
+
+class CapabilityRange(BaseModel):
+    min: int
+    max: int
+    default: int
+
+
+class CapabilityLimits(BaseModel):
+    prompt_max_chars: int
+    theme_max_chars: int
+    max_batch_languages: int
+    target_duration_seconds: CapabilityRange
+    research_max_sources: CapabilityRange
+    visuals_max_assets: CapabilityRange
+
+
+class CapabilityDefaults(BaseModel):
+    production_mode: str
+    caption_mode: str
+    quality_profile: str
+    render_engine: str
+
+
+class CapabilitiesResponse(BaseModel):
+    # TTS engine family under the standard profile, and per profile (draft
+    # forces kokoro) — mirrors GET /v1/voices.
+    engine: str
+    engine_by_profile: dict[str, str]
+    # Every language the API accepts, then the subset each profile's effective
+    # TTS engine can actually speak.
+    languages: list[LanguageInfo]
+    languages_by_profile: dict[str, list[str]]
+    # Whether GET /v1/voices returns at least one selectable voice per profile
+    # (chatterbox exposes none; an empty MOSS voice bank exposes none).
+    voice_selection_by_profile: dict[str, bool]
+    render_engines: list[str]
+    features: CapabilityFeatures
+    limits: CapabilityLimits
+    defaults: CapabilityDefaults
 
 
 class BeatSpec(BaseModel):

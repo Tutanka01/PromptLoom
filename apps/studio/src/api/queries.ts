@@ -11,6 +11,7 @@ import {
 import { api } from "./client";
 import type {
   BatchStatusResponse,
+  CapabilitiesResponse,
   HealthResponse,
   VideoCreateRequest,
   VideoCreateResponse,
@@ -74,6 +75,18 @@ export function useVoices(): UseQueryResult<VoicesResponse> {
   return useQuery({
     queryKey: ["voices"],
     queryFn: () => api.getVoices(),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+// Deployment-defined and cheap: cache it hard and swallow errors — an older
+// API without /v1/capabilities falls back to the permissive built-in defaults
+// (see lib/capabilities.ts).
+export function useCapabilities(): UseQueryResult<CapabilitiesResponse> {
+  return useQuery({
+    queryKey: ["capabilities"],
+    queryFn: () => api.getCapabilities(),
     staleTime: 5 * 60 * 1000,
     retry: false,
   });

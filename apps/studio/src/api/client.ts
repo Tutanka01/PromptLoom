@@ -4,6 +4,7 @@
 import { getSettings } from "../lib/settings";
 import type {
   BatchStatusResponse,
+  CapabilitiesResponse,
   HealthResponse,
   VideoCreateRequest,
   VideoCreateResponse,
@@ -92,6 +93,10 @@ export const api = {
 
   getVoices(): Promise<VoicesResponse> {
     return request("/v1/voices");
+  },
+
+  getCapabilities(): Promise<CapabilitiesResponse> {
+    return request("/v1/capabilities");
   },
 
   // Native <video>/<a> can't carry the X-API-Key header, so pull bytes with the
