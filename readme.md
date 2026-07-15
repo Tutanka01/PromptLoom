@@ -8,9 +8,11 @@
 
 PromptLoom transforme un prompt en vidéo éducative complète : recherche,
 scénario, narration multilingue, scènes animées, voix, rendu, assemblage et
-contrôles qualité. Le tout est exposé par une API asynchrone et reproductible.
+contrôles qualité. Le tout est exposé par une API asynchrone et reproductible,
+et pilotable depuis une interface web — **Studio** — livrée avec la plateforme.
 
 [Commencer ici](docs/START_HERE.md) · [Créer sa première vidéo](docs/FIRST_VIDEO.md) ·
+[Studio](apps/studio/README.md) ·
 [Référence API](apps/video-api/docs/api-reference.md) ·
 [Architecture](apps/video-api/docs/architecture.md)
 
@@ -46,7 +48,8 @@ job lorsque la génération ou le rendu échoue.
 | Ton objectif | Parcours recommandé |
 | --- | --- |
 | Découvrir le résultat | Regarde les [deux exemples](#exemples-générés-avec-promptloom), puis lis [Comment ça marche](docs/START_HERE.md#le-modèle-mental-en-90-secondes). |
-| Générer une première vidéo | Suis le tutoriel [Première vidéo](docs/FIRST_VIDEO.md). |
+| Générer une première vidéo | Suis le tutoriel [Première vidéo](docs/FIRST_VIDEO.md), qui passe par le Studio. |
+| Piloter la plateforme sans écrire de requête | Ouvre le [Studio](apps/studio/README.md) sur `http://localhost:3000`. |
 | Intégrer l'API | Lis la [référence HTTP](apps/video-api/docs/api-reference.md) et le [contrat LLM](apps/video-api/docs/llm-contract.md). |
 | Contribuer au code | Commence par le [guide développeur](apps/video-api/docs/developer-guide.md). |
 | Déployer ou diagnostiquer | Utilise le [guide d'exploitation](apps/video-api/docs/operations.md). |
@@ -60,7 +63,8 @@ job lorsque la génération ou le rendu échoue.
 - un endpoint LLM compatible OpenAI pour une vraie génération;
 - suffisamment d'espace disque pour l'image worker, qui inclut les moteurs de
   rendu et les dépendances audio;
-- `curl` et Python 3 pour les commandes de ce guide.
+- un navigateur pour le Studio; `curl` et Python 3 seulement si tu préfères
+  passer par l'API.
 
 Le premier build est volontairement lourd. Les builds suivants réutilisent les
 couches Docker tant que les manifestes de dépendances ne changent pas.
@@ -83,6 +87,16 @@ Sans LLM, `VIDEO_API_FAKE_LLM=1` permet de vérifier le pipeline avec un
 blueprint déterministe. Ce mode évite l'appel LLM, mais la voix et le rendu
 restent de vraies étapes.
 
+Choisis aussi ton moteur vocal — le fichier d'exemple part sur `chatterbox`,
+qui ne parle qu'anglais et reste lent sur CPU :
+
+```text
+VIDEO_API_VOICE_ENGINE=kokoro   # EN/FR, ~5x temps réel sur CPU
+```
+
+Voir [Choisir son moteur vocal](#choisir-son-moteur-vocal) pour les autres
+langues.
+
 ### 3. Vérifier et lancer
 
 ```bash
@@ -101,8 +115,14 @@ curl http://localhost:8080/healthz
 
 ### 4. Créer un premier job
 
-Le profil `draft` et une cible de 60 secondes réduisent le temps de cette
-première boucle :
+Ouvre le **Studio** sur <http://localhost:3000> : il est démarré par `make start`
+au même titre que l'API. Le formulaire se construit à partir des capacités
+réelles du serveur (`GET /v1/capabilities`), affiche la progression étape par
+étape, puis le lecteur, le rapport et les artefacts. Renseigne le sujet,
+choisis `draft` et 60 secondes, et lance.
+
+L'équivalent en API — le profil `draft` et une cible de 60 secondes réduisent le
+temps de cette première boucle :
 
 ```bash
 RESPONSE=$(curl -sS -X POST http://localhost:8080/v1/videos \
@@ -129,7 +149,8 @@ docker compose logs -f worker
 
 ### 5. Télécharger le résultat
 
-Quand `status` vaut `completed` :
+Le Studio propose le MP4, le rapport et les artefacts sur la page du job. En
+ligne de commande, quand `status` vaut `completed` :
 
 ```bash
 curl -L "http://localhost:8080/v1/videos/$JOB_ID/download" -o promptloom-demo.mp4
@@ -138,6 +159,28 @@ curl "http://localhost:8080/v1/videos/$JOB_ID/report"
 
 Le tutoriel [Première vidéo](docs/FIRST_VIDEO.md) explique chaque étape, les
 choix de moteur et les erreurs fréquentes.
+
+## Choisir son moteur vocal
+
+Le moteur TTS est un choix de déploiement (`.env`); la *voix*, elle, se choisit
+par requête (`GET /v1/voices`, champ `voice`, sélecteur dans le Studio). Ce
+choix décide des langues disponibles et du temps d'attente de chaque job.
+
+| `VIDEO_API_VOICE_ENGINE` | Langues | Coût / vitesse | Voix sélectionnable |
+| --- | --- | --- | --- |
+| `chatterbox` *(défaut du `.env.example`)* | Anglais uniquement | Lent sur CPU | Non |
+| `kokoro` | `en`, `fr` | Local, ~5× temps réel sur CPU | 8 voix cataloguées |
+| `moss` | Toutes | Local, lourd — GPU conseillé | Oui, banque de voix |
+| `moss-remote` | Toutes | Déporté sur [`apps/tts-server`](apps/tts-server/README.md) | Oui, banque de voix |
+| `openai` | Selon le serveur | Réseau, rapide, facturé | Voix du serveur |
+
+- Démarrage en EN/FR sans GPU → `kokoro`.
+- Autre langue → `moss`, `moss-remote` ou `openai`; `quality_profile=draft` ne
+  convient pas, car il force Kokoro.
+- Machine GPU séparée → `moss-remote`.
+
+Une erreur TTS fait échouer le job explicitement : aucun fallback de voix
+silencieux.
 
 ## Choisir son mode de production
 
@@ -159,7 +202,7 @@ est extensible, mais un nouveau domaine demande d'adapter les contrats
 ## Architecture
 
 ```text
-client
+studio (nginx) ou client HTTP
   -> FastAPI api
        -> Postgres (jobs et états)
        -> Redis (file Celery)
@@ -173,6 +216,8 @@ client
 
 - `api` répond rapidement et ne rend jamais la vidéo lui-même.
 - `worker` exécute les étapes longues et persiste chaque transition.
+- `studio` sert le front-end et reverse-proxy `/v1` vers `api` : même origine,
+  donc pas de CORS et lecture vidéo directe.
 - `/data/jobs` est un volume Docker partagé; l'API n'écrit pas dans les exemples
   suivis par Git.
 - `tts-server` est optionnel et permet de garder MOSS-TTS chargé sur une machine
@@ -186,6 +231,7 @@ client
 ├── Makefile                     # commandes d'onboarding et de développement
 ├── apps/
 │   ├── video-api/               # produit principal
+│   ├── studio/                  # interface web de pilotage
 │   └── tts-server/              # service GPU optionnel
 ├── docs/                        # parcours, architecture et références
 └── videos/
@@ -218,6 +264,7 @@ base locale.
 - [Commencer ici](docs/START_HERE.md)
 - [Créer sa première vidéo](docs/FIRST_VIDEO.md)
 - [Index de documentation](docs/README.md)
+- [Studio, l'interface web](apps/studio/README.md)
 - [Référence API](apps/video-api/docs/api-reference.md)
 - [Architecture détaillée](apps/video-api/docs/architecture.md)
 - [Guide développeur](apps/video-api/docs/developer-guide.md)

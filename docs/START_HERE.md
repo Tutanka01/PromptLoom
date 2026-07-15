@@ -1,7 +1,9 @@
 # Commencer avec PromptLoom
 
 Cette page donne le modèle mental du projet et oriente vers le bon parcours. Tu
-n'as pas besoin de comprendre Manim, Celery ou le TTS pour créer un premier job.
+n'as pas besoin de comprendre Manim, Celery ou le TTS pour créer un premier job,
+ni d'écrire une seule requête HTTP : le **Studio**, l'interface web, est démarré
+avec la plateforme sur `http://localhost:3000`.
 
 ## Choisis ton parcours
 
@@ -11,6 +13,13 @@ n'as pas besoin de comprendre Manim, Celery ou le TTS pour créer un premier job
    et [espagnol](../videos/examples/espagnol-exemple.mp4).
 2. Reviens lire le modèle mental ci-dessous.
 3. Consulte [Première vidéo](FIRST_VIDEO.md) si tu veux lancer la plateforme.
+
+### Je veux produire des vidéos, pas intégrer une API
+
+1. Suis [Première vidéo](FIRST_VIDEO.md) jusqu'au démarrage de la stack.
+2. Ouvre le [Studio](../apps/studio/README.md) et crée ton job depuis le
+   formulaire.
+3. Reviens au `.env` seulement pour changer de moteur — LLM, voix, rendu.
 
 ### Je veux utiliser l'API
 
@@ -59,6 +68,7 @@ des commandes exécutées et des critères de livraison.
 
 | Composant | Responsabilité | Si le composant est absent |
 | --- | --- | --- |
+| `studio` | Interface web : créer, suivre, regarder, inspecter. | Il faut piloter l'API à la main (curl, script). |
 | `api` | Reçoit les requêtes et expose les résultats. | Aucun client ne peut créer ou consulter de job. |
 | `worker` | Produit réellement les vidéos. | Les jobs restent `queued`. |
 | Redis | Transporte les tâches vers le worker. | La file de jobs ne fonctionne pas. |
@@ -72,7 +82,8 @@ des commandes exécutées et des critères de livraison.
 | Besoin | Configuration conseillée |
 | --- | --- |
 | Vérifier la mécanique sans endpoint LLM | `VIDEO_API_FAKE_LLM=1`, profil `draft`. |
-| Premier essai réel en anglais ou français | LLM réel, `quality_profile=draft`, Kokoro automatique. |
+| Premier essai réel en anglais ou français | LLM réel, `VIDEO_API_VOICE_ENGINE=kokoro`, `quality_profile=draft`. |
+| Une langue autre que EN/FR | `moss`, `moss-remote` ou `openai`; le défaut `chatterbox` ne parle qu'anglais. |
 | Vidéo technique finale | `technical` + `standard`, Manim ou Remotion. |
 | Vidéo narrative avec sources | `editorial`, fournisseur Tavily/Exa configuré. |
 | Motion design avancé | `cinematic`, Remotion, recherche disponible. |
@@ -83,6 +94,8 @@ des commandes exécutées et des critères de livraison.
 
 - Le premier build est lourd : le worker contient rendu, audio, Torch, Node et
   Chrome headless. Ne confonds pas temps de build et temps normal de l'API.
+- Le Studio se construit à partir de `GET /v1/capabilities` : une option absente
+  du formulaire signifie que le serveur ne la permet pas dans son état actuel.
 - `VIDEO_API_FAKE_LLM=1` supprime l'appel LLM, pas la synthèse vocale ni le rendu.
 - Un job vidéo est long par nature. Suis `current_step`, `progress` et les logs
   du worker au lieu d'attendre sur la requête HTTP initiale.

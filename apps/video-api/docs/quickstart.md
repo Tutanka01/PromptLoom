@@ -2,6 +2,10 @@
 
 Ce guide montre comment lancer l'API et creer un job video depuis un terminal.
 
+Si tu ne veux pas ecrire de requete HTTP, la stack demarre aussi le Studio sur
+`http://localhost:3000` : meme perimetre fonctionnel depuis un formulaire. Voir
+[`apps/studio/README.md`](../../studio/README.md).
+
 Pour un parcours plus guidé avec diagnostic, suivi des erreurs et choix de
 moteur, voir aussi [Créer sa première vidéo](../../../docs/FIRST_VIDEO.md).
 
@@ -45,6 +49,7 @@ Services lances :
 - `worker`: worker Celery qui execute les jobs.
 - `redis`: broker de queue.
 - `postgres`: base de metadonnees.
+- `studio`: interface web sur `http://localhost:3000`.
 
 Verifie que l'API repond :
 
@@ -55,7 +60,7 @@ curl http://localhost:8080/healthz
 Reponse attendue :
 
 ```json
-{"status":"ok"}
+{"status":"ok","checks":{"database":"ok","redis":"ok"}}
 ```
 
 ## 3. Creer une video

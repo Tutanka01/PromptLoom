@@ -13,6 +13,8 @@ déplacer le code mature ni dupliquer les fichiers Compose :
 compose.yaml
   -> apps/video-api/compose.yaml
        -> api + worker + redis + postgres
+  -> apps/studio/compose.yaml
+       -> studio (nginx : front-end + proxy /v1 vers api)
 
 apps/tts-server/
   -> accélérateur TTS GPU optionnel
@@ -34,6 +36,13 @@ assemblage, vérification, tests et documentation opérationnelle.
 
 Les nouveaux développements produit doivent aller ici, sauf s'ils constituent
 clairement un service déployable séparément.
+
+### `apps/studio/`
+
+Front-end web (React/Vite/Tailwind) de pilotage de l'API. Il consomme la surface
+publique HTTP et n'a aucun accès privilégié : tout ce qu'il affiche vient de
+`/v1`, et son formulaire se construit depuis `GET /v1/capabilities`. Une règle
+métier ne doit pas vivre ici sans exister d'abord côté API.
 
 ### `apps/tts-server/`
 

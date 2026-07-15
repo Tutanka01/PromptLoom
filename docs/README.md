@@ -8,15 +8,17 @@ des composants optionnels et des références historiques.
 1. [`START_HERE.md`](START_HERE.md) — orientation et modèle mental en 90 secondes.
 2. [`FIRST_VIDEO.md`](FIRST_VIDEO.md) — tutoriel copiable jusqu'au MP4 final.
 3. [`../README.md`](../README.md) — vision, exemples et démarrage condensé.
-4. [`REPOSITORY_STRUCTURE.md`](REPOSITORY_STRUCTURE.md) — frontières entre les
+4. [`../apps/studio/README.md`](../apps/studio/README.md) — Studio, l'interface
+   web de pilotage livrée avec la plateforme.
+5. [`REPOSITORY_STRUCTURE.md`](REPOSITORY_STRUCTURE.md) — frontières entre les
    applications et statut des anciens dossiers Linux.
-5. [`../apps/video-api/docs/quickstart.md`](../apps/video-api/docs/quickstart.md)
-   — créer et suivre un premier job.
-6. [`../apps/video-api/docs/architecture.md`](../apps/video-api/docs/architecture.md)
+6. [`../apps/video-api/docs/quickstart.md`](../apps/video-api/docs/quickstart.md)
+   — créer et suivre un premier job depuis un terminal.
+7. [`../apps/video-api/docs/architecture.md`](../apps/video-api/docs/architecture.md)
    — services et cycle de vie d'un job.
-7. [`../apps/video-api/docs/developer-guide.md`](../apps/video-api/docs/developer-guide.md)
+8. [`../apps/video-api/docs/developer-guide.md`](../apps/video-api/docs/developer-guide.md)
    — travailler sur le produit.
-8. [`../apps/video-api/docs/operations.md`](../apps/video-api/docs/operations.md)
+9. [`../apps/video-api/docs/operations.md`](../apps/video-api/docs/operations.md)
    — configuration, déploiement et diagnostic.
 
 Pour contribuer, lire aussi [`../CONTRIBUTING.md`](../CONTRIBUTING.md).

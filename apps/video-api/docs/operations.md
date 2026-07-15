@@ -3,7 +3,8 @@
 ## Services Docker
 
 La plateforme est lancee depuis le `compose.yaml` de la racine. Celui-ci inclut
-les definitions de services maintenues dans `apps/video-api/compose.yaml`.
+les definitions de services maintenues dans `apps/video-api/compose.yaml` et
+`apps/studio/compose.yaml`.
 
 Services :
 
@@ -11,12 +12,17 @@ Services :
 - `worker`: Celery worker.
 - `redis`: broker.
 - `postgres`: metadonnees.
+- `studio`: front-end web (nginx) sur le port `3000`, modifiable avec
+  `STUDIO_PORT`. Il sert le build statique et reverse-proxy `/v1` + `/healthz`
+  vers `api` (meme origine : pas de CORS, `X-API-Key` transmis tel quel). Il
+  demarre avec le reste de la stack et depend de la sante de `api`. Voir
+  `apps/studio/README.md`.
 - `test`: service profile pour lancer `pytest`.
 
-Les services d'execution (`api`, `worker`, `redis` et `postgres`) utilisent la
-politique Compose `restart: unless-stopped` : Docker les relance apres un echec
-ou le redemarrage du daemon, sauf s'ils ont ete arretes explicitement. Le
-service ponctuel `test` ne redemarre jamais automatiquement.
+Les services d'execution (`api`, `worker`, `redis`, `postgres` et `studio`)
+utilisent la politique Compose `restart: unless-stopped` : Docker les relance
+apres un echec ou le redemarrage du daemon, sauf s'ils ont ete arretes
+explicitement. Le service ponctuel `test` ne redemarre jamais automatiquement.
 
 ## Commandes utiles
 
@@ -135,6 +141,18 @@ Par defaut Docker utilise Chatterbox principal non-turbo. Le champ API `language
 choisit la langue de sortie demandee au LLM et transmise au TTS. Pour les langues
 au-dela de EN/FR, utiliser `VIDEO_API_VOICE_ENGINE=moss` et eviter
 `quality_profile=draft`, car `draft` force Kokoro pour accelerer les iterations.
+
+Le moteur decide des langues reellement disponibles; `GET /v1/capabilities`
+expose la matrice effective (`languages_by_profile`), et le Studio grise ce que
+le deploiement ne permet pas :
+
+| Moteur | Langues parlees | Note d'exploitation |
+| --- | --- | --- |
+| `chatterbox` | `en` | Defaut historique, lent sur CPU, timbre unique. |
+| `kokoro` | `en`, `fr` | ~5x temps reel sur CPU; moteur force par `draft`. |
+| `moss` | Toutes celles acceptees par l'API | Local; prevoir un GPU. |
+| `moss-remote` | Toutes | Modele garde en VRAM sur `apps/tts-server`. |
+| `openai` | Selon le serveur configure | Appel reseau facture, aucune charge locale. |
 
 #### Selection de voix par requete
 
