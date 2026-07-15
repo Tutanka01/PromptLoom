@@ -19,6 +19,7 @@ services:
       # Voice bank (MOSS reference WAVs) — the API lists it (GET /v1/voices).
       VIDEO_API_VOICE_BANK_DIR: ${VIDEO_API_VOICE_BANK_DIR:-/data/voices}
     command: uvicorn video_api.main:app --host 0.0.0.0 --port 8080
+    restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
@@ -105,6 +106,7 @@ services:
     # which fires video_api.gc_job_artifacts every VIDEO_API_GC_INTERVAL_HOURS.
     # The schedule DB lives in /tmp (recreated on restart, which is fine).
     command: celery -A video_api.celery_app worker --beat --schedule=/tmp/celerybeat-schedule --loglevel=INFO --concurrency=${VIDEO_API_WORKER_CONCURRENCY:-1}
+    restart: unless-stopped
     volumes:
       - video_jobs:/data/jobs
       - model_cache:/data/model-cache
@@ -137,6 +139,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -145,6 +148,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: video
       POSTGRES_PASSWORD: video

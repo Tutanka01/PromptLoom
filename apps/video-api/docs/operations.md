@@ -13,6 +13,11 @@ Services :
 - `postgres`: metadonnees.
 - `test`: service profile pour lancer `pytest`.
 
+Les services d'execution (`api`, `worker`, `redis` et `postgres`) utilisent la
+politique Compose `restart: unless-stopped` : Docker les relance apres un echec
+ou le redemarrage du daemon, sauf s'ils ont ete arretes explicitement. Le
+service ponctuel `test` ne redemarre jamais automatiquement.
+
 ## Commandes utiles
 
 Les commandes suivantes sont a lancer depuis la racine du depot.
