@@ -19,9 +19,15 @@ projet.
 
 ## 1. Préparer l'environnement
 
+Copie le modèle de configuration à la racine du dépôt — c'est le seul endroit où
+tu travailleras, il n'y a jamais besoin d'entrer dans `apps/` :
+
 ```bash
 cp apps/video-api/.env.example .env
 ```
+
+Le fichier vit **à la racine**; `apps/video-api/.env.example` n'est que le
+modèle à copier. La stack lit ce `.env` racine pour tous les services.
 
 ### Le LLM
 
@@ -96,8 +102,14 @@ Le diagnostic vérifie Docker, la version de Compose et la résolution du fichie
 make start
 ```
 
-Cette commande démarre l'API, le worker, Redis, Postgres **et le Studio**. Le
-premier build peut être long. Ensuite :
+Une seule commande, depuis la racine : elle démarre l'API, le worker, Redis,
+Postgres **et le Studio**. C'est un raccourci pour :
+
+```bash
+docker compose up --build -d
+```
+
+Le premier build peut être long. Ensuite :
 
 ```bash
 make status
