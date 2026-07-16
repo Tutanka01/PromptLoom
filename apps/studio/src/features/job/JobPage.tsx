@@ -1,5 +1,5 @@
 import { useParams, useSearchParams, Link } from "react-router-dom";
-import { ArrowLeft, Download, Layers, X, AlertTriangle, Ban } from "lucide-react";
+import { ArrowLeft, Download, Layers, X, AlertTriangle, Ban, Wrench } from "lucide-react";
 import { useVideo, useCancelVideo } from "../../api/queries";
 import { api, ApiError } from "../../api/client";
 import { Button, Card, Chip, EmptyState, Spinner } from "../../components/ui";
@@ -85,6 +85,11 @@ export function JobPage() {
                 </Chip>
               </Link>
             )}
+            {typeof job.attempt_number === "number" && job.attempt_number > 0 && (
+              <Chip className="bg-amber-50 text-amber">
+                <Wrench className="size-3" /> Réparation {job.attempt_number}/{Math.max(1, (job.max_attempts ?? 1) - 1)}
+              </Chip>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -143,6 +148,14 @@ export function JobPage() {
             </div>
           </div>
           <StageRailFull status={job.status} />
+          {job.last_repair_reason && (
+            <div className="mt-5 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2.5 text-xs text-amber">
+              <Wrench className="mt-0.5 size-3.5 shrink-0" />
+              <span className="line-clamp-2">
+                <span className="font-medium">Réparation en cours :</span> {job.last_repair_reason}
+              </span>
+            </div>
+          )}
           <p className="mt-6 flex items-center gap-2 text-xs text-muted">
             <span className="size-1.5 animate-rail-pulse rounded-full bg-brand" />
             Mise à jour automatique en direct
@@ -193,6 +206,13 @@ function OverviewTab({ job }: { job: ReturnType<typeof useVideo>["data"] }) {
     { label: "Qualité", value: job.quality_profile ?? "—" },
     { label: "Batch", value: job.batch_id ? shortId(job.batch_id) : "—" },
   ];
+  if (typeof job.attempt_number === "number" && job.attempt_number > 0) {
+    const max = Math.max(1, (job.max_attempts ?? 1) - 1);
+    rows.push({ label: "Tentative", value: `${job.attempt_number}/${max}` });
+    if (job.last_repair_reason) {
+      rows.push({ label: "Dernière raison", value: job.last_repair_reason });
+    }
+  }
   return (
     <Card className="divide-y divide-border">
       {rows.map((r) => (

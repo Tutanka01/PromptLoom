@@ -150,6 +150,30 @@ class VideoPipeline:
                 step,
             )
 
+    def _set_attempt_state(
+        self,
+        session: Session,
+        job: VideoJob,
+        attempt_number: int,
+        max_attempts: int,
+        last_repair_reason: str | None = None,
+    ) -> None:
+        """Persist repair-loop metadata to the DB row so the API (and Studio)
+        can display it. Called at the top of each iteration in
+        ``_run_with_repairs`` and again once the repair reason is known.
+
+        ``attempt_number`` is 0 for the first run and increments on every
+        retry. ``max_attempts`` is the ceiling (``settings.max_repair_attempts
+        + 1``). ``last_repair_reason`` is only set when we know it — passing
+        None here preserves the previous value rather than clearing it.
+        """
+        job.attempt_number = attempt_number
+        job.max_attempts = max_attempts
+        if last_repair_reason is not None:
+            job.last_repair_reason = last_repair_reason
+        session.add(job)
+        session.commit()
+
     def _load_master_blueprint(self, session: Session, job: VideoJob) -> dict | None:
         """For a secondary batch job, load the primary sibling's validated
         blueprint.json (the master to translate). Returns None for ordinary
@@ -322,7 +346,8 @@ class VideoPipeline:
     ) -> None:
         last_error: Exception | None = None
         blueprint_data: dict | None = None
-        for attempt in range(self.settings.max_repair_attempts + 1):
+        max_attempts = self.settings.max_repair_attempts + 1
+        for attempt in range(max_attempts):
             try:
                 logger.info(
                     "job.attempt.start job_id=%s attempt=%d max_attempts=%d",
@@ -330,6 +355,7 @@ class VideoPipeline:
                     attempt,
                     self.settings.max_repair_attempts,
                 )
+                self._set_attempt_state(session, job, attempt, max_attempts)
                 if attempt == 0:
                     master = self._load_master_blueprint(session, job)
                     if master is not None:
@@ -380,6 +406,12 @@ class VideoPipeline:
                         repair_hint = last_error.repair_hint()
                     else:
                         repair_hint = f"{type(last_error).__name__}: {last_error}"
+                    # Surface the reason to the API row so the Studio can show
+                    # "Réparation 1/2 — MotionQualityError: ..." instead of a
+                    # silent second planning pass.
+                    self._set_attempt_state(
+                        session, job, attempt, max_attempts, last_repair_reason=repair_hint
+                    )
                     if blueprint is None:
                         blueprint = self.engine.repair_blueprint(
                             job.prompt,

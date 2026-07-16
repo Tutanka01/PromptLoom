@@ -88,6 +88,9 @@ def _status_response(job: VideoJob) -> VideoStatusResponse:
         quality_profile=job.quality_profile,
         render_engine=production.get("render_engine"),
         production_mode=production.get("mode"),
+        attempt_number=job.attempt_number,
+        max_attempts=job.max_attempts,
+        last_repair_reason=job.last_repair_reason,
     )
 
 
