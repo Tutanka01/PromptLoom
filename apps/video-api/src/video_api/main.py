@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import text
 
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from video_api.schemas import (
     VideoStatusResponse,
     VoicesResponse,
 )
+from video_api.event_bus import channel_for, snapshot_of
 from video_api.storage import ensure_within, job_root
 from video_api.tasks import run_video_job
 from video_api.voices import VoiceSelectionError, resolve_voice, voices_payload
@@ -325,6 +326,134 @@ def get_video(job_id: str, session: Session = Depends(get_session)) -> VideoStat
         job.current_step,
     )
     return _status_response(job)
+
+
+_SSE_HEARTBEAT_SECONDS = 15.0
+_SSE_POLL_TIMEOUT_SECONDS = 1.0
+
+
+def _is_terminal_snapshot(payload: dict) -> bool:
+    status = payload.get("status") or ""
+    return status in ("completed", "cancelled") or status.startswith("failed")
+
+
+@app.get(
+    "/v1/videos/{job_id}/events",
+    dependencies=[Depends(require_api_key)],
+    response_class=StreamingResponse,
+)
+async def video_events(job_id: str) -> StreamingResponse:
+    """Server-Sent Events stream for one job.
+
+    Contract:
+
+    * The first message is an `event: snapshot` carrying the current row
+      state — clients that connect mid-job pick up immediately without an
+      extra GET.
+    * Every subsequent state change (status transition, attempt bump, sub-step
+      tick — see ``event_bus.publish_job_snapshot``) becomes an
+      `event: state`.
+    * When the job reaches a terminal status the server emits a final
+      `event: terminal` and closes.
+    * A `: heartbeat` comment is sent every 15 seconds if nothing else moves,
+      so proxies don't drop the connection and browsers don't reconnect.
+
+    Failures (Redis outage, job vanished mid-stream) close the response with
+    a best-effort `event: error`. Clients that lose the stream fall back to
+    polling ``GET /v1/videos/{id}`` — the DB row is authoritative.
+    """
+    # Cheap existence check so 404 is fast (bad job id doesn't tie up a Redis
+    # subscription). We don't hold the session open for the whole stream.
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="job not found")
+        initial_payload = json.dumps(snapshot_of(job), separators=(",", ":"))
+        initial_terminal = _is_terminal(job.status)
+
+    async def stream():
+        # Deferred import so the module remains importable without redis
+        # installed (tests can then patch and exercise everything else).
+        import asyncio
+        import time as _time
+        import redis.asyncio as aioredis
+
+        yield f"event: snapshot\ndata: {initial_payload}\n\n"
+
+        if initial_terminal:
+            # Nothing more will happen — close cleanly.
+            yield f"event: terminal\ndata: {initial_payload}\n\n"
+            return
+
+        client = aioredis.from_url(settings.redis_url, decode_responses=True)
+        pubsub = client.pubsub()
+        try:
+            await pubsub.subscribe(channel_for(job_id))
+        except Exception as exc:
+            logger.exception("sse.subscribe.failed job_id=%s", job_id)
+            yield f'event: error\ndata: {{"detail": "subscribe failed: {exc.__class__.__name__}"}}\n\n'
+            await client.aclose()
+            return
+
+        last_heartbeat = _time.monotonic()
+        try:
+            while True:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=_SSE_POLL_TIMEOUT_SECONDS,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("sse.get_message.failed job_id=%s", job_id)
+                    break
+
+                if message is not None:
+                    raw = message.get("data")
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", errors="replace")
+                    if raw:
+                        yield f"event: state\ndata: {raw}\n\n"
+                        last_heartbeat = _time.monotonic()
+                        try:
+                            parsed = json.loads(raw)
+                            if _is_terminal_snapshot(parsed):
+                                yield f"event: terminal\ndata: {raw}\n\n"
+                                break
+                        except json.JSONDecodeError:
+                            # Malformed publisher payload — keep the stream
+                            # alive; the DB is the fallback.
+                            logger.warning("sse.bad_payload job_id=%s", job_id)
+                    continue
+
+                now = _time.monotonic()
+                if now - last_heartbeat >= _SSE_HEARTBEAT_SECONDS:
+                    # SSE comment lines start with ':' and are ignored by
+                    # clients; used purely to keep the TCP connection open.
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = now
+        finally:
+            try:
+                await pubsub.unsubscribe(channel_for(job_id))
+                await pubsub.aclose()
+            except Exception:
+                pass
+            try:
+                await client.aclose()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            # Disable proxy buffering (nginx) so events flush immediately.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.delete("/v1/videos/{job_id}", response_model=VideoStatusResponse, dependencies=[Depends(require_api_key)])

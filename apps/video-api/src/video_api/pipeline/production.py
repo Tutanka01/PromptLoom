@@ -20,6 +20,7 @@ from video_api.config import (
     strict_final_verify_for_profile,
 )
 from video_api.db import SessionLocal
+from video_api.event_bus import publish_job_snapshot
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.engine import make_engine
@@ -131,6 +132,10 @@ class VideoPipeline:
         job.error_message = error
         session.add(job)
         session.commit()
+        # Fan-out to SSE subscribers (Studio, curl consumers, external monitors).
+        # Silent on failure — the DB write is authoritative; the event stream
+        # is a strict advisory that clients can also reconstruct from polling.
+        publish_job_snapshot(job)
         self._step_marks.append((step, time.monotonic()))
         if error:
             logger.error(

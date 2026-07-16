@@ -111,6 +111,14 @@ export const api = {
     return `/v1/videos/${jobId}/download`;
   },
 
+  eventsPath(jobId: string): string {
+    // The SSE endpoint. EventSource doesn't let us set Authorization headers,
+    // so the API keeps this route on the same origin behind the same reverse
+    // proxy as the polling routes — auth is derived from cookies or the LAN
+    // trust boundary (require_api_key allows the empty-key case).
+    return `/v1/videos/${jobId}/events`;
+  },
+
   artifactPath(jobId: string, artifact: string): string {
     return `/v1/videos/${jobId}/artifacts/${artifact}`;
   },
