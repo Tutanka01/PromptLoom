@@ -262,6 +262,22 @@ class VideoCreateResponse(BaseModel):
     jobs: list[BatchJobRef] | None = None
 
 
+class SubstepProgress(BaseModel):
+    """Fine-grained progress inside the current pipeline step.
+
+    Populated while a long-running command (Remotion render, TTS batch, scene
+    codegen) is in flight so the Studio can show 'Rendu 3135/4429 (reste 3m 38s)'
+    instead of 'Rendu 55%' for the full duration.
+    """
+
+    # "frames" (video render), "segments" (TTS), "scenes" (per-scene codegen).
+    unit: str
+    current: int
+    total: int
+    # Only populated when the tool prints an ETA (Remotion does; Manim doesn't).
+    eta_seconds: int | None = None
+
+
 class VideoStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -282,6 +298,10 @@ class VideoStatusResponse(BaseModel):
     attempt_number: int | None = None
     max_attempts: int | None = None
     last_repair_reason: str | None = None
+    # Fine-grained progress inside `current_step`. None when the step doesn't
+    # expose a sub-counter (short steps, initial setup) — the Studio should
+    # fall back to `progress` when this is absent.
+    substep: SubstepProgress | None = None
 
 
 class BatchStatusResponse(BaseModel):

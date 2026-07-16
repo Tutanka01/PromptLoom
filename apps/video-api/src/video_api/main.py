@@ -21,6 +21,7 @@ from video_api.schemas import (
     BatchJobRef,
     BatchStatusResponse,
     CapabilitiesResponse,
+    SubstepProgress,
     VideoCreateRequest,
     VideoCreateResponse,
     VideoStatusResponse,
@@ -75,6 +76,17 @@ def _status_response(job: VideoJob) -> VideoStatusResponse:
         production = json.loads(job.production_config or "{}")
     except (TypeError, ValueError):
         production = {}
+    # A substep only surfaces when the pipeline populated the (unit, current,
+    # total) triplet — clearing the columns at a status transition removes it
+    # from the response.
+    substep: SubstepProgress | None = None
+    if job.substep_unit and job.substep_current is not None and job.substep_total is not None:
+        substep = SubstepProgress(
+            unit=job.substep_unit,
+            current=job.substep_current,
+            total=job.substep_total,
+            eta_seconds=job.substep_eta_seconds,
+        )
     return VideoStatusResponse(
         job_id=job.id,
         status=job.status,
@@ -91,6 +103,7 @@ def _status_response(job: VideoJob) -> VideoStatusResponse:
         attempt_number=job.attempt_number,
         max_attempts=job.max_attempts,
         last_repair_reason=job.last_repair_reason,
+        substep=substep,
     )
 
 

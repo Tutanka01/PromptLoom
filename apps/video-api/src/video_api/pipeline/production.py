@@ -27,6 +27,11 @@ from video_api.pipeline.editorial import MotionQualityError, write_editorial_art
 from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
+from video_api.pipeline.substep import (
+    SubstepReporter,
+    TTSSegmentReporter,
+    parse_remotion_frame,
+)
 from video_api.pipeline.voice import voice_command_for_settings
 from video_api.schemas import VisualReviewResult
 from video_api.schemas import ProductionOptions
@@ -129,6 +134,14 @@ class VideoPipeline:
         job.progress = progress
         job.current_step = step
         job.error_message = error
+        # Every status transition clears any lingering sub-step counter: the
+        # UI would otherwise still show 'frames 4429/4429' during
+        # assemble_final. Individual steps that want a sub-counter re-populate
+        # these columns via SubstepReporter / set_substep while they run.
+        job.substep_unit = None
+        job.substep_current = None
+        job.substep_total = None
+        job.substep_eta_seconds = None
         session.add(job)
         session.commit()
         self._step_marks.append((step, time.monotonic()))
@@ -512,7 +525,23 @@ class VideoPipeline:
                     in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
                     else "",
                 )
-                runner.run(voice_args, cwd=video_dir, log_name="voice.log", env=voice_env)
+                voice_on_line = None
+                if self.settings.voice_engine.strip().lower() == "openai":
+                    # The openai voice command prints one "Generating ..." line
+                    # per segment, so we can count them against the blueprint's
+                    # scene count. The other engines (chatterbox, kokoro,
+                    # moss[-remote]) don't emit a comparable line yet — a
+                    # follow-up can add per-engine parsers if desired.
+                    voice_on_line = TTSSegmentReporter(
+                        session, job, total_segments=len(blueprint.scenes)
+                    )
+                runner.run(
+                    voice_args,
+                    cwd=video_dir,
+                    log_name="voice.log",
+                    env=voice_env,
+                    on_line=voice_on_line,
+                )
                 logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
 
                 cued_scenes = 0
@@ -582,11 +611,22 @@ class VideoPipeline:
 
                 self._update(session, job, "render_final", 55, "render_final")
                 final_render_quality = render_quality_for_profile(self.quality_profile)
+                render_on_line = None
+                if self.engine.name == "remotion":
+                    # Remotion's renderMedia prints one "Rendered X/Y" line per
+                    # frame; the counter is exactly what the Studio wants. Manim
+                    # doesn't emit a comparable frame counter (its per-scene
+                    # progress bars don't declare a total upfront), so we skip
+                    # substep reporting for it here.
+                    render_on_line = SubstepReporter(
+                        session, job, unit="frames", parse=parse_remotion_frame
+                    )
                 runner.run(
                     ["./render_en.sh"],
                     cwd=video_dir,
                     log_name="render-final.log",
                     env={"QUALITY": final_render_quality},
+                    on_line=render_on_line,
                 )
                 logger.info(
                     "job.render_final.done job_id=%s quality=%s", job.id, final_render_quality
