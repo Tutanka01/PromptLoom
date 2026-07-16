@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import traceback
 import dataclasses
@@ -20,6 +21,7 @@ from video_api.config import (
     strict_final_verify_for_profile,
 )
 from video_api.db import SessionLocal
+from video_api.event_bus import publish_job_snapshot
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.engine import make_engine
@@ -28,9 +30,11 @@ from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
 from video_api.pipeline.substep import (
+    ManimSceneReporter,
     SubstepReporter,
     TTSSegmentReporter,
     parse_remotion_frame,
+    set_substep,
 )
 from video_api.pipeline.voice import voice_command_for_settings
 from video_api.schemas import VisualReviewResult
@@ -144,6 +148,10 @@ class VideoPipeline:
         job.substep_eta_seconds = None
         session.add(job)
         session.commit()
+        # Fan-out to SSE subscribers (Studio, curl consumers, external monitors).
+        # Silent on failure — the DB write is authoritative; the event stream
+        # is a strict advisory that clients can also reconstruct from polling.
+        publish_job_snapshot(job)
         self._step_marks.append((step, time.monotonic()))
         if error:
             logger.error(
@@ -506,7 +514,22 @@ class VideoPipeline:
                 )
 
                 self._update(session, job, "generating_sources", 26, "scene_codegen")
-                self.engine.generate_scenes(blueprint, video_dir)
+                # Bump the sub-step counter after each scene the engine finishes
+                # coding — the Studio then shows "3/8 scènes générées" while
+                # the LLM works through the blueprint. Thread-safe via a lock
+                # because the manim coder parallelises scenes.
+                _scenes_total = len(blueprint.scenes)
+                _scene_count = [0]
+                _scene_lock = threading.Lock()
+
+                def _on_scene_done(_key: str) -> None:
+                    with _scene_lock:
+                        _scene_count[0] += 1
+                        current = _scene_count[0]
+                    set_substep(session, job, "scenes", current, _scenes_total)
+                    publish_job_snapshot(job)
+
+                self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
 
                 self._update(session, job, "static_validation", 30, "static_validation")
                 self.engine.validate_static(video_dir)
@@ -614,12 +637,17 @@ class VideoPipeline:
                 render_on_line = None
                 if self.engine.name == "remotion":
                     # Remotion's renderMedia prints one "Rendered X/Y" line per
-                    # frame; the counter is exactly what the Studio wants. Manim
-                    # doesn't emit a comparable frame counter (its per-scene
-                    # progress bars don't declare a total upfront), so we skip
-                    # substep reporting for it here.
+                    # frame; the counter is exactly what the Studio wants.
                     render_on_line = SubstepReporter(
                         session, job, unit="frames", parse=parse_remotion_frame
+                    )
+                elif self.engine.name == "manim":
+                    # Manim doesn't declare an overall frame total (its per-
+                    # animation tqdm resets per scene), but it prints
+                    # "Rendered SceneName" once per scene — good enough for
+                    # "Rendu 2/5 scènes" in the Studio.
+                    render_on_line = ManimSceneReporter(
+                        session, job, total_scenes=len(blueprint.scenes)
                     )
                 runner.run(
                     ["./render_en.sh"],

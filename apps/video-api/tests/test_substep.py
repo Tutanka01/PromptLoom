@@ -34,10 +34,37 @@ def test_parse_remotion_frame_returns_none_on_noise() -> None:
 
 
 def test_parse_openai_tts_segment_start() -> None:
+    # Covers every generate_voice_en.py engine label — a single regex handles
+    # kokoro, chatterbox, chatterbox turbo, openai-compatible TTS, MOSS TTS.
     assert substep.parse_openai_tts_segment_start(
         "Generating OpenAI-compatible TTS segment Scene1_HookEN with model qwen-clone"
     )
+    assert substep.parse_openai_tts_segment_start("Generating Kokoro segment Scene1_HookEN")
+    assert substep.parse_openai_tts_segment_start("Generating Chatterbox segment Scene1_HookEN")
+    assert substep.parse_openai_tts_segment_start(
+        "Generating Chatterbox Turbo segment Scene1_HookEN"
+    )
+    assert substep.parse_openai_tts_segment_start(
+        "Generating MOSS TTS segment Scene1_HookEN language=fr"
+    )
     assert not substep.parse_openai_tts_segment_start("ffmpeg version 7.1.5-0+deb13u1")
+
+
+def test_parse_manim_scene_done() -> None:
+    # Matches Manim's per-scene render marker (blueprint scene keys end with a
+    # 2-letter uppercase language code glued to the name).
+    assert (
+        substep.parse_manim_scene_done(
+            "INFO     Rendered Scene1_HookEN                 scene.py:247"
+        )
+        == "Scene1_HookEN"
+    )
+    assert substep.parse_manim_scene_done("Rendered Scene2_CoreIdeaFR") == "Scene2_CoreIdeaFR"
+    # Must NOT false-positive on Remotion's frame counter (same "Rendered X"
+    # prefix but no scene identifier).
+    assert substep.parse_manim_scene_done("Rendered 3135/4429, time remaining: 3m") is None
+    # Lower-case identifier isn't a Manim scene key.
+    assert substep.parse_manim_scene_done("Rendered scene1_lowercase") is None
 
 
 def test_eta_parser_handles_hours_minutes_seconds() -> None:
@@ -148,6 +175,21 @@ def test_tts_segment_reporter_counts_per_line() -> None:
     assert job.substep_unit == "segments"
     assert job.substep_current == 3
     assert job.substep_total == 3
+
+
+def test_manim_scene_reporter_counts_unique_scenes() -> None:
+    job = _FakeJob()
+    session = _fake_session()
+    reporter = substep.ManimSceneReporter(session, job, total_scenes=3)
+    reporter("stdout", "Rendered Scene1_HookEN")
+    reporter("stdout", "Rendered Scene2_CoreIdeaEN")
+    reporter("stdout", "Rendered Scene2_CoreIdeaEN")  # duplicate — Manim retries
+    reporter("stdout", "Rendered Scene3_RecapEN")
+    assert job.substep_unit == "scenes"
+    assert job.substep_current == 3
+    assert job.substep_total == 3
+    # 3 unique scenes → 3 commits (duplicate doesn't count).
+    assert session.commit.call_count == 3
 
 
 def test_clear_substep_resets_all_four_columns() -> None:

@@ -65,17 +65,38 @@ def parse_remotion_frame(line: str) -> SubstepUpdate | None:
     return SubstepUpdate(current=current, total=total, eta_seconds=eta_seconds)
 
 
-# generate_voice_en.py (openai engine) prints one line per segment:
-#   "Generating OpenAI-compatible TTS segment SceneN_KEY with model qwen-clone"
-_OPENAI_TTS_SEGMENT_RE = re.compile(
-    r"Generating OpenAI-compatible TTS segment", re.IGNORECASE
+# generate_voice_en.py prints one "Generating <engine> segment ..." line per
+# segment. The engine label varies (Kokoro, Chatterbox, Chatterbox Turbo,
+# OpenAI-compatible TTS, MOSS TTS) — match the family so one parser covers
+# every voice_engine setting.
+_TTS_SEGMENT_RE = re.compile(
+    r"Generating (?:Kokoro|Chatterbox(?: Turbo)?|OpenAI-compatible TTS|MOSS TTS) segment",
+    re.IGNORECASE,
 )
 
 
 def parse_openai_tts_segment_start(line: str) -> bool:
-    """True when the line announces the start of a new segment. The caller
-    holds the running counter — this parser is stateless."""
-    return bool(_OPENAI_TTS_SEGMENT_RE.search(line))
+    """True when the line announces the start of a new TTS segment. Covers
+    every generate_voice_en.py engine (openai, kokoro, chatterbox[-turbo], moss);
+    the caller holds the running counter — this parser is stateless."""
+    return bool(_TTS_SEGMENT_RE.search(line))
+
+
+# Manim per-scene render marker: `INFO     Rendered Scene1_HookEN` (blueprint
+# scene key). Scene keys look like `Scene<N>_<Name><LANG>` where <LANG> is a
+# two-letter uppercase code (EN/FR/DE/…) glued to the name — no underscore in
+# between. We match that shape so unrelated "Rendered X/Y" lines from Remotion
+# (present in mixed logs) don't false-positive here.
+_MANIM_SCENE_RENDERED_RE = re.compile(
+    r"\bRendered\s+([A-Z][A-Za-z0-9_]*(?:EN|FR|DE|ES|IT|ZH|AR|PT|JA|KO|NL|PL|RU|TR))\b"
+)
+
+
+def parse_manim_scene_done(line: str) -> str | None:
+    """Return the scene key when Manim announces a scene finished rendering,
+    else None. Same "count against a known total" contract as the TTS parser."""
+    match = _MANIM_SCENE_RENDERED_RE.search(line)
+    return match.group(1) if match else None
 
 
 def _parse_eta_to_seconds(value: str) -> int | None:
@@ -166,10 +187,42 @@ class SubstepReporter:
             self._session.rollback()
 
 
+class ManimSceneReporter:
+    """Counts Manim's `Rendered SceneName` markers against the known total.
+    A scene key seen twice (Manim occasionally re-emits on retry) is only
+    counted once."""
+
+    def __init__(
+        self,
+        session: Session,
+        job: VideoJob,
+        total_scenes: int,
+    ) -> None:
+        self._session = session
+        self._job = job
+        self._total = total_scenes
+        self._seen: set[str] = set()
+
+    def __call__(self, _stream: str, line: str) -> None:
+        scene_key = parse_manim_scene_done(line)
+        if scene_key is None or scene_key in self._seen:
+            return
+        self._seen.add(scene_key)
+        self._job.substep_unit = "scenes"
+        self._job.substep_current = len(self._seen)
+        self._job.substep_total = self._total
+        self._session.add(self._job)
+        try:
+            self._session.commit()
+        except Exception:
+            logger.exception("substep.commit.failed job_id=%s", self._job.id)
+            self._session.rollback()
+
+
 class TTSSegmentReporter:
-    """Counting reporter for the OpenAI TTS engine: one bump per 'Generating
-    ...' line. Total is known upfront (the number of scenes in the blueprint).
-    """
+    """Counting reporter for the TTS generate_voice_en.py subprocess. Bumps a
+    counter on every "Generating <engine> segment ..." line — covers Kokoro,
+    Chatterbox (+ Turbo), OpenAI-compatible TTS and MOSS TTS."""
 
     def __init__(
         self,
