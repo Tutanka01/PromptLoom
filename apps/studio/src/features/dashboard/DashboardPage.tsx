@@ -44,24 +44,26 @@ export function DashboardPage() {
     }),
     [jobs],
   );
-  const visible = jobs.filter((j) => matches(j, filter));
+  const visible = useMemo(() => jobs.filter((j) => matches(j, filter)), [jobs, filter]);
   const liveCount = counts.active;
-  const failedJobs = useMemo(
-    () => jobs.filter((j) => isFailed(j.status) || j.status === "cancelled"),
-    [jobs],
-  );
 
   async function handleBulkPurgeFailed() {
-    if (failedJobs.length === 0) return;
+    // Only the jobs the user is *actually looking at* in the current tab —
+    // never anything outside the visible list. The button itself is only
+    // rendered when filter === "failed", so `visible` here is guaranteed
+    // to be failed / cancelled jobs; keeping the source `visible` (rather
+    // than a separate filter) means a future tab or filter change stays
+    // strictly in sync.
+    if (visible.length === 0) return;
     if (
       !window.confirm(
-        `Supprimer définitivement ${failedJobs.length} job(s) échoué(s) ou annulé(s) ?\n\nLes vidéos, artefacts et logs seront effacés.`,
+        `Supprimer définitivement ${visible.length} job(s) affiché(s) ?\n\nLes vidéos, artefacts et logs seront effacés.`,
       )
     )
       return;
     // Fire-and-collect. Fail one → keep going; report the count.
     const results = await Promise.allSettled(
-      failedJobs.map((j) => purge.mutateAsync(j.job_id)),
+      visible.map((j) => purge.mutateAsync(j.job_id)),
     );
     const ok = results.filter((r) => r.status === "fulfilled").length;
     const ko = results.length - ok;
@@ -87,14 +89,14 @@ export function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {filter === "failed" && failedJobs.length > 0 && (
+          {filter === "failed" && visible.length > 0 && (
             <button
               onClick={handleBulkPurgeFailed}
               disabled={purge.isPending}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-danger/30 bg-danger-50 px-2.5 text-[13px] font-medium text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
               title="Supprimer les jobs échoués et annulés visibles"
             >
-              <Trash2 className="size-4" /> Purger les échoués ({failedJobs.length})
+              <Trash2 className="size-4" /> Purger ({visible.length})
             </button>
           )}
           <div className="flex gap-1 rounded-lg border border-border bg-inset p-1">
