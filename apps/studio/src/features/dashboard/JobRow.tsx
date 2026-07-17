@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
-import { Download, FileText, Layers, Play, X, AlertTriangle } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Download, FileText, Layers, Play, X, AlertTriangle, Trash2, RotateCcw } from "lucide-react";
 import type { VideoStatus } from "../../api/types";
 import { StatusPill } from "../../components/StatusPill";
 import { StageRail } from "../../components/StageRail";
@@ -7,16 +7,48 @@ import { Chip } from "../../components/ui";
 import { cn } from "../../lib/cn";
 import { shortId, languageName } from "../../lib/format";
 import { prettyStep, isFailed, isActive } from "../../lib/steps";
-import { useCancelVideo } from "../../api/queries";
+import { useCancelVideo, usePurgeVideo, useRelaunchVideo } from "../../api/queries";
 import { api } from "../../api/client";
 import { useDownload } from "../../lib/useDownload";
+import { useToast } from "../../components/Toast";
+import { ApiError } from "../../api/client";
 
 export function JobRow({ job }: { job: VideoStatus }) {
   const cancel = useCancelVideo();
+  const purge = usePurgeVideo();
+  const relaunch = useRelaunchVideo();
+  const toast = useToast();
+  const navigate = useNavigate();
   const { download, pending: downloading } = useDownload();
   const failed = isFailed(job.status);
   const active = isActive(job.status);
   const batch = Boolean(job.batch_id);
+  // Terminal but not "in the middle of being cancelled" — the delete + relaunch
+  // buttons only surface on jobs that will never move again.
+  const canPurge = !active;
+  const canRelaunch = !active && !batch;
+
+  function handlePurge(event: React.MouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    if (!window.confirm(`Supprimer définitivement le job ${shortId(job.job_id)} ?\n\nLa vidéo, les artefacts et les logs seront effacés.`)) return;
+    purge.mutate(job.job_id, {
+      onSuccess: () => toast.info(`Job ${shortId(job.job_id)} supprimé.`),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Suppression impossible."),
+    });
+  }
+
+  function handleRelaunch(event: React.MouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    relaunch.mutate(job.job_id, {
+      onSuccess: (created) => {
+        toast.info(`Relancé sous ${shortId(created.job_id)}.`);
+        navigate(`/videos/${created.job_id}`);
+      },
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Relance impossible."),
+    });
+  }
 
   return (
     <div className="group relative rounded-[var(--radius-card)] border border-border bg-surface p-4 transition-colors hover:border-border-strong sm:p-5">
@@ -80,11 +112,35 @@ export function JobRow({ job }: { job: VideoStatus }) {
           )}
           {active && (
             <button
-              onClick={() => cancel.mutate(job.job_id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                cancel.mutate(job.job_id);
+              }}
               disabled={cancel.isPending}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[13px] font-medium text-muted transition-colors hover:border-danger hover:bg-danger-50 hover:text-danger disabled:opacity-50"
             >
               <X className="size-4" /> Annuler
+            </button>
+          )}
+          {canRelaunch && (failed || job.status === "cancelled") && (
+            <button
+              onClick={handleRelaunch}
+              disabled={relaunch.isPending}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[13px] font-medium text-muted transition-colors hover:border-brand hover:bg-brand-50 hover:text-brand-700 disabled:opacity-50"
+              title="Relancer avec les mêmes paramètres"
+            >
+              <RotateCcw className="size-4" /> Relancer
+            </button>
+          )}
+          {canPurge && (
+            <button
+              onClick={handlePurge}
+              disabled={purge.isPending}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[13px] font-medium text-muted transition-colors hover:border-danger hover:bg-danger-50 hover:text-danger disabled:opacity-50"
+              title="Supprimer le job (row + workspace)"
+            >
+              <Trash2 className="size-4" /> Supprimer
             </button>
           )}
         </div>

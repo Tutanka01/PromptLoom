@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Film, Plus, KeyRound, RefreshCw } from "lucide-react";
-import { useVideoList } from "../../api/queries";
+import { Film, Plus, KeyRound, RefreshCw, Trash2 } from "lucide-react";
+import { useVideoList, usePurgeVideo } from "../../api/queries";
 import { ApiError } from "../../api/client";
 import type { VideoStatus } from "../../api/types";
 import { isActive, isFailed } from "../../lib/steps";
 import { Button, Card, EmptyState, Spinner } from "../../components/ui";
 import { cn } from "../../lib/cn";
 import { JobRow } from "./JobRow";
+import { useToast } from "../../components/Toast";
 
 type Filter = "all" | "active" | "done" | "failed";
 
@@ -27,6 +28,8 @@ function matches(job: VideoStatus, f: Filter): boolean {
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const toast = useToast();
+  const purge = usePurgeVideo();
   const [filter, setFilter] = useState<Filter>("all");
   const [limit, setLimit] = useState(50);
   const query = useVideoList({ limit });
@@ -43,6 +46,30 @@ export function DashboardPage() {
   );
   const visible = jobs.filter((j) => matches(j, filter));
   const liveCount = counts.active;
+  const failedJobs = useMemo(
+    () => jobs.filter((j) => isFailed(j.status) || j.status === "cancelled"),
+    [jobs],
+  );
+
+  async function handleBulkPurgeFailed() {
+    if (failedJobs.length === 0) return;
+    if (
+      !window.confirm(
+        `Supprimer définitivement ${failedJobs.length} job(s) échoué(s) ou annulé(s) ?\n\nLes vidéos, artefacts et logs seront effacés.`,
+      )
+    )
+      return;
+    // Fire-and-collect. Fail one → keep going; report the count.
+    const results = await Promise.allSettled(
+      failedJobs.map((j) => purge.mutateAsync(j.job_id)),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const ko = results.length - ok;
+    if (ko === 0) toast.info(`${ok} job(s) supprimé(s).`);
+    else if (ok === 0) toast.error(`Aucun job supprimé — ${ko} erreur(s).`);
+    else toast.info(`${ok} supprimé(s), ${ko} en erreur.`);
+    void query.refetch();
+  }
 
   return (
     <div className="animate-fade-up">
@@ -59,20 +86,32 @@ export function DashboardPage() {
             )}
           </p>
         </div>
-        <div className="flex gap-1 rounded-lg border border-border bg-inset p-1">
-          {FILTERS.map((f) => (
+        <div className="flex items-center gap-2">
+          {filter === "failed" && failedJobs.length > 0 && (
             <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors",
-                filter === f.id ? "bg-surface text-ink shadow-sm ring-1 ring-border" : "text-muted hover:text-ink",
-              )}
+              onClick={handleBulkPurgeFailed}
+              disabled={purge.isPending}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-danger/30 bg-danger-50 px-2.5 text-[13px] font-medium text-danger transition-colors hover:bg-danger hover:text-white disabled:opacity-50"
+              title="Supprimer les jobs échoués et annulés visibles"
             >
-              {f.label}
-              <span className="ml-1.5 font-mono text-[11px] text-faint">{counts[f.id]}</span>
+              <Trash2 className="size-4" /> Purger les échoués ({failedJobs.length})
             </button>
-          ))}
+          )}
+          <div className="flex gap-1 rounded-lg border border-border bg-inset p-1">
+            {FILTERS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFilter(f.id)}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors",
+                  filter === f.id ? "bg-surface text-ink shadow-sm ring-1 ring-border" : "text-muted hover:text-ink",
+                )}
+              >
+                {f.label}
+                <span className="ml-1.5 font-mono text-[11px] text-faint">{counts[f.id]}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

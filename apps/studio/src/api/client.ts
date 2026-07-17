@@ -76,7 +76,22 @@ export const api = {
   },
 
   cancelVideo(jobId: string): Promise<VideoStatus> {
+    // DELETE on an active job cancels it; DELETE on a terminal job purges it
+    // (row + workspace). See main.py:delete_or_cancel_video.
     return request(`/v1/videos/${jobId}`, { method: "DELETE" });
+  },
+
+  purgeVideo(jobId: string): Promise<{ job_id: string; status: string } | VideoStatus> {
+    // Force-remove the job, even if it's active — revokes the Celery task
+    // and drops the workspace. Meant for the dashboard's "Supprimer" button
+    // on terminal / stuck jobs.
+    return request(`/v1/videos/${jobId}?purge=true`, { method: "DELETE" });
+  },
+
+  relaunchVideo(jobId: string): Promise<VideoCreateResponse> {
+    // Server clones the original request payload into a fresh job with a new
+    // ID; the original row stays in the history.
+    return request(`/v1/videos/${jobId}/relaunch`, { method: "POST" });
   },
 
   getBatch(batchId: string): Promise<BatchStatusResponse> {

@@ -175,3 +175,30 @@ export function useCancelVideo() {
     },
   });
 }
+
+// Purge (row + workspace). Works for terminal jobs by default; passing
+// `purge=true` on an active job first revokes the Celery task.
+export function usePurgeVideo() {
+  const qc = useQueryClient();
+  return useMutation<{ job_id: string; status: string } | VideoStatus, Error, string>({
+    mutationFn: (jobId) => api.purgeVideo(jobId),
+    onSuccess: (_data, jobId) => {
+      // The job no longer exists — drop it from every cached list and
+      // remove its individual query. Invalidating triggers the dashboard
+      // to refetch immediately.
+      qc.removeQueries({ queryKey: ["video", jobId] });
+      void qc.invalidateQueries({ queryKey: ["videos"] });
+    },
+  });
+}
+
+export function useRelaunchVideo() {
+  const qc = useQueryClient();
+  return useMutation<VideoCreateResponse, Error, string>({
+    mutationFn: (jobId) => api.relaunchVideo(jobId),
+    onSuccess: () => {
+      // A fresh job showed up — let the dashboard notice.
+      void qc.invalidateQueries({ queryKey: ["videos"] });
+    },
+  });
+}

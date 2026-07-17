@@ -488,15 +488,63 @@ async def video_events(job_id: str) -> StreamingResponse:
     )
 
 
-@app.delete("/v1/videos/{job_id}", response_model=VideoStatusResponse, dependencies=[Depends(require_api_key)])
-def cancel_video(job_id: str, session: Session = Depends(get_session)) -> VideoStatusResponse:
-    """Cancel a queued or running job. The worker aborts cooperatively at the
-    next step boundary (a long sub-command still finishes its current step)."""
+@app.delete("/v1/videos/{job_id}", dependencies=[Depends(require_api_key)])
+def delete_or_cancel_video(
+    job_id: str,
+    purge: bool = Query(
+        default=False,
+        description=(
+            "Force full removal (DB row + workspace) even for an active job. "
+            "Ignored when the job is already terminal, since terminal jobs "
+            "are always purged by DELETE."
+        ),
+    ),
+    session: Session = Depends(get_session),
+):
+    """Cancel a running job OR permanently delete a terminal one.
+
+    The choice depends on the job's current status: an active job is cancelled
+    cooperatively (unchanged from the previous behavior), a terminal one
+    (completed / cancelled / failed_*) is fully purged — the DB row is
+    removed AND `artifact_dir` is recursively deleted. Passing `?purge=true`
+    on an active job first revokes the Celery task and then purges — useful
+    for a "clean up my dashboard" bulk action.
+
+    Returns `VideoStatusResponse` on the cancel path so existing clients keep
+    working; returns `{"job_id": ..., "status": "deleted"}` on the purge path
+    since there is no row to reflect afterwards.
+    """
     job = session.get(VideoJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if _is_terminal(job.status):
-        raise HTTPException(status_code=409, detail=f"job is already terminal ({job.status})")
+
+    terminal = _is_terminal(job.status)
+
+    if terminal or purge:
+        # Best-effort Celery revoke if the job was still running.
+        if job.celery_task_id and not terminal:
+            try:
+                from video_api.celery_app import celery_app
+
+                celery_app.control.revoke(job.celery_task_id, terminate=True)
+            except Exception:
+                logger.exception("api.job.purge.revoke_failed job_id=%s", job_id)
+        # Best-effort workspace cleanup — a failed rmtree must not leave a
+        # dangling DB row, so we log and continue.
+        artifact_dir = job.artifact_dir
+        session.delete(job)
+        session.commit()
+        if artifact_dir:
+            import shutil
+
+            try:
+                shutil.rmtree(artifact_dir, ignore_errors=True)
+            except Exception:
+                logger.exception("api.job.purge.workspace_failed job_id=%s", job_id)
+        logger.info("api.job.purged job_id=%s was_terminal=%s", job_id, terminal)
+        return {"job_id": job_id, "status": "deleted"}
+
+    # Cancel path — unchanged behavior for active jobs.
     job.status = "cancelled"
     job.error_message = "cancelled by user"
     session.add(job)
@@ -510,6 +558,66 @@ def cancel_video(job_id: str, session: Session = Depends(get_session)) -> VideoS
             logger.exception("api.job.revoke_failed job_id=%s", job_id)
     logger.info("api.job.cancelled job_id=%s", job_id)
     return _status_response(job)
+
+
+@app.post(
+    "/v1/videos/{job_id}/relaunch",
+    response_model=VideoCreateResponse,
+    status_code=202,
+    dependencies=[Depends(require_api_key)],
+)
+def relaunch_video(job_id: str, session: Session = Depends(get_session)) -> VideoCreateResponse:
+    """Enqueue a new job with the same request payload as `job_id`.
+
+    Convenience for the Studio's "Relancer" button on failed jobs: no need to
+    re-open the create form and re-type everything. The new job has its own
+    id and artifact directory; the original row is left untouched so the
+    history is preserved. Batches are not supported (a batch relaunch would
+    need coordination across siblings)."""
+    original = session.get(VideoJob, job_id)
+    if original is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if original.batch_id:
+        raise HTTPException(
+            status_code=422,
+            detail="cannot relaunch a batch job; re-submit the batch create request instead",
+        )
+
+    new_id = str(uuid4())
+    artifact_dir = str(job_root(settings.jobs_root, new_id))
+    logger.info(
+        "api.job.relaunch job_id=%s new_job_id=%s prompt_chars=%d",
+        job_id,
+        new_id,
+        len(original.prompt or ""),
+    )
+    clone = VideoJob(
+        id=new_id,
+        prompt=original.prompt,
+        theme=original.theme,
+        language=original.language,
+        target_duration_seconds=original.target_duration_seconds,
+        quality_profile=original.quality_profile,
+        production_config=original.production_config,
+        callback_url=original.callback_url,
+        status="queued",
+        progress=0,
+        current_step="queued",
+        artifact_dir=artifact_dir,
+    )
+    session.add(clone)
+    session.commit()
+    result = run_video_job.delay(new_id)
+    clone.celery_task_id = result.id
+    session.add(clone)
+    session.commit()
+    return VideoCreateResponse(
+        job_id=new_id,
+        status_url=f"/v1/videos/{new_id}",
+        download_url=None,
+        batch_id=None,
+        jobs=None,
+    )
 
 
 @app.get("/v1/videos/{job_id}/download", dependencies=[Depends(require_api_key)])
