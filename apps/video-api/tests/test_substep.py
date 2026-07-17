@@ -1,11 +1,8 @@
 """Unit tests for the sub-step progress helpers (parsers + reporters)."""
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from unittest.mock import MagicMock
-
-import pytest
 
 from video_api.pipeline import substep
 

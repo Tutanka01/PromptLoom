@@ -21,7 +21,6 @@ from video_api.config import (
     strict_final_verify_for_profile,
 )
 from video_api.db import SessionLocal
-from video_api.event_bus import publish_job_snapshot
 from video_api.models import VideoJob
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.engine import make_engine
@@ -148,10 +147,6 @@ class VideoPipeline:
         job.substep_eta_seconds = None
         session.add(job)
         session.commit()
-        # Fan-out to SSE subscribers (Studio, curl consumers, external monitors).
-        # Silent on failure — the DB write is authoritative; the event stream
-        # is a strict advisory that clients can also reconstruct from polling.
-        publish_job_snapshot(job)
         self._step_marks.append((step, time.monotonic()))
         if error:
             logger.error(
@@ -527,7 +522,6 @@ class VideoPipeline:
                         _scene_count[0] += 1
                         current = _scene_count[0]
                     set_substep(session, job, "scenes", current, _scenes_total)
-                    publish_job_snapshot(job)
 
                 self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
 
@@ -548,16 +542,14 @@ class VideoPipeline:
                     in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
                     else "",
                 )
-                voice_on_line = None
-                if self.settings.voice_engine.strip().lower() == "openai":
-                    # The openai voice command prints one "Generating ..." line
-                    # per segment, so we can count them against the blueprint's
-                    # scene count. The other engines (chatterbox, kokoro,
-                    # moss[-remote]) don't emit a comparable line yet — a
-                    # follow-up can add per-engine parsers if desired.
-                    voice_on_line = TTSSegmentReporter(
-                        session, job, total_segments=len(blueprint.scenes)
-                    )
+                # generate_voice_en.py prints "Generating <engine> segment ..."
+                # for every supported engine (openai / kokoro / chatterbox /
+                # chatterbox turbo / moss / moss-remote). The parser matches
+                # every label, so we install the reporter unconditionally —
+                # a non-matching line is a no-op inside the reporter.
+                voice_on_line = TTSSegmentReporter(
+                    session, job, total_segments=len(blueprint.scenes)
+                )
                 runner.run(
                     voice_args,
                     cwd=video_dir,
