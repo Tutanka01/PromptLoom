@@ -39,6 +39,16 @@ class VideoJob(Base):
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     current_step: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Repair loop visibility. `attempt_number` is 0 for the first run, then
+    # increments each time the pipeline retries after a MotionQualityError /
+    # VisualReviewError / render failure. `max_attempts` is the ceiling (see
+    # settings.max_repair_attempts + 1). `last_repair_reason` is populated on
+    # the second and subsequent attempts with the human-readable message from
+    # the exception that triggered the retry — surfaced to the Studio so a user
+    # who sees a job take a strange path knows why.
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_repair_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     artifact_dir: Mapped[str] = mapped_column(Text, nullable=False)
     final_video_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     report_path: Mapped[str | None] = mapped_column(Text, nullable=True)

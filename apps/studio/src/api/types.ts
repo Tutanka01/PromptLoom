@@ -155,6 +155,14 @@ export interface VideoStatus {
   error_message?: string | null;
   download_url?: string | null;
   report_url?: string | null;
+  // Repair loop visibility. `attempt_number` is 0 for the first run and
+  // increments each time the pipeline retries after MotionQualityError /
+  // VisualReviewError / render failure. `max_attempts` is the ceiling.
+  // `last_repair_reason` carries the exception message that triggered the
+  // current retry (null on the first attempt).
+  attempt_number?: number | null;
+  max_attempts?: number | null;
+  last_repair_reason?: string | null;
 }
 
 export interface VideoListResponse {

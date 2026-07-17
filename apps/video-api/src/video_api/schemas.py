@@ -275,6 +275,13 @@ class VideoStatusResponse(BaseModel):
     error_message: str | None = None
     download_url: str | None = None
     report_url: str | None = None
+    # Repair loop visibility (see VideoJob model). `attempt_number` starts at 0
+    # for the first run and increments on each pipeline retry; the ceiling is
+    # `max_attempts`. `last_repair_reason` carries the exception message that
+    # triggered the current retry (None on the first attempt).
+    attempt_number: int | None = None
+    max_attempts: int | None = None
+    last_repair_reason: str | None = None
 
 
 class BatchStatusResponse(BaseModel):
