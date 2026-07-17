@@ -66,6 +66,22 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=401, detail="invalid or missing API key")
 
 
+def require_api_key_or_query(
+    x_api_key: str | None = Header(default=None),
+    api_key: str | None = Query(default=None),
+) -> None:
+    """Same as ``require_api_key`` but also accepts the key via
+    ``?api_key=<value>`` in the URL. Meant for endpoints consumed by
+    ``EventSource`` — the browser API can't attach a custom header, so a
+    query-string fallback is the standard way to authenticate SSE streams.
+    Both entry points are equivalent; either matching value passes."""
+    if not settings.api_keys:
+        return
+    if x_api_key in settings.api_keys or api_key in settings.api_keys:
+        return
+    raise HTTPException(status_code=401, detail="invalid or missing API key")
+
+
 app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
 
@@ -339,7 +355,7 @@ def _is_terminal_snapshot(payload: dict) -> bool:
 
 @app.get(
     "/v1/videos/{job_id}/events",
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key_or_query)],
     response_class=StreamingResponse,
 )
 async def video_events(job_id: str) -> StreamingResponse:

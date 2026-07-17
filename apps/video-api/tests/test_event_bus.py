@@ -34,6 +34,7 @@ class _MinimalJob:
     progress: int
     current_step: str | None
     error_message: str | None
+    report_path: str | None = None
 
 
 def test_snapshot_of_survives_missing_optional_columns() -> None:
@@ -57,8 +58,53 @@ def test_snapshot_of_survives_missing_optional_columns() -> None:
     assert snap["attempt_number"] is None
     assert snap["max_attempts"] is None
     assert snap["last_repair_reason"] is None
+    # Neither URL surfaces for a mid-job row — the SSE consumer must not
+    # render a "Télécharger" button before the render finishes.
+    assert snap["download_url"] is None
+    assert snap["report_url"] is None
     # Payload must be JSON-serialisable — the publisher relies on it.
     json.dumps(snap)
+
+
+def test_snapshot_of_populates_download_url_on_completed_job() -> None:
+    """A completed job carries the same download and report URLs that
+    ``VideoStatusResponse`` computes; the Studio uses them directly to
+    render the player and the report tab without a follow-up GET."""
+    job = _MinimalJob(
+        id="job-completed",
+        status="completed",
+        language="fr",
+        batch_id=None,
+        quality_profile="standard",
+        production_config="{}",
+        progress=100,
+        current_step="completed",
+        error_message=None,
+        report_path="/data/jobs/job-completed/reports/report.json",
+    )
+    snap = event_bus.snapshot_of(job)  # type: ignore[arg-type]
+    assert snap["download_url"] == "/v1/videos/job-completed/download"
+    assert snap["report_url"] == "/v1/videos/job-completed/report"
+
+
+def test_snapshot_of_report_url_stays_none_without_report_path() -> None:
+    """``report_url`` is derived from the presence of ``report_path`` on the
+    row, not from the status — a failed job that never wrote a report has
+    no report URL."""
+    job = _MinimalJob(
+        id="job-noreport",
+        status="failed_render",
+        language="en",
+        batch_id=None,
+        quality_profile="standard",
+        production_config="{}",
+        progress=55,
+        current_step="render_final",
+        error_message="rendering failed",
+    )
+    snap = event_bus.snapshot_of(job)  # type: ignore[arg-type]
+    assert snap["download_url"] is None  # not "completed"
+    assert snap["report_url"] is None
 
 
 @dataclass

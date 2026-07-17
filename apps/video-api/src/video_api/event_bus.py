@@ -44,12 +44,13 @@ def _publisher() -> "redis.Redis":
 
 
 def snapshot_of(job: VideoJob) -> dict[str, Any]:
-    """Serialise a `VideoJob` row into the same shape as
-    ``VideoStatusResponse``. Kept here (and not in ``main.py``) so the worker
-    doesn't have to import the FastAPI app just to publish an event.
-    Duplication of the field mapping is deliberate: this snapshot only carries
-    the columns present on the row (no computed URLs) — the SSE consumer can
-    reconstruct the rest from the ``job_id``."""
+    """Serialise a ``VideoJob`` row into the same shape as
+    ``VideoStatusResponse``, including the two computed URLs (``download_url``
+    for completed jobs and ``report_url`` when ``report_path`` is set). Kept
+    here (and not in ``main.py``) so the worker doesn't have to import the
+    FastAPI app just to publish an event; matching the polling response byte
+    for byte means the Studio can consume an SSE snapshot in place of a
+    ``GET /v1/videos/{id}`` without a follow-up refetch."""
     try:
         production = json.loads(job.production_config or "{}")
     except (TypeError, ValueError):
@@ -76,6 +77,12 @@ def snapshot_of(job: VideoJob) -> dict[str, Any]:
         "progress": job.progress,
         "current_step": job.current_step,
         "error_message": job.error_message,
+        # Mirror the two links `_status_response` computes so a mid-job
+        # subscriber that receives a `snapshot` event with status="completed"
+        # immediately has the download and report URLs to render the player
+        # and the report tab without an extra GET.
+        "download_url": f"/v1/videos/{job.id}/download" if job.status == "completed" else None,
+        "report_url": f"/v1/videos/{job.id}/report" if getattr(job, "report_path", None) else None,
         "attempt_number": getattr(job, "attempt_number", None),
         "max_attempts": getattr(job, "max_attempts", None),
         "last_repair_reason": getattr(job, "last_repair_reason", None),
