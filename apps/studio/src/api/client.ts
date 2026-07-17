@@ -111,6 +111,17 @@ export const api = {
     return `/v1/videos/${jobId}/download`;
   },
 
+  eventsPath(jobId: string): string {
+    // The SSE endpoint. EventSource can't attach a custom header, so when
+    // an API key is configured we pass it as `?api_key=...` — the endpoint
+    // accepts both `X-API-Key` (regular routes) and `api_key` query for
+    // this reason. When no key is configured (LAN of trust) we ship a
+    // header-less URL and the endpoint's optional auth lets it through.
+    const { apiKey } = getSettings();
+    const base = `/v1/videos/${jobId}/events`;
+    return apiKey ? `${base}?api_key=${encodeURIComponent(apiKey)}` : base;
+  },
+
   artifactPath(jobId: string, artifact: string): string {
     return `/v1/videos/${jobId}/artifacts/${artifact}`;
   },

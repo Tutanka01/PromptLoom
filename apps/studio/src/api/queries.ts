@@ -1,7 +1,11 @@
-// TanStack Query hooks. Live progress is plain polling (the API offers no
-// stream), but the interval is data-driven: it backs off to nothing once a job
-// is terminal, so a finished dashboard stops hitting the network.
+// TanStack Query hooks. Live progress used to be plain polling (the API had no
+// stream); the API now exposes GET /v1/videos/{id}/events (SSE) as well, so
+// `useVideo` opens an EventSource in parallel when the browser supports it and
+// piggybacks its snapshots into the same query cache. Polling stays as a
+// fallback: the query keeps its refetchInterval so a proxy that strips SSE
+// (or an older API) still gets progress via GET.
 
+import { useEffect } from "react";
 import {
   useMutation,
   useQuery,
@@ -19,7 +23,7 @@ import type {
   VideoStatus,
   VoicesResponse,
 } from "./types";
-import { isActive } from "../lib/steps";
+import { isActive, isTerminal } from "../lib/steps";
 
 const ACTIVE_POLL_MS = 2500;
 
@@ -39,13 +43,72 @@ export function useVideoList(
 }
 
 export function useVideo(jobId: string | undefined): UseQueryResult<VideoStatus> {
-  return useQuery({
+  const query = useQuery({
     queryKey: ["video", jobId],
     queryFn: () => api.getVideo(jobId as string),
     enabled: Boolean(jobId),
-    refetchInterval: (query) =>
-      query.state.data && isActive(query.state.data.status) ? ACTIVE_POLL_MS : false,
+    refetchInterval: (q) =>
+      q.state.data && isActive(q.state.data.status) ? ACTIVE_POLL_MS : false,
   });
+  useJobEventStream(jobId, query.data?.status);
+  return query;
+}
+
+
+/**
+ * Open a Server-Sent Events stream to `/v1/videos/{id}/events` and merge every
+ * incoming snapshot into the TanStack query cache. Falls back to plain polling
+ * (already active on `useVideo`) when the browser doesn't ship EventSource, the
+ * endpoint returns 404 (older API), or the connection drops mid-stream.
+ *
+ * The hook returns nothing: it exists purely for its side effect on the shared
+ * cache.
+ */
+function useJobEventStream(jobId: string | undefined, status: string | undefined): void {
+  const client = useQueryClient();
+  useEffect(() => {
+    if (!jobId) return;
+    if (status && isTerminal(status)) return; // no point subscribing to a done job
+    if (typeof window === "undefined" || typeof EventSource === "undefined") return;
+
+    const source = new EventSource(api.eventsPath(jobId), { withCredentials: false });
+    let closed = false;
+
+    const applySnapshot = (raw: string) => {
+      try {
+        const snapshot = JSON.parse(raw) as Partial<VideoStatus>;
+        client.setQueryData<VideoStatus>(["video", jobId], (prev) => ({
+          ...(prev ?? ({ job_id: jobId, status: "queued", progress: 0 } as VideoStatus)),
+          ...snapshot,
+        }));
+      } catch (err) {
+        console.warn("useJobEventStream: bad snapshot", err);
+      }
+    };
+
+    const finish = () => {
+      if (closed) return;
+      closed = true;
+      source.close();
+    };
+
+    source.addEventListener("snapshot", (event) => applySnapshot((event as MessageEvent).data));
+    source.addEventListener("state", (event) => applySnapshot((event as MessageEvent).data));
+    source.addEventListener("terminal", (event) => {
+      applySnapshot((event as MessageEvent).data);
+      finish();
+    });
+    source.onerror = () => {
+      // The browser will attempt to reconnect automatically until we close.
+      // If the endpoint responds 404 (older API) or 401 (auth) the connection
+      // will keep re-erroring; give up quickly and let polling take over.
+      if (source.readyState === EventSource.CLOSED) finish();
+    };
+
+    return () => {
+      finish();
+    };
+  }, [jobId, status, client]);
 }
 
 export function useBatch(batchId: string | undefined): UseQueryResult<BatchStatusResponse> {
