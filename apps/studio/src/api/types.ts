@@ -142,6 +142,15 @@ export interface VideoCreateResponse {
   jobs?: BatchJobRef[] | null;
 }
 
+export interface SubstepProgress {
+  // "frames" (render), "segments" (TTS), "scenes" (per-scene codegen). Kept
+  // loose so an API upgrade that adds a unit doesn't require a Studio release.
+  unit: string;
+  current: number;
+  total: number;
+  eta_seconds?: number | null;
+}
+
 export interface VideoStatus {
   job_id: string;
   status: JobStatus;
@@ -163,6 +172,10 @@ export interface VideoStatus {
   attempt_number?: number | null;
   max_attempts?: number | null;
   last_repair_reason?: string | null;
+  // Fine-grained progress inside `current_step`. Absent when the step
+  // doesn't expose a counter (short steps, initial setup) — fall back to
+  // `progress` in that case.
+  substep?: SubstepProgress | null;
 }
 
 export interface VideoListResponse {

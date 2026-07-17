@@ -6,9 +6,17 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Callable, Literal
 
 
 logger = logging.getLogger(__name__)
+
+# Signature of the optional per-line hook used to report sub-step progress.
+# Called from inside the reader threads for each stdout/stderr line, so the
+# implementation must be fast and thread-safe. Errors are caught and logged;
+# they never crash the command.
+StreamName = Literal["stdout", "stderr"]
+OnLineHook = Callable[[StreamName, str], None]
 
 
 class CommandExecutionError(RuntimeError):
@@ -42,6 +50,7 @@ class CommandRunner:
         cwd: Path,
         log_name: str,
         env: dict[str, str] | None = None,
+        on_line: OnLineHook | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command_env = os.environ.copy()
         if env:
@@ -75,17 +84,28 @@ class CommandRunner:
                 stderr=subprocess.PIPE,
             )
 
-            def _pump(stream, sink: list[str], prefix: str) -> None:
+            def _pump(stream, sink: list[str], prefix: str, stream_name: StreamName) -> None:
                 for line in iter(stream.readline, ""):
                     sink.append(line)
                     with log_lock:
                         log_file.write(prefix + line)
                         log_file.flush()
+                    if on_line is not None:
+                        try:
+                            on_line(stream_name, line)
+                        except Exception:
+                            # A misbehaving hook (parser bug, DB blip) must not
+                            # abort the underlying tool. Log and keep pumping.
+                            logger.exception(
+                                "command.on_line.failed name=%s stream=%s",
+                                log_name,
+                                stream_name,
+                            )
                 stream.close()
 
             readers = [
-                threading.Thread(target=_pump, args=(process.stdout, stdout_lines, ""), daemon=True),
-                threading.Thread(target=_pump, args=(process.stderr, stderr_lines, ""), daemon=True),
+                threading.Thread(target=_pump, args=(process.stdout, stdout_lines, "", "stdout"), daemon=True),
+                threading.Thread(target=_pump, args=(process.stderr, stderr_lines, "", "stderr"), daemon=True),
             ]
             for reader in readers:
                 reader.start()

@@ -142,9 +142,28 @@ export function JobPage() {
             <div>
               <p className="font-mono text-xs tracking-wide text-faint uppercase">en cours</p>
               <p className="mt-1 font-display text-2xl font-medium text-ink">{prettyStep(job.current_step)}</p>
+              {job.substep && job.substep.total > 0 && (
+                <p className="mt-1 font-mono text-sm tabular-nums text-muted">
+                  {job.substep.current.toLocaleString("fr-FR")} / {job.substep.total.toLocaleString("fr-FR")}{" "}
+                  {substepUnitLabel(job.substep.unit)}
+                  {typeof job.substep.eta_seconds === "number" && job.substep.eta_seconds > 0 && (
+                    <> — reste {formatDurationShort(job.substep.eta_seconds)}</>
+                  )}
+                </p>
+              )}
             </div>
             <div className="text-right">
-              <p className="font-display text-4xl font-semibold tabular-nums text-brand">{job.progress}%</p>
+              <p className="font-display text-4xl font-semibold tabular-nums text-brand">
+                {job.substep && job.substep.total > 0
+                  ? Math.floor((job.substep.current / job.substep.total) * 100)
+                  : job.progress}
+                %
+              </p>
+              {job.substep && job.substep.total > 0 && (
+                <p className="mt-0.5 font-mono text-[10px] tracking-wide text-faint uppercase">
+                  étape · {job.progress}% global
+                </p>
+              )}
             </div>
           </div>
           <StageRailFull status={job.status} />
@@ -191,6 +210,29 @@ export function JobPage() {
       )}
     </div>
   );
+}
+
+function substepUnitLabel(unit: string): string {
+  switch (unit) {
+    case "frames":
+      return "frames rendues";
+    case "segments":
+      return "segments audio";
+    case "scenes":
+      return "scènes générées";
+    default:
+      return unit;
+  }
+}
+
+function formatDurationShort(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m < 60) return s > 0 ? `${m}min ${s}s` : `${m}min`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}min` : `${h}h`;
 }
 
 function OverviewTab({ job }: { job: ReturnType<typeof useVideo>["data"] }) {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import traceback
 import dataclasses
@@ -28,6 +29,13 @@ from video_api.pipeline.editorial import MotionQualityError, write_editorial_art
 from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
 from video_api.pipeline.visual_review import VisualReviewer
+from video_api.pipeline.substep import (
+    ManimSceneReporter,
+    SubstepReporter,
+    TTSSegmentReporter,
+    parse_remotion_frame,
+    set_substep,
+)
 from video_api.pipeline.voice import voice_command_for_settings
 from video_api.schemas import VisualReviewResult
 from video_api.schemas import ProductionOptions
@@ -130,6 +138,14 @@ class VideoPipeline:
         job.progress = progress
         job.current_step = step
         job.error_message = error
+        # Every status transition clears any lingering sub-step counter: the
+        # UI would otherwise still show 'frames 4429/4429' during
+        # assemble_final. Individual steps that want a sub-counter re-populate
+        # these columns via SubstepReporter / set_substep while they run.
+        job.substep_unit = None
+        job.substep_current = None
+        job.substep_total = None
+        job.substep_eta_seconds = None
         session.add(job)
         session.commit()
         # Fan-out to SSE subscribers (Studio, curl consumers, external monitors).
@@ -498,7 +514,21 @@ class VideoPipeline:
                 )
 
                 self._update(session, job, "generating_sources", 26, "scene_codegen")
-                self.engine.generate_scenes(blueprint, video_dir)
+                # Bump the sub-step counter after each scene the engine finishes
+                # coding — the Studio then shows "3/8 scènes générées" while
+                # the LLM works through the blueprint. Thread-safe via a lock
+                # because the manim coder parallelises scenes.
+                _scenes_total = len(blueprint.scenes)
+                _scene_count = [0]
+                _scene_lock = threading.Lock()
+
+                def _on_scene_done(_key: str) -> None:
+                    with _scene_lock:
+                        _scene_count[0] += 1
+                        current = _scene_count[0]
+                    set_substep(session, job, "scenes", current, _scenes_total)
+
+                self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
 
                 self._update(session, job, "static_validation", 30, "static_validation")
                 self.engine.validate_static(video_dir)
@@ -517,7 +547,21 @@ class VideoPipeline:
                     in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
                     else "",
                 )
-                runner.run(voice_args, cwd=video_dir, log_name="voice.log", env=voice_env)
+                # generate_voice_en.py prints "Generating <engine> segment ..."
+                # for every supported engine (openai / kokoro / chatterbox /
+                # chatterbox turbo / moss / moss-remote). The parser matches
+                # every label, so we install the reporter unconditionally —
+                # a non-matching line is a no-op inside the reporter.
+                voice_on_line = TTSSegmentReporter(
+                    session, job, total_segments=len(blueprint.scenes)
+                )
+                runner.run(
+                    voice_args,
+                    cwd=video_dir,
+                    log_name="voice.log",
+                    env=voice_env,
+                    on_line=voice_on_line,
+                )
                 logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
 
                 cued_scenes = 0
@@ -587,11 +631,27 @@ class VideoPipeline:
 
                 self._update(session, job, "render_final", 55, "render_final")
                 final_render_quality = render_quality_for_profile(self.quality_profile)
+                render_on_line = None
+                if self.engine.name == "remotion":
+                    # Remotion's renderMedia prints one "Rendered X/Y" line per
+                    # frame; the counter is exactly what the Studio wants.
+                    render_on_line = SubstepReporter(
+                        session, job, unit="frames", parse=parse_remotion_frame
+                    )
+                elif self.engine.name == "manim":
+                    # Manim doesn't declare an overall frame total (its per-
+                    # animation tqdm resets per scene), but it prints
+                    # "Rendered SceneName" once per scene — good enough for
+                    # "Rendu 2/5 scènes" in the Studio.
+                    render_on_line = ManimSceneReporter(
+                        session, job, total_scenes=len(blueprint.scenes)
+                    )
                 runner.run(
                     ["./render_en.sh"],
                     cwd=video_dir,
                     log_name="render-final.log",
                     env={"QUALITY": final_render_quality},
+                    on_line=render_on_line,
                 )
                 logger.info(
                     "job.render_final.done job_id=%s quality=%s", job.id, final_render_quality

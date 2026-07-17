@@ -30,7 +30,14 @@ class _FakeRunner:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
-    def run(self, args: list[str], cwd: Path, log_name: str, env: Any = None) -> CompletedProcess:
+    def run(
+        self,
+        args: list[str],
+        cwd: Path,
+        log_name: str,
+        env: Any = None,
+        on_line: Any = None,
+    ) -> CompletedProcess:
         self.calls.append(args)
         return CompletedProcess(args, 0, stdout="", stderr="")
 

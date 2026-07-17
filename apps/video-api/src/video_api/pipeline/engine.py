@@ -17,7 +17,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from video_api.config import Settings
 from video_api.pipeline.llm import LLMClient
@@ -56,7 +56,12 @@ class Engine(Protocol):
 
     def materialize(self, blueprint: Any, workspace: Path) -> Path: ...
 
-    def generate_scenes(self, blueprint: Any, video_dir: Path) -> None: ...
+    def generate_scenes(
+        self,
+        blueprint: Any,
+        video_dir: Path,
+        on_scene_done: Callable[[str], None] | None = None,
+    ) -> None: ...
 
     def validate_static(self, video_dir: Path) -> None: ...
 
@@ -108,8 +113,13 @@ class ManimEngine:
     def materialize(self, blueprint: Any, workspace: Path) -> Path:
         return self.materializer.materialize(blueprint, workspace)
 
-    def generate_scenes(self, blueprint: Any, video_dir: Path) -> None:
-        scene_codes = self._generate_scene_codes(blueprint, video_dir)
+    def generate_scenes(
+        self,
+        blueprint: Any,
+        video_dir: Path,
+        on_scene_done: Callable[[str], None] | None = None,
+    ) -> None:
+        scene_codes = self._generate_scene_codes(blueprint, video_dir, on_scene_done)
         if scene_codes:
             self.materializer.write_scene_codes(video_dir, blueprint, scene_codes)
 
@@ -118,7 +128,12 @@ class ManimEngine:
 
         validate_static_video_source(video_dir)
 
-    def _generate_scene_codes(self, blueprint: Any, video_dir: Path) -> dict[str, str]:
+    def _generate_scene_codes(
+        self,
+        blueprint: Any,
+        video_dir: Path,
+        on_scene_done: Callable[[str], None] | None = None,
+    ) -> dict[str, str]:
         """LLM Manim code per scene with repair loop + deterministic fallback.
 
         Each candidate is checked for security, syntax, undefined names and —
@@ -169,6 +184,13 @@ class ManimEngine:
                                 self.settings.scene_coder_smoke_timeout_seconds,
                             )
                     logger.info("scene_codegen.success scene=%s attempt=%d", scene.key, attempt)
+                    if on_scene_done is not None:
+                        try:
+                            on_scene_done(scene.key)
+                        except Exception:
+                            # A misbehaving progress callback must not break the
+                            # scene coder. Log once and keep going.
+                            logger.exception("on_scene_done.failed scene=%s", scene.key)
                     return scene.key, code
                 except Exception as exc:
                     prev_error = str(exc)
@@ -179,6 +201,11 @@ class ManimEngine:
                 scene.key,
                 self.settings.scene_coder_attempts,
             )
+            if on_scene_done is not None:
+                try:
+                    on_scene_done(scene.key)  # count the scene even if it fell back
+                except Exception:
+                    logger.exception("on_scene_done.failed scene=%s", scene.key)
             return scene.key, None
 
         with ThreadPoolExecutor(max_workers=self.settings.llm_parallel) as pool:
@@ -276,8 +303,23 @@ class RemotionEngine:
     def materialize(self, blueprint: Any, workspace: Path) -> Path:
         return self.materializer.materialize(blueprint, workspace)
 
-    def generate_scenes(self, blueprint: Any, video_dir: Path) -> None:
+    def generate_scenes(
+        self,
+        blueprint: Any,
+        video_dir: Path,
+        on_scene_done: Callable[[str], None] | None = None,
+    ) -> None:
+        # Remotion currently generates every custom scene inside the coder
+        # helper; if the helper doesn't accept a callback yet, we bump the
+        # counter after the whole batch. Refining this to per-scene bumps is a
+        # follow-up on the Remotion side.
         self.scene_coder.generate_custom_scenes(blueprint, video_dir, self.materializer)
+        if on_scene_done is not None:
+            for scene in getattr(blueprint, "scenes", []) or []:
+                try:
+                    on_scene_done(scene.key)
+                except Exception:
+                    logger.exception("on_scene_done.failed scene=%s", getattr(scene, "key", "?"))
 
     def validate_static(self, video_dir: Path) -> None:
         from video_api.pipeline.remotion_materialize import validate_remotion_video_source
