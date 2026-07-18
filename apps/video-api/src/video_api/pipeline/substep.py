@@ -153,7 +153,11 @@ class SubstepReporter:
         self._parse = parse
         self._initial_total = total
         self._min_interval = min_interval_seconds
-        self._last_write = 0.0
+        # Start at -inf so the very first parseable line always commits, no
+        # matter how small ``time.monotonic()`` happens to be (fresh CI
+        # containers can have a monotonic clock a fraction of a second past
+        # boot — 0.0 as the sentinel silently swallowed the first tick there).
+        self._last_write = float("-inf")
         self._last_current: int | None = None
 
     def __call__(self, _stream: str, line: str) -> None:
@@ -236,7 +240,9 @@ class TTSSegmentReporter:
         self._total = total_segments
         self._min_interval = min_interval_seconds
         self._count = 0
-        self._last_write = 0.0
+        # Same rationale as SubstepReporter: -inf guarantees the very first
+        # segment start commits even on a fresh-monotonic-clock CI runner.
+        self._last_write = float("-inf")
 
     def __call__(self, _stream: str, line: str) -> None:
         if not parse_openai_tts_segment_start(line):
