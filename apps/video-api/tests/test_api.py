@@ -107,8 +107,13 @@ def test_cancel_job(client: TestClient) -> None:
     response = client.delete(f"/v1/videos/{job_id}")
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"
-    # A second cancel is a conflict: the job is already terminal.
-    assert client.delete(f"/v1/videos/{job_id}").status_code == 409
+    # DELETE on the now-terminal job purges the row (new dashboard contract):
+    # the response confirms the deletion instead of returning a 409, and a
+    # subsequent GET returns 404 since the row is gone.
+    purged = client.delete(f"/v1/videos/{job_id}")
+    assert purged.status_code == 200
+    assert purged.json() == {"job_id": job_id, "status": "deleted"}
+    assert client.get(f"/v1/videos/{job_id}").status_code == 404
 
 
 def test_download_not_ready(client: TestClient) -> None:
