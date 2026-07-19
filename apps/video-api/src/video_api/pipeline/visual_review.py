@@ -149,12 +149,16 @@ def _scene_sample_points(
 def _active_beat(scene: Any, ratio: float = 0.5) -> dict:
     """Return the beat whose `at` is closest to the given ratio within a scene.
 
-    Remotion scenes carry no beats; synthesize one from the visual intent so the
-    review works uniformly across engines.
+    Manim BeatSpec carries `at`/`key`/`text_hint`/`visual_action`; RemotionBeat
+    carries only `anchor`/`note` and no `at`, so synthesize a mid-scene beat and
+    fold the anchors into the intent to give the reviewer something to bite on.
     """
     beats = getattr(scene, "beats", None) or []
-    if not beats:
+    if not beats or not hasattr(beats[0], "at"):
         intent = getattr(scene, "visual_intent", "") or scene.text[:160]
+        anchors = [getattr(b, "anchor", "") for b in beats if getattr(b, "anchor", "")]
+        if anchors:
+            intent = f"{intent} | narration anchors: {' / '.join(anchors)}"
         return {"key": "mid", "at": ratio, "text_hint": intent, "visual_action": intent}
     best = min(beats, key=lambda b: abs(b.at - ratio))
     return {
