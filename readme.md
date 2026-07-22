@@ -3,7 +3,6 @@
 **Turn prompts into educational videos.**
 
 [![CI](https://github.com/Tutanka01/PromptLoom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tutanka01/PromptLoom/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-249%20passing-brightgreen)](https://github.com/Tutanka01/PromptLoom/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 
 PromptLoom transforme un prompt en vidéo éducative complète : recherche,
@@ -43,15 +42,15 @@ PromptLoom sait notamment produire une vidéo dans une langue différente de
 celle du prompt, générer un même contenu dans plusieurs langues et réparer un
 job lorsque la génération ou le rendu échoue.
 
-- **Suivi en temps réel** — l'API diffuse chaque changement d'état en
-  Server-Sent Events (SSE), avec retour automatique au polling si le flux est
-  indisponible.
-- **Progression détaillée** — le Studio affiche les sous-étapes en cours :
-  frames rendues, scènes Manim et segments TTS, avec une estimation du temps
-  restant lorsqu'elle est fournie par le moteur.
-- **Réparations observables** — le numéro de tentative, le maximum autorisé et
-  la raison de la dernière réparation (`attempt_number`, `max_attempts`,
-  `last_repair_reason`) restent visibles pendant la boucle d'auto-réparation.
+- **Suivi en temps réel** — l'API propose, pour chaque job, un flux Server-Sent
+  Events (SSE) qui transmet l'état courant puis les changements d'étape. Le
+  Studio maintient aussi un polling régulier si le flux est indisponible.
+- **Progression détaillée** — le Studio affiche les sous-étapes enregistrées
+  par le worker : frames Remotion, scènes générées ou rendues et segments TTS.
+  Le temps restant apparaît lorsque Remotion fournit cette estimation.
+- **Réparations observables** — pendant une nouvelle tentative, le Studio
+  affiche le numéro de la réparation et son dernier motif. L'API expose ces
+  informations dans `attempt_number`, `max_attempts` et `last_repair_reason`.
 
 ## Où commencer ?
 
@@ -70,14 +69,14 @@ job lorsque la génération ou le rendu échoue.
 **PromptLoom Studio** est une SPA React + TypeScript construite avec Vite et
 Tailwind. Livrée dans le même `compose.yaml`, elle fournit une console de
 production complète : formulaire adapté aux capacités réelles du serveur,
-tableau de bord des jobs et batches multilingues, progression en direct par
-SSE, lecteur vidéo, rapports et artefacts.
+tableau de bord des jobs et batches multilingues, suivi en direct combinant SSE
+et polling, lecteur vidéo, rapports et artefacts.
 
 Depuis le tableau de bord, tu peux annuler un job actif, supprimer un job
-terminal avec ses artefacts, purger les échecs affichés ou relancer un job
-échoué avec sa configuration d'origine. La page d'un job expose aussi les
-compteurs fins du rendu et du TTS, l'ETA disponible, ainsi que la tentative et
-la raison courante lorsqu'une réparation automatique est en cours.
+terminal avec ses artefacts, supprimer en bloc les jobs échoués ou annulés
+affichés, ou relancer un job individuel échoué ou annulé. La page d'un job
+affiche aussi les compteurs du rendu et du TTS, le temps restant lorsqu'il est
+connu, ainsi que le numéro et le motif de la dernière réparation.
 
 Le service `studio` est disponible sur <http://localhost:3000> après
 `make start`. Consulte le [guide du Studio](apps/studio/README.md) pour le lancer
@@ -146,8 +145,8 @@ curl http://localhost:8080/healthz
 Ouvre le **Studio** sur <http://localhost:3000> : il est démarré par `make start`
 au même titre que l'API. Le formulaire se construit à partir des capacités
 réelles du serveur (`GET /v1/capabilities`), affiche la progression étape par
-étape en direct via SSE, puis le lecteur, le rapport et les artefacts. Renseigne
-le sujet, choisis `draft` et 60 secondes, et lance.
+étape via le flux SSE et le polling, puis le lecteur, le rapport et les
+artefacts. Renseigne le sujet, choisis `draft` et 60 secondes, et lance.
 
 L'équivalent en API — le profil `draft` et une cible de 60 secondes réduisent le
 temps de cette première boucle :
