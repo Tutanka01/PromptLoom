@@ -60,6 +60,11 @@ synthesis. The first request to that URL derives it from the canonical WAV;
 PromptLoom's video pipeline consumes only WAV and encodes AAC once in the final
 MP4.
 
+Each segment exposes its `wav_url` as soon as it reaches `done`; clients do not
+need to wait for the whole batch. PromptLoom downloads these WAVs progressively
+to `.wav.part`, validates the complete PCM16 mono 24 kHz file, then renames it
+atomically. A terminal server error still fails the video job explicitly.
+
 ## Deploy on the GPU server
 
 Prerequisites: NVIDIA driver, Docker, [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), ≥ 24 GB VRAM (the BF16 checkpoint needs ~16-18 GB).

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import io
+import wave
 from pathlib import Path
 
 import pytest
@@ -31,6 +33,22 @@ _SEGMENTS = [
 ]
 
 
+def _wav_bytes(
+    *,
+    channels: int = 1,
+    sample_width: int = 2,
+    sample_rate: int = 24000,
+    frames: int = 2400,
+) -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as handle:
+        handle.setnchannels(channels)
+        handle.setsampwidth(sample_width)
+        handle.setframerate(sample_rate)
+        handle.writeframes(b"\x00" * frames * channels * sample_width)
+    return output.getvalue()
+
+
 def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -40,10 +58,23 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
     (audio_dir / "Scene1.wav").write_bytes(b"RIFFlocal")
 
     requests: list[tuple[str, str, dict | None]] = []
+    events: list[str] = []
+    get_count = 0
     states = iter(
         [
             {"job_id": "j1", "status": "queued"},
-            {"status": "running", "segments": [{"key": "Scene2", "status": "running"}]},
+            {
+                "status": "running",
+                "segments": [
+                    {
+                        "key": "Scene2",
+                        "status": "done",
+                        "cached": False,
+                        "duration_seconds": 0.1,
+                        "wav_url": "/v1/jobs/j1/audio/Scene2.wav",
+                    }
+                ],
+            },
             {
                 "status": "completed",
                 "segments": [
@@ -51,6 +82,7 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
                         "key": "Scene2",
                         "status": "done",
                         "cached": False,
+                        "duration_seconds": 0.1,
                         "wav_url": "/v1/jobs/j1/audio/Scene2.wav",
                     }
                 ],
@@ -59,14 +91,19 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
     )
 
     def fake_request_json(method, url, api_key, payload=None, timeout=120.0):
+        nonlocal get_count
         requests.append((method, url, payload))
+        if method == "GET":
+            get_count += 1
+            events.append(f"get:{get_count}")
         return next(states)
 
     downloads: list[str] = []
 
     def fake_download_file(url, api_key, dest, timeout=600.0):
         downloads.append(url)
-        dest.write_bytes(b"RIFFremote")
+        events.append("download")
+        dest.write_bytes(_wav_bytes())
 
     monkeypatch.setattr(module, "OUT_DIR", audio_dir)
     monkeypatch.setattr(module, "_request_json", fake_request_json)
@@ -94,7 +131,9 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
     assert payload["language"] == "fr"
 
     assert downloads == ["http://gpu.lan:8100/v1/jobs/j1/audio/Scene2.wav"]
-    assert (audio_dir / "Scene2.wav").read_bytes() == b"RIFFremote"
+    assert events == ["get:1", "download", "get:2"]
+    assert (audio_dir / "Scene2.wav").read_bytes() == _wav_bytes()
+    assert not (audio_dir / "Scene2.wav.part").exists()
     assert not (audio_dir / "Scene2.mp3").exists()
 
 
@@ -155,3 +194,122 @@ def test_moss_remote_raises_clear_error_when_job_fails(monkeypatch, tmp_path: Pa
             timeout_seconds=30,
             poll_seconds=0,
         )
+
+
+def test_moss_remote_still_fails_after_downloading_ready_wav(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _load_voice_module()
+    audio_dir = tmp_path / "audio" / "en"
+    audio_dir.mkdir(parents=True)
+    states = iter(
+        [
+            {"job_id": "j3", "status": "queued"},
+            {
+                "status": "running",
+                "segments": [
+                    {
+                        "key": "Scene1",
+                        "status": "done",
+                        "cached": True,
+                        "duration_seconds": 0.1,
+                        "wav_url": "/v1/jobs/j3/audio/Scene1.wav",
+                    },
+                    {"key": "Scene2", "status": "running"},
+                ],
+            },
+            {
+                "status": "failed",
+                "error": "CUDA out of memory",
+                "segments": [
+                    {
+                        "key": "Scene1",
+                        "status": "done",
+                        "cached": True,
+                        "duration_seconds": 0.1,
+                        "wav_url": "/v1/jobs/j3/audio/Scene1.wav",
+                    },
+                    {"key": "Scene2", "status": "failed"},
+                ],
+            },
+        ]
+    )
+
+    monkeypatch.setattr(module, "OUT_DIR", audio_dir)
+    monkeypatch.setattr(module, "_request_json", lambda *args, **kwargs: next(states))
+    monkeypatch.setattr(
+        module,
+        "_download_file",
+        lambda url, api_key, dest, timeout=600.0: dest.write_bytes(_wav_bytes()),
+    )
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        module.generate_moss_remote(
+            _SEGMENTS,
+            server_url="http://gpu.lan:8100",
+            api_key="",
+            model_id="",
+            language="en",
+            reference_audio="",
+            consistent_voice=True,
+            force=False,
+            timeout_seconds=30,
+            poll_seconds=0,
+        )
+
+    assert (audio_dir / "Scene1.wav").exists()
+    assert not (audio_dir / "Scene2.wav").exists()
+
+
+def test_download_moss_wav_publishes_valid_file_atomically(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _load_voice_module()
+    destination = tmp_path / "Scene1.wav"
+    monkeypatch.setattr(
+        module,
+        "_download_file",
+        lambda url, api_key, dest, timeout=600.0: dest.write_bytes(_wav_bytes()),
+    )
+
+    module._download_moss_wav_atomic(
+        "http://gpu.lan/Scene1.wav",
+        "",
+        destination,
+        expected_duration=0.1,
+    )
+
+    assert destination.read_bytes() == _wav_bytes()
+    assert not (tmp_path / "Scene1.wav.part").exists()
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"not-a-wav", "header"),
+        (_wav_bytes(sample_width=1), "PCM16"),
+        (_wav_bytes(channels=2), "channels"),
+        (_wav_bytes(sample_rate=16000), "sample rate"),
+        (_wav_bytes()[:-10], "Truncated"),
+    ],
+)
+def test_download_moss_wav_rejects_invalid_file_without_replacing_destination(
+    monkeypatch,
+    tmp_path: Path,
+    payload: bytes,
+    message: str,
+) -> None:
+    module = _load_voice_module()
+    destination = tmp_path / "Scene1.wav"
+    destination.write_bytes(b"existing-valid-audio")
+    monkeypatch.setattr(
+        module,
+        "_download_file",
+        lambda url, api_key, dest, timeout=600.0: dest.write_bytes(payload),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        module._download_moss_wav_atomic("http://gpu.lan/Scene1.wav", "", destination)
+
+    assert destination.read_bytes() == b"existing-valid-audio"
+    assert not (tmp_path / "Scene1.wav.part").exists()

@@ -160,6 +160,7 @@ def segment_fingerprint(text: str, signature: str) -> str:
 def _segment_files(audio_dir: Path, key: str) -> list[Path]:
     return [
         audio_dir / f"{key}.wav",
+        audio_dir / f"{key}.wav.part",
         # Remove legacy MP3s left by jobs created before the PCM-only pipeline.
         audio_dir / f"{key}.mp3",
         audio_dir / f"{key}.padded.wav",

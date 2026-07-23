@@ -237,9 +237,12 @@ VIDEO_API_TTS_SERVER_TIMEOUT=3600
 La voix coherente fonctionne comme en local : si une partie des WAV existe deja
 (reparation), le premier WAV local est envoye comme reference de clonage pour que
 le timbre ne change pas. Le serveur a aussi son propre cache par contenu : seuls
-les segments modifies sont resynthetises. Si le serveur est injoignable ou si le
-job TTS echoue, le job video echoue avec l'erreur dans `logs/voice.log` — il n'y
-a pas de bascule silencieuse vers une autre voix.
+les segments modifies sont resynthetises. À chaque poll, le worker télécharge
+immédiatement les segments prêts dans `<clé>.wav.part`, vérifie le conteneur
+RIFF/WAVE et le PCM16 mono 24 kHz complet, puis publie le WAV par renommage
+atomique. Si le serveur est injoignable ou si le job TTS echoue, le job video
+echoue avec l'erreur dans `logs/voice.log`, même si certains WAV avaient déjà
+été téléchargés — il n'y a pas de bascule silencieuse vers une autre voix.
 
 Pour utiliser un modele de synthese vocale expose par le meme endpoint
 OpenAI-compatible que le LLM :

@@ -12,12 +12,16 @@ import shutil
 import shlex
 import subprocess
 import time
+import wave
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
 SEGMENTS_FILE = ROOT / "segments_en.json"
 OUT_DIR = ROOT / "audio" / "en"
+MOSS_WAV_CHANNELS = 1
+MOSS_WAV_SAMPLE_RATE = 24000
+MOSS_WAV_SAMPLE_WIDTH = 2
 
 
 def bool_env(name: str, default: bool = False) -> bool:
@@ -485,6 +489,79 @@ def _download_file(url: str, api_key: str, dest: Path, timeout: float = 600.0) -
         raise RuntimeError(f"Failed to download {url}: {error}") from error
 
 
+def _validate_moss_wav(path: Path, expected_duration: float | None = None) -> float:
+    """Validate a complete canonical MOSS WAV and return its exact duration."""
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        header = handle.read(12)
+    if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
+        raise RuntimeError(f"Invalid MOSS WAV header: {path.name}")
+    declared_size = int.from_bytes(header[4:8], "little") + 8
+    if declared_size > size:
+        raise RuntimeError(
+            f"Truncated MOSS WAV: {path.name} declares {declared_size} bytes, downloaded {size}"
+        )
+
+    try:
+        with wave.open(str(path), "rb") as handle:
+            channels = handle.getnchannels()
+            sample_width = handle.getsampwidth()
+            sample_rate = handle.getframerate()
+            frame_count = handle.getnframes()
+            compression = handle.getcomptype()
+            payload = handle.readframes(frame_count)
+    except (EOFError, OSError, wave.Error) as error:
+        raise RuntimeError(f"Invalid MOSS WAV container {path.name}: {error}") from error
+
+    if compression != "NONE" or sample_width != MOSS_WAV_SAMPLE_WIDTH:
+        raise RuntimeError(
+            f"Invalid MOSS WAV encoding for {path.name}: expected PCM16, "
+            f"got compression={compression} sample_width={sample_width}"
+        )
+    if channels != MOSS_WAV_CHANNELS:
+        raise RuntimeError(
+            f"Invalid MOSS WAV channels for {path.name}: "
+            f"expected {MOSS_WAV_CHANNELS}, got {channels}"
+        )
+    if sample_rate != MOSS_WAV_SAMPLE_RATE:
+        raise RuntimeError(
+            f"Invalid MOSS WAV sample rate for {path.name}: "
+            f"expected {MOSS_WAV_SAMPLE_RATE}, got {sample_rate}"
+        )
+    if frame_count <= 0:
+        raise RuntimeError(f"Empty MOSS WAV: {path.name}")
+    expected_payload_size = frame_count * channels * sample_width
+    if len(payload) != expected_payload_size:
+        raise RuntimeError(
+            f"Truncated MOSS WAV payload for {path.name}: "
+            f"expected {expected_payload_size} bytes, got {len(payload)}"
+        )
+
+    duration = frame_count / float(sample_rate)
+    if expected_duration is not None and abs(duration - float(expected_duration)) > 0.05:
+        raise RuntimeError(
+            f"MOSS WAV duration mismatch for {path.name}: "
+            f"server={float(expected_duration):.3f}s downloaded={duration:.3f}s"
+        )
+    return duration
+
+
+def _download_moss_wav_atomic(
+    url: str,
+    api_key: str,
+    dest: Path,
+    expected_duration: float | None = None,
+) -> None:
+    part_path = dest.with_suffix(f"{dest.suffix}.part")
+    part_path.unlink(missing_ok=True)
+    try:
+        _download_file(url, api_key, part_path)
+        _validate_moss_wav(part_path, expected_duration)
+        os.replace(part_path, dest)
+    finally:
+        part_path.unlink(missing_ok=True)
+
+
 def _absolute_url(base: str, url: str) -> str:
     if url.startswith("http://") or url.startswith("https://"):
         return url
@@ -554,11 +631,53 @@ def generate_moss_remote(
 
     deadline = time.monotonic() + timeout_seconds
     reported_done = -1
+    pending_keys = {segment["key"] for segment in pending}
+    downloaded_keys: set[str] = set()
     while True:
         state = _request_json("GET", job_url, api_key)
-        if state["status"] in {"completed", "failed"}:
+        state_segments = state.get("segments", [])
+        seen_keys: set[str] = set()
+        for remote_segment in state_segments:
+            key = remote_segment.get("key")
+            if key not in pending_keys:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} returned unexpected segment key {key!r}"
+                )
+            if key in seen_keys:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} returned duplicate segment key {key!r}"
+                )
+            seen_keys.add(key)
+            if remote_segment.get("status") != "done" or key in downloaded_keys:
+                continue
+            wav_url = remote_segment.get("wav_url")
+            if not wav_url:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} marked {key} done without a wav_url"
+                )
+            wav_path = OUT_DIR / f"{key}.wav"
+            _download_moss_wav_atomic(
+                _absolute_url(base, wav_url),
+                api_key,
+                wav_path,
+                remote_segment.get("duration_seconds"),
+            )
+            downloaded_keys.add(key)
+            print(f"Downloaded {key}.wav (cached={remote_segment.get('cached')})")
+
+        if state["status"] == "failed":
+            raise RuntimeError(
+                f"TTS server job {created['job_id']} failed: {state.get('error')}"
+            )
+        if state["status"] == "completed":
+            missing = pending_keys - downloaded_keys
+            if missing:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} completed without downloadable WAVs: "
+                    f"{', '.join(sorted(missing))}"
+                )
             break
-        done = sum(1 for segment in state.get("segments", []) if segment.get("status") == "done")
+        done = len(downloaded_keys)
         if done != reported_done:
             print(f"TTS server progress: {done}/{len(pending)} segment(s) done")
             reported_done = done
@@ -567,15 +686,6 @@ def generate_moss_remote(
                 f"TTS server job {created['job_id']} did not finish within {timeout_seconds:.0f}s"
             )
         time.sleep(poll_seconds)
-
-    if state["status"] == "failed":
-        raise RuntimeError(f"TTS server job {created['job_id']} failed: {state.get('error')}")
-
-    for segment in state["segments"]:
-        key = segment["key"]
-        wav_path = OUT_DIR / f"{key}.wav"
-        _download_file(_absolute_url(base, segment["wav_url"]), api_key, wav_path)
-        print(f"Downloaded {key}.wav (cached={segment.get('cached')})")
 
 
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
