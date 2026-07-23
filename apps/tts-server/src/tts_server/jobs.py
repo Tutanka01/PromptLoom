@@ -167,18 +167,35 @@ class JobStore:
         )
         job_dir = self.job_dir(job.id)
         job_dir.mkdir(parents=True, exist_ok=True)
-        if reference_bytes:
-            (job_dir / REFERENCE_FILE_NAME).write_bytes(reference_bytes)
+        if reference_bytes is not None:
+            reference_path = job_dir / REFERENCE_FILE_NAME
+            reference_part = reference_path.with_suffix(".wav.part")
+            reference_part.unlink(missing_ok=True)
+            try:
+                reference_part.write_bytes(reference_bytes)
+                os.replace(reference_part, reference_path)
+            finally:
+                reference_part.unlink(missing_ok=True)
         with self._lock:
             self._jobs[job.id] = job
         self._persist(job)
-        self._queue.put(job.id)
+        self._resolve_admission_cache(job, job_dir)
+        misses = sum(1 for segment in job.segments if segment.status != "done")
+        if misses:
+            self._queue.put(job.id)
+        else:
+            job.status = "completed"
+            job.finished_at = time.time()
+            self._persist(job)
         logger.info(
-            "job.created id=%s language=%s segments=%d reference=%s",
+            "job.created id=%s language=%s segments=%d reference=%s "
+            "admission_hits=%d queued_misses=%d",
             job.id,
             language,
             len(job.segments),
             job.has_reference,
+            len(job.segments) - misses,
+            misses,
         )
         return job
 
@@ -235,10 +252,16 @@ class JobStore:
                 logger.exception("job.failed id=%s", job.id)
                 job.status = "failed"
                 job.error = f"{type(error).__name__}: {error}"
+                for segment in job.segments:
+                    if segment.status != "done":
+                        segment.status = "failed"
+                        segment.error = job.error
                 job.finished_at = time.time()
                 self._persist(job)
 
     def _process(self, job: Job) -> None:
+        if job.status == "completed":
+            return
         job.status = "running"
         self._persist(job)
         job_dir = self.job_dir(job.id)
@@ -247,18 +270,24 @@ class JobStore:
         if uploaded_reference.exists():
             anchor = uploaded_reference
 
-        segments = job.segments
-        start_index = 0
+        remaining = job.segments
         # Consistent voice without an uploaded reference: the first segment must
         # be rendered alone because its WAV becomes the cloning anchor for every
         # following segment. Once that anchor exists, all the rest share it and
         # can be generated in one batched pass.
-        if job.consistent_voice and anchor is None and segments:
-            self._render_segment(job, job_dir, segments[0], anchor)
-            anchor = job_dir / f"{segments[0].key}.wav"
-            start_index = 1
+        if job.consistent_voice and anchor is None and job.segments:
+            first = job.segments[0]
+            if first.status != "done":
+                self._render_segment(job, job_dir, first, anchor)
+            anchor = job_dir / f"{first.key}.wav"
+            remaining = job.segments[1:]
 
-        self._render_remaining(job, job_dir, segments[start_index:], anchor)
+        self._render_remaining(
+            job,
+            job_dir,
+            [segment for segment in remaining if segment.status != "done"],
+            anchor,
+        )
 
         job.status = "completed"
         job.finished_at = time.time()
@@ -276,7 +305,67 @@ class JobStore:
     def _finalize_segment(self, job: Job, job_dir: Path, segment: SegmentState, out_path: Path) -> None:
         segment.duration_seconds = wav_duration_seconds(out_path)
         segment.status = "done"
+        segment.error = None
         self._persist(job)
+
+    @staticmethod
+    def _copy_cached_wav(cached: Path, out_path: Path) -> None:
+        part_path = out_path.with_suffix(f"{out_path.suffix}.part")
+        part_path.unlink(missing_ok=True)
+        try:
+            shutil.copyfile(cached, part_path)
+            os.replace(part_path, out_path)
+        finally:
+            part_path.unlink(missing_ok=True)
+
+    def _materialize_cache_hit(
+        self,
+        job: Job,
+        job_dir: Path,
+        segment: SegmentState,
+        anchor: Path | None,
+    ) -> bool:
+        try:
+            fingerprint = self._fingerprint(job, segment.text, anchor)
+            cached = self.cache.lookup(fingerprint)
+            if cached is None:
+                return False
+            out_path = job_dir / f"{segment.key}.wav"
+            self._copy_cached_wav(cached, out_path)
+        except OSError as error:
+            logger.warning(
+                "job.cache_hit.unreadable id=%s key=%s error=%s",
+                job.id,
+                segment.key,
+                error,
+            )
+            return False
+        segment.cached = True
+        self._finalize_segment(job, job_dir, segment, out_path)
+        logger.info("job.segment.admission_hit id=%s key=%s", job.id, segment.key)
+        return True
+
+    def _resolve_admission_cache(self, job: Job, job_dir: Path) -> None:
+        """Publish every cache hit whose voice-reference hash is already known."""
+        if not job.segments:
+            return
+        uploaded_reference = job_dir / REFERENCE_FILE_NAME
+        anchor = uploaded_reference if uploaded_reference.exists() else None
+
+        if anchor is not None or not job.consistent_voice:
+            for segment in job.segments:
+                self._materialize_cache_hit(job, job_dir, segment, anchor)
+            return
+
+        # With implicit consistent-voice anchoring, later fingerprints depend on
+        # the first WAV. A miss keeps that segment as the GPU barrier; a hit
+        # resolves the anchor immediately and unlocks preflight for the rest.
+        first = job.segments[0]
+        if not self._materialize_cache_hit(job, job_dir, first, None):
+            return
+        anchor = job_dir / f"{first.key}.wav"
+        for segment in job.segments[1:]:
+            self._materialize_cache_hit(job, job_dir, segment, anchor)
 
     def ensure_mp3(self, job: Job, key: str) -> Path:
         """Return a segment MP3, creating it on demand from the canonical WAV."""
@@ -303,7 +392,7 @@ class JobStore:
         fingerprint = self._fingerprint(job, segment.text, anchor)
         cached = self.cache.lookup(fingerprint)
         if cached is not None:
-            shutil.copyfile(cached, out_path)
+            self._copy_cached_wav(cached, out_path)
             segment.cached = True
         else:
             self.engine.synthesize(segment.text, job.language, anchor, out_path)
@@ -331,7 +420,7 @@ class JobStore:
             fingerprint = self._fingerprint(job, segment.text, anchor)
             cached = self.cache.lookup(fingerprint)
             if cached is not None:
-                shutil.copyfile(cached, out_path)
+                self._copy_cached_wav(cached, out_path)
                 segment.cached = True
                 self._finalize_segment(job, job_dir, segment, out_path)
             else:

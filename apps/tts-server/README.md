@@ -65,6 +65,13 @@ need to wait for the whole batch. PromptLoom downloads these WAVs progressively
 to `.wav.part`, validates the complete PCM16 mono 24 kHz file, then renames it
 atomically. A terminal server error still fails the video job explicitly.
 
+When the voice reference is already known, CAS hits are materialized during
+batch admission and their URLs are available immediately; only misses enter the
+GPU FIFO. With implicit consistent-voice anchoring, the first segment remains a
+barrier. If that first segment is itself a cache hit, it resolves the anchor and
+unlocks admission-time cache checks for the remaining segments. A fully cached
+batch is returned as `completed` and never increases `queue_depth`.
+
 ## Deploy on the GPU server
 
 Prerequisites: NVIDIA driver, Docker, [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), ≥ 24 GB VRAM (the BF16 checkpoint needs ~16-18 GB).
@@ -133,7 +140,7 @@ uv venv && uv pip install -e '.[test]' && uv run pytest -q
 
 ## Operational notes
 
-- The GPU is serialized: one synthesis at a time (queue + lock). `VIDEO_API_WORKER_CONCURRENCY=1` on the video side matches this; if you ever raise it, jobs just queue up here.
+- The GPU is serialized: one synthesis at a time (queue + lock). `queue_depth` counts only jobs with unresolved misses waiting for the worker; fully cached jobs bypass it. `VIDEO_API_WORKER_CONCURRENCY=1` on the video side matches this; if you ever raise it, misses queue up here.
 - Jobs interrupted by a server restart are marked `failed: interrupted by server restart`; the video worker's retry then mostly hits the cache.
 - MOSS sampling is stochastic: the cache is also what keeps a voice take stable across repair attempts — don't disable it casually.
 - `flash-attn` is optional; when absent the engine falls back to PyTorch SDPA, which is fine. Install it in the image only if you need the extra speed.

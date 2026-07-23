@@ -141,6 +141,7 @@ def test_second_identical_batch_hits_the_cache(client: TestClient) -> None:
     synth_calls = len(client.app.state.engine.calls)
 
     second = client.post("/v1/tts/batch", json=_batch_payload(), headers=AUTH)
+    assert second.json()["status"] == "completed"
     state = _wait_for_job(client, second.json()["job_id"])
 
     assert state["status"] == "completed"
