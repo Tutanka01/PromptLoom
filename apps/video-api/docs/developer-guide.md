@@ -114,6 +114,26 @@ Le blueprint reste du JSON valide. Le code par scene est produit par un scene
 coder encadre (Manim ou TSX Remotion), avec validation et fallback
 deterministe ; le LLM ne peut pas injecter de code arbitraire non controle.
 
+### `pipeline/voice.py`
+
+Gère la signature du moteur vocal et le cache audio par segment. Les
+matérialiseurs appellent `prune_stale_audio` : seuls les WAV dont le texte ou le
+profil vocal a changé sont supprimés, puis régénérés. Les WAV inchangés restent
+réutilisables lors d'une réparation.
+
+Le script `generate_voice_en.py` matérialisé conserve ensuite une chaîne PCM
+directe :
+
+```text
+<scene>.wav -> <scene>.padded.wav -> voiceover_en.wav
+             -> mastering/loudnorm -> AAC du MP4 final
+```
+
+Il ne doit produire aucun MP3 intermédiaire. En mode `moss-remote`, un segment
+prêt est téléchargé dans `<scene>.wav.part`, validé comme WAV PCM16 mono 24 kHz
+complet, puis publié avec `os.replace`. Un échec ne doit ni remplacer un WAV
+valide existant ni laisser de fichier `.part`.
+
 ### `pipeline/align.py`
 
 Alignement force mot a mot (Remotion). Apres le TTS, `align_segments` projette

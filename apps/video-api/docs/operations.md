@@ -234,10 +234,31 @@ VIDEO_API_TTS_SERVER_API_KEY=<cle>
 VIDEO_API_TTS_SERVER_TIMEOUT=3600
 ```
 
+Sur le serveur GPU, les poids, le code distant et le codec doivent être épinglés
+à des commits immuables. Configurer ces variables dans
+`apps/tts-server/.env` :
+
+```text
+TTS_SERVER_MODEL=OpenMOSS-Team/MOSS-TTS-v1.5
+TTS_SERVER_MODEL_REVISION=cdd3b911b1585e3f2dbc7775ef10f9926f58850a
+TTS_SERVER_CODEC_MODEL=OpenMOSS-Team/MOSS-Audio-Tokenizer
+TTS_SERVER_CODEC_REVISION=3cd226ba2947efa357ef453bcad111b6eafba782
+TTS_SERVER_IMAGE_DIGEST=sha256:<64-hex>
+```
+
+Les deux révisions doivent être des SHA de commit complètes sur 40 caractères.
+`TTS_SERVER_IMAGE_DIGEST` doit identifier l'image réellement déployée. Sans
+digest OCI immuable, le serveur isole volontairement le cache CAS au démarrage
+courant : les WAV restent sur disque, mais ne sont pas réutilisés après un
+redémarrage. Voir `apps/tts-server/README.md` pour le contenu exact de
+`synthesis_profile_id`.
+
 La voix coherente fonctionne comme en local : si une partie des WAV existe deja
 (reparation), le premier WAV local est envoye comme reference de clonage pour que
 le timbre ne change pas. Le serveur a aussi son propre cache par contenu : seuls
-les segments modifies sont resynthetises. À chaque poll, le worker télécharge
+les segments modifies sont resynthetises. Les hits CAS dont la référence vocale
+est déjà connue sont publiés avant la FIFO GPU ; seuls les misses y entrent. À
+chaque poll, le worker télécharge
 immédiatement les segments prêts dans `<clé>.wav.part`, vérifie le conteneur
 RIFF/WAVE et le PCM16 mono 24 kHz complet, puis publie le WAV par renommage
 atomique. Si le serveur est injoignable ou si le job TTS echoue, le job video

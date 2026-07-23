@@ -121,16 +121,23 @@ Le rendu global réussit toujours. Désactiver le code libre :
 Surface autorisée pour le code libre : le barrel `remotion/src/lib.ts` (catalogue +
 primitives + style + hooks Remotion courants). Skill LLM : `docs/remotion-skill.md`.
 
-## Isolation par job
+## Isolation TypeScript et médias par job
 
 `render_en.sh` injecte les scènes Custom + une **entrée par job** dans le projet
 Remotion partagé sous un id unique : `src/jobScenes/<id>/` et
-`src/entries/<id>.tsx` (nettoyés via `trap` en fin de rendu). Le typecheck de
-chaque vague utilise son propre `tsconfig`, qui ne voit aucun candidat d'un
-autre job. Les médias sont copiés sous le `remotion_public/` du job et les CLI
-`still`/`render` reçoivent explicitement ce `--public-dir` : aucun bundle ne
-copie les footages d'un autre job. Le runtime et `node_modules` restent partagés
-en lecture seule. `$VIDEO_API_REMOTION_DIR` override le chemin (défaut
+`src/entries/<id>.tsx`, nettoyés via `trap` en fin de rendu.
+
+Le scene-coder crée aussi un `tsconfig.json` éphémère dans le dossier unique de
+chaque vague. Sa liste `files` contient uniquement les candidats de cette vague :
+`tsc --noEmit` ne voit donc ni les sources temporaires ni les erreurs d'un autre
+job, et le `tsconfig` racine partagé n'est jamais modifié.
+
+Les médias sont copiés sous
+`<video_dir>/remotion_public/job-assets/<id>/`. Les commandes `remotion still`
+et `remotion render` reçoivent toutes les deux ce dossier avec `--public-dir` :
+un smoke check ou un bundle ne peut pas charger les médias d'un autre job. Seuls
+le runtime et `node_modules` restent partagés en lecture seule.
+`$VIDEO_API_REMOTION_DIR` remplace le chemin du runtime partagé (défaut
 `repo_root/apps/video-api/remotion`).
 
 ## Qualité / verify

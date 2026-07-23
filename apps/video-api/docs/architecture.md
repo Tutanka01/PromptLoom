@@ -235,14 +235,18 @@ Le moteur de voix est configurable avec `VIDEO_API_VOICE_ENGINE` :
 Le resultat attendu :
 
 ```text
+audio/en/<scene>.wav
+audio/en/<scene>.padded.wav
 audio/en/durations.json
 audio/en/voiceover_en.wav
 ```
 
-Les WAV PCM16 des segments sont paddés et concaténés sans encodage avec perte.
-`durations.json` pilote ensuite la synchronisation Manim. L'assemblage applique
-le mastering et le loudnorm au WAV global, puis encode directement l'unique
-piste AAC du MP4 final.
+Le chemin audio reste en PCM de bout en bout : chaque WAV de segment est paddé,
+puis les WAV paddés sont concaténés sans encodage avec perte dans
+`voiceover_en.wav`. `durations.json` pilote la synchronisation Manim ou Remotion.
+L'assemblage applique le mastering et le loudnorm au WAV global, puis encode
+directement l'unique piste AAC du MP4 final. Il n'existe plus de MP3
+intermédiaire, ni par segment ni pour la voix globale.
 
 ### 6. Rendu final
 
