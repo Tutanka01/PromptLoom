@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import shutil
 import subprocess
@@ -47,14 +48,36 @@ def wav_duration_seconds(path: Path) -> float | None:
         return None
 
 
-def encode_mp3(wav_path: Path, mp3_path: Path) -> bool:
+def encode_mp3(wav_path: Path, mp3_path: Path) -> None:
+    """Encode the compatibility MP3 lazily and publish it atomically."""
     if not shutil.which("ffmpeg"):
-        return False
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-q:a", "2", str(mp3_path)],
-        capture_output=True,
-    )
-    return result.returncode == 0 and mp3_path.exists()
+        raise RuntimeError("ffmpeg is required to encode MP3")
+    part_path = mp3_path.with_suffix(f"{mp3_path.suffix}.part")
+    part_path.unlink(missing_ok=True)
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(wav_path),
+                "-codec:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                "-f",
+                "mp3",
+                str(part_path),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0 or not part_path.exists():
+            detail = result.stderr.decode("utf-8", "replace")[-500:]
+            raise RuntimeError(f"ffmpeg failed to encode MP3: {detail}")
+        os.replace(part_path, mp3_path)
+    finally:
+        part_path.unlink(missing_ok=True)
 
 
 @dataclass
@@ -171,7 +194,6 @@ class JobStore:
 
     def public_state(self, job: Job) -> dict:
         segments = []
-        job_dir = self.job_dir(job.id)
         for segment in job.segments:
             entry: dict = {
                 "key": segment.key,
@@ -182,8 +204,8 @@ class JobStore:
             }
             if segment.status == "done":
                 entry["wav_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.wav"
-                if (job_dir / f"{segment.key}.mp3").exists():
-                    entry["mp3_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.mp3"
+                # Compatibility URL: the MP3 is encoded only when first requested.
+                entry["mp3_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.mp3"
             segments.append(entry)
         return {
             "job_id": job.id,
@@ -252,10 +274,24 @@ class JobStore:
         )
 
     def _finalize_segment(self, job: Job, job_dir: Path, segment: SegmentState, out_path: Path) -> None:
-        encode_mp3(out_path, job_dir / f"{segment.key}.mp3")
         segment.duration_seconds = wav_duration_seconds(out_path)
         segment.status = "done"
         self._persist(job)
+
+    def ensure_mp3(self, job: Job, key: str) -> Path:
+        """Return a segment MP3, creating it on demand from the canonical WAV."""
+        segment = next((item for item in job.segments if item.key == key), None)
+        if segment is None or segment.status != "done":
+            raise FileNotFoundError(f"audio not generated yet for {key}")
+        job_dir = self.job_dir(job.id)
+        wav_path = job_dir / f"{key}.wav"
+        mp3_path = job_dir / f"{key}.mp3"
+        if not wav_path.exists():
+            raise FileNotFoundError(wav_path)
+        with self._lock:
+            if not mp3_path.exists():
+                encode_mp3(wav_path, mp3_path)
+        return mp3_path
 
     def _render_segment(
         self, job: Job, job_dir: Path, segment: SegmentState, anchor: Path | None

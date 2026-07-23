@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VIDEO="${VIDEO:-final/syscall-intro-en-silent.mp4}"
-AUDIO="${AUDIO:-audio/en/voiceover_en.mp3}"
+AUDIO="${AUDIO:-audio/en/voiceover_en.wav}"
 OUTPUT="${OUTPUT:-final/syscall-intro-en-final.mp4}"
 
 ffmpeg -y \

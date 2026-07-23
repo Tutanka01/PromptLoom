@@ -153,7 +153,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         if filename not in allowed:
             raise HTTPException(status_code=404, detail="unknown audio file")
-        path = jobs.job_dir(job_id) / filename
+        if filename.endswith(".mp3"):
+            try:
+                path = jobs.ensure_mp3(job, filename.removesuffix(".mp3"))
+            except FileNotFoundError as error:
+                raise HTTPException(status_code=404, detail="audio not generated yet") from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+        else:
+            path = jobs.job_dir(job_id) / filename
         if not path.exists():
             raise HTTPException(status_code=404, detail="audio not generated yet")
         media_type = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"

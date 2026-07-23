@@ -223,7 +223,9 @@ reference de voix.
 
 Pour deporter MOSS-TTS sur un serveur GPU dedie (voir `apps/tts-server/README.md`),
 le moteur `moss-remote` envoie les textes des segments au serveur et telecharge
-les WAV ; le modele reste charge en VRAM la-bas entre les jobs :
+les WAV PCM16 ; le modele reste charge en VRAM la-bas entre les jobs. Les WAV
+sont paddés et concaténés directement, puis le mastering/loudnorm précède
+l'unique encodage AAC final :
 
 ```text
 VIDEO_API_VOICE_ENGINE=moss-remote

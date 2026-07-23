@@ -43,13 +43,9 @@ def test_moss_generation_anchors_later_segments_to_first_wav(monkeypatch, tmp_pa
         wav_path.parent.mkdir(parents=True, exist_ok=True)
         wav_path.write_bytes(b"RIFF")
 
-    def fake_write_mp3_from_wav(wav_path: Path, mp3_path: Path) -> None:
-        mp3_path.write_bytes(b"ID3")
-
     monkeypatch.setattr(module, "OUT_DIR", audio_dir)
     monkeypatch.setattr(module, "_select_torch_device", lambda requested: "cpu")
     monkeypatch.setattr(module, "_run_moss_command_template", fake_run_moss_command_template)
-    monkeypatch.setattr(module, "write_mp3_from_wav", fake_write_mp3_from_wav)
 
     module.generate_moss(
         [
@@ -72,3 +68,4 @@ def test_moss_generation_anchors_later_segments_to_first_wav(monkeypatch, tmp_pa
         ("Scene1", ""),
         ("Scene2", str((audio_dir / "Scene1.wav").resolve())),
     ]
+    assert not list(audio_dir.glob("*.mp3"))

@@ -381,6 +381,10 @@ def test_materialize_writes_contract(tmp_path) -> None:
     # speed knobs from Settings are pinned on the render command
     assert '--concurrency="75%"' in render
     assert '--x264-preset="faster"' in render
+    assemble = (video_dir / "assemble_en.sh").read_text()
+    assert 'AUDIO="${AUDIO:-audio/en/voiceover_en.wav}"' in assemble
+    assert "-c:a aac" in assemble
+    assert "-b:a 192k" in assemble
 
 
 def test_segments_and_scenes_map_key_parity(tmp_path) -> None:

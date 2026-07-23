@@ -94,6 +94,26 @@ def test_batch_job_completes_and_serves_wav(client: TestClient) -> None:
     assert wav.content[:4] == b"RIFF"
 
 
+def test_batch_mp3_is_encoded_only_when_requested(client: TestClient) -> None:
+    response = client.post("/v1/tts/batch", json=_batch_payload(), headers=AUTH)
+    job_id = response.json()["job_id"]
+    state = _wait_for_job(client, job_id)
+    first = state["segments"][0]
+    mp3_path = client.app.state.jobs.job_dir(job_id) / "Scene1_IntroEN.mp3"
+
+    assert "mp3_url" in first
+    assert not mp3_path.exists()
+
+    mp3 = client.get(first["mp3_url"], headers=AUTH)
+    assert mp3.status_code == 200
+    assert mp3.headers["content-type"].startswith("audio/mpeg")
+    assert mp3_path.exists()
+
+    reused = client.get(first["mp3_url"], headers=AUTH)
+    assert reused.status_code == 200
+    assert reused.content == mp3.content
+
+
 def test_consistent_voice_anchors_following_segments(client: TestClient) -> None:
     response = client.post("/v1/tts/batch", json=_batch_payload(), headers=AUTH)
     job_id = response.json()["job_id"]

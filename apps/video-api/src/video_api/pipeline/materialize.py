@@ -539,7 +539,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VIDEO="${{VIDEO:-final/{blueprint.slug}-en-silent.mp4}}"
-AUDIO="${{AUDIO:-audio/en/voiceover_en.mp3}}"
+AUDIO="${{AUDIO:-audio/en/voiceover_en.wav}}"
 OUTPUT="${{OUTPUT:-final/{blueprint.slug}-en-final.mp4}}"
 VOICE_INPUT="${{AUDIO}}"
 

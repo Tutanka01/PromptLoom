@@ -237,10 +237,12 @@ Le resultat attendu :
 ```text
 audio/en/durations.json
 audio/en/voiceover_en.wav
-audio/en/voiceover_en.mp3
 ```
 
-`durations.json` pilote ensuite la synchronisation Manim.
+Les WAV PCM16 des segments sont paddés et concaténés sans encodage avec perte.
+`durations.json` pilote ensuite la synchronisation Manim. L'assemblage applique
+le mastering et le loudnorm au WAV global, puis encode directement l'unique
+piste AAC du MP4 final.
 
 ### 6. Rendu final
 

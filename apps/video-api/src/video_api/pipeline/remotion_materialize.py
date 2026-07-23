@@ -5,7 +5,7 @@ shells out to, exactly like the Manim path:
 
 - ``segments_en.json``      -> consumed by the copied ``generate_voice_en.py``
                                (Chatterbox), which writes ``audio/en/durations.json``
-                               + ``voiceover_en.mp3``.
+                               + the PCM ``voiceover_en.wav``.
 - ``scenes_map.json``       -> ordered [{key, component, props}]; the render maps
                                each scene to a registered React component.
 - ``build_video_json.py``   -> durations.json + scenes_map.json -> ``video.json``

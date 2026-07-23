@@ -15,7 +15,8 @@ Why it exists: the video worker used to load the ~8B MOSS checkpoint in-process,
 | `GET` | `/healthz` | Engine state (`loading`/`ready`/`error`), model, GPU/VRAM, queue depth. `200` when ready, `503` otherwise. No auth. |
 | `POST` | `/v1/tts/batch` | Submit all segments of a video in one call. Returns `202` with a `job_id`. |
 | `GET` | `/v1/jobs/{job_id}` | Per-segment progress + download URLs when done. |
-| `GET` | `/v1/jobs/{job_id}/audio/{key}.wav` | Download one segment (also `.mp3` when ffmpeg encoded it). |
+| `GET` | `/v1/jobs/{job_id}/audio/{key}.wav` | Download the canonical PCM16 segment WAV. |
+| `GET` | `/v1/jobs/{job_id}/audio/{key}.mp3` | Compatibility download; encodes the MP3 atomically on first request. |
 | `POST` | `/v1/tts` | Synchronous single-segment synthesis (testing); returns WAV bytes. |
 
 All `/v1/*` endpoints require `Authorization: Bearer <key>` (or `X-API-Key: <key>`) when `TTS_SERVER_API_KEYS` is set.
@@ -54,6 +55,10 @@ All `/v1/*` endpoints require `Authorization: Bearer <key>` (or `X-API-Key: <key
 ```
 
 Statuses: job `queued | running | completed | failed`; segment `pending | running | done | failed`. `cached: true` means the WAV came from the content-addressed cache (model + language + normalized text + reference hash) without touching the GPU.
+`mp3_url` remains present for compatibility, but no MP3 is produced during
+synthesis. The first request to that URL derives it from the canonical WAV;
+PromptLoom's video pipeline consumes only WAV and encodes AAC once in the final
+MP4.
 
 ## Deploy on the GPU server
 

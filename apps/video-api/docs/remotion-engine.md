@@ -15,7 +15,7 @@ visual_review sont partagés (`pipeline/engine.py` sélectionne le moteur, le re
 ```
 video_dir/
   segments_en.json      # {segments:[{key,title,text}]}  -> generate_voice_en.py (Chatterbox)
-  generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.mp3
+  generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.wav PCM16
   scenes_map.json       # {fps, scenes:[{key, component, custom, props}]} (ordonné)
   build_video_json.py   # durations.json + scenes_map.json -> video.json
   render_en.sh          # build video.json, injecte l'entrée par job, npx remotion render -> final/<slug>-en-silent.mp4
@@ -76,6 +76,10 @@ la liste dans `subtitles.json` (lue par le rendu) et le meme contenu en sidecar
 diverger. `captionMode` vaut `off` (masque) ou `full`/`keywords` (continu). Les
 transitions de scene sont purement visuelles : aucun effet sonore n'est ajoute
 aux coupes.
+
+La chaîne audio interne reste en WAV PCM16 depuis les segments TTS jusqu'au
+mastering/loudnorm. L'assembleur encode ensuite directement l'unique piste AAC
+192 kb/s du MP4 final ; aucun MP3 intermédiaire n'est produit.
 
 ### Direction artistique (thèmes bornés)
 

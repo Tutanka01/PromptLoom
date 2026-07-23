@@ -51,19 +51,10 @@ def ffprobe_duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
-def write_mp3_from_wav(wav_path: Path, mp3_path: Path) -> None:
-    if not shutil.which("ffmpeg"):
-        raise SystemExit("ffmpeg is required to encode MP3.")
-    run(["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-q:a", "2", str(mp3_path)])
-
-
 def should_skip_existing(key: str, force: bool) -> bool:
     wav_path = OUT_DIR / f"{key}.wav"
-    mp3_path = OUT_DIR / f"{key}.mp3"
     if force or not wav_path.exists():
         return False
-    if not mp3_path.exists():
-        write_mp3_from_wav(wav_path, mp3_path)
     print(f"Reusing existing audio for {key}")
     return True
 
@@ -85,7 +76,6 @@ def generate_kokoro(segments: list[dict], voice: str, speed: float, lang: str, f
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating Kokoro segment {key}")
         chunks = []
         for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=r"\n+"):
@@ -94,7 +84,6 @@ def generate_kokoro(segments: list[dict], voice: str, speed: float, lang: str, f
             raise RuntimeError(f"No audio generated for {key}")
         audio = np.concatenate(chunks)
         sf.write(str(wav_path), audio, 24000)
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def generate_chatterbox_turbo(segments: list[dict], exaggeration: float, cfg_weight: float, temperature: float, force: bool) -> None:
@@ -111,7 +100,6 @@ def generate_chatterbox_turbo(segments: list[dict], exaggeration: float, cfg_wei
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating Chatterbox Turbo segment {key}")
         wav = model.generate(
             text,
@@ -120,7 +108,6 @@ def generate_chatterbox_turbo(segments: list[dict], exaggeration: float, cfg_wei
             temperature=temperature,
         )
         ta.save(str(wav_path), wav, model.sr)
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: float, temperature: float, force: bool) -> None:
@@ -137,7 +124,6 @@ def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: f
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating Chatterbox segment {key}")
         wav = model.generate(
             text,
@@ -146,7 +132,6 @@ def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: f
             temperature=temperature,
         )
         ta.save(str(wav_path), wav, model.sr)
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def write_openai_response(response, path: Path) -> None:
@@ -183,7 +168,6 @@ def generate_openai(
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         source_path = wav_path if response_format == "wav" else OUT_DIR / f"{key}.openai.{response_format}"
         print(f"Generating OpenAI-compatible TTS segment {key} with model {model}")
         response = client.audio.speech.create(
@@ -212,7 +196,6 @@ def generate_openai(
                     str(wav_path),
                 ]
             )
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def _select_torch_device(requested: str) -> str:
@@ -438,7 +421,6 @@ def generate_moss(
                 anchor_reference_audio = str(wav_path.resolve())
                 print(f"Using existing {key} audio as MOSS voice reference for following segments")
             continue
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating MOSS TTS segment {key} language={language} model={model_id}")
         if command_template:
             _run_moss_command_template(
@@ -458,7 +440,6 @@ def generate_moss(
             if reference_text:
                 print("Warning: --moss-reference-text is not used by the native MOSS-TTS generator.")
             _generate_moss_audio(processor, model, text, language, anchor_reference_audio, wav_path)
-        write_mp3_from_wav(wav_path, mp3_path)
         if consistent_voice and not anchor_reference_audio:
             anchor_reference_audio = str(wav_path.resolve())
             print(f"Using generated {key} audio as MOSS voice reference for following segments")
@@ -595,7 +576,6 @@ def generate_moss_remote(
         wav_path = OUT_DIR / f"{key}.wav"
         _download_file(_absolute_url(base, segment["wav_url"]), api_key, wav_path)
         print(f"Downloaded {key}.wav (cached={segment.get('cached')})")
-        write_mp3_from_wav(wav_path, OUT_DIR / f"{key}.mp3")
 
 
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
@@ -604,12 +584,9 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
     for segment in segments:
         key = segment["key"]
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         padded_wav_path = OUT_DIR / f"{key}.padded.wav"
         if not wav_path.exists():
             raise FileNotFoundError(wav_path)
-        if not mp3_path.exists():
-            write_mp3_from_wav(wav_path, mp3_path)
         target_duration = round(ffprobe_duration(wav_path) + tail_padding, 3)
         durations[key] = target_duration
         run(
@@ -650,7 +627,6 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
             str(OUT_DIR / "voiceover_en.wav"),
         ]
     )
-    write_mp3_from_wav(OUT_DIR / "voiceover_en.wav", OUT_DIR / "voiceover_en.mp3")
 
 
 def main() -> None:
@@ -786,7 +762,7 @@ def main() -> None:
         )
 
     write_duration_files(segments, args.tail_padding)
-    print(f"Wrote {OUT_DIR / 'voiceover_en.mp3'}")
+    print(f"Wrote {OUT_DIR / 'voiceover_en.wav'}")
 
 
 if __name__ == "__main__":

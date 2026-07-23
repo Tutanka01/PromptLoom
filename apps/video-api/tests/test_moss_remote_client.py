@@ -38,7 +38,6 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
     audio_dir = tmp_path / "audio" / "en"
     audio_dir.mkdir(parents=True)
     (audio_dir / "Scene1.wav").write_bytes(b"RIFFlocal")
-    (audio_dir / "Scene1.mp3").write_bytes(b"ID3")
 
     requests: list[tuple[str, str, dict | None]] = []
     states = iter(
@@ -72,7 +71,6 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
     monkeypatch.setattr(module, "OUT_DIR", audio_dir)
     monkeypatch.setattr(module, "_request_json", fake_request_json)
     monkeypatch.setattr(module, "_download_file", fake_download_file)
-    monkeypatch.setattr(module, "write_mp3_from_wav", lambda wav, mp3: mp3.write_bytes(b"ID3"))
 
     module.generate_moss_remote(
         _SEGMENTS,
@@ -97,7 +95,7 @@ def test_moss_remote_sends_only_missing_segments_and_anchors_to_local_wav(
 
     assert downloads == ["http://gpu.lan:8100/v1/jobs/j1/audio/Scene2.wav"]
     assert (audio_dir / "Scene2.wav").read_bytes() == b"RIFFremote"
-    assert (audio_dir / "Scene2.mp3").exists()
+    assert not (audio_dir / "Scene2.mp3").exists()
 
 
 def test_moss_remote_skips_server_call_when_everything_is_cached(
@@ -108,7 +106,6 @@ def test_moss_remote_skips_server_call_when_everything_is_cached(
     audio_dir.mkdir(parents=True)
     for segment in _SEGMENTS:
         (audio_dir / f"{segment['key']}.wav").write_bytes(b"RIFF")
-        (audio_dir / f"{segment['key']}.mp3").write_bytes(b"ID3")
 
     def unexpected_request(*args, **kwargs):
         raise AssertionError("server must not be called when all WAVs exist")
