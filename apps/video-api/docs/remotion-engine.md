@@ -109,8 +109,9 @@ puis l'**encadre** (analogues des gardes Manim) :
 1. allow-list d'imports : seulement `react`, `remotion`, et le barrel `../../lib` ;
 2. scan d'API interdites (`eval`/`Function`/`fetch`/`require`/`import()`/`process`/`fs`/…) ;
 3. export du nom exact = clé de scène ;
-4. `tsc --noEmit` sur le projet avec le candidat en place ;
-5. smoke `remotion still` d'une frame de la scène isolée.
+4. `tsc --noEmit` avec un `tsconfig` éphémère limité aux candidats de la vague ;
+5. smoke `remotion still` d'une frame de la scène isolée, avec le `publicDir`
+   propre au job.
 
 Échec après `VIDEO_API_SCENE_CODER_ATTEMPTS` tentatives → **fallback déterministe**
 vers une `BulletScene` construite depuis la narration (`fallback_custom_to_palette`).
@@ -123,10 +124,14 @@ primitives + style + hooks Remotion courants). Skill LLM : `docs/remotion-skill.
 ## Isolation par job
 
 `render_en.sh` injecte les scènes Custom + une **entrée par job** dans le projet
-Remotion partagé sous un id unique : `src/jobScenes/<id>/` et `src/entries/<id>.tsx`
-(nettoyés via `trap` en fin de rendu). Pas de mutation de fichiers partagés → sûr en
-concurrence ; `node_modules` résolus depuis le projet partagé. `$VIDEO_API_REMOTION_DIR`
-override le chemin (défaut `repo_root/apps/video-api/remotion`).
+Remotion partagé sous un id unique : `src/jobScenes/<id>/` et
+`src/entries/<id>.tsx` (nettoyés via `trap` en fin de rendu). Le typecheck de
+chaque vague utilise son propre `tsconfig`, qui ne voit aucun candidat d'un
+autre job. Les médias sont copiés sous le `remotion_public/` du job et les CLI
+`still`/`render` reçoivent explicitement ce `--public-dir` : aucun bundle ne
+copie les footages d'un autre job. Le runtime et `node_modules` restent partagés
+en lecture seule. `$VIDEO_API_REMOTION_DIR` override le chemin (défaut
+`repo_root/apps/video-api/remotion`).
 
 ## Qualité / verify
 

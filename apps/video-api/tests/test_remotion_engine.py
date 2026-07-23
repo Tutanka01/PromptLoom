@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +21,11 @@ from video_api.pipeline.remotion_materialize import (
     fallback_custom_to_palette,
     validate_remotion_video_source,
 )
-from video_api.pipeline.remotion_scene_coder import _select_scene_skills, _validate_static
+from video_api.pipeline.remotion_scene_coder import (
+    _batch_smoke_check,
+    _select_scene_skills,
+    _validate_static,
+)
 from video_api.schemas import RemotionBlueprint
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -363,6 +368,9 @@ def test_normalise_narration_field_aliases() -> None:
 # --------------------------------------------------------------------------- #
 def test_materialize_writes_contract(tmp_path) -> None:
     bp = fake_remotion_blueprint("Explain page tables", "cs", 240)
+    workspace_assets = tmp_path / "assets"
+    workspace_assets.mkdir()
+    (workspace_assets / "diagram.png").write_bytes(b"job-local-asset")
     video_dir = RemotionMaterializer(_settings()).materialize(bp, tmp_path)
     for name in [
         "segments_en.json",
@@ -381,6 +389,13 @@ def test_materialize_writes_contract(tmp_path) -> None:
     # speed knobs from Settings are pinned on the render command
     assert '--concurrency="75%"' in render
     assert '--x264-preset="faster"' in render
+    assert 'PUBLIC_DIR="${VIDEO_DIR}/remotion_public"' in render
+    assert '--public-dir="${PUBLIC_DIR}"' in render
+    assert '${REMOTION_DIR}/public' not in render
+    subprocess.run(["bash", "-n", str(video_dir / "render_en.sh")], check=True)
+    public_jobs = list((video_dir / "remotion_public" / "job-assets").iterdir())
+    assert len(public_jobs) == 1
+    assert (public_jobs[0] / "diagram.png").read_bytes() == b"job-local-asset"
     assemble = (video_dir / "assemble_en.sh").read_text()
     assert 'AUDIO="${AUDIO:-audio/en/voiceover_en.wav}"' in assemble
     assert "-c:a aac" in assemble
@@ -502,6 +517,65 @@ def test_scene_coder_requires_exact_export_name() -> None:
     code = 'export const WrongName: React.FC<any> = () => null;'
     with pytest.raises(ValueError):
         _validate_static(code, "Scene1_xEN")
+
+
+def test_scene_coder_isolates_wave_tsconfig_and_public_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    remotion_dir = tmp_path / "remotion"
+    other_job = remotion_dir / "src" / "jobScenes" / "other_job"
+    other_job.mkdir(parents=True)
+    (other_job / "Broken.tsx").write_text("this is deliberately invalid", encoding="utf-8")
+    (remotion_dir / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"strict": True}, "include": ["src"]}),
+        encoding="utf-8",
+    )
+    public_dir = tmp_path / "job" / "remotion_public"
+    (public_dir / "job-assets" / "job_a").mkdir(parents=True)
+    (public_dir / "job-assets" / "job_a" / "asset.png").write_bytes(b"asset")
+
+    candidates = {
+        "Scene2_BEN": "export const Scene2_BEN: React.FC<any> = () => null;",
+        "Scene1_AEN": "export const Scene1_AEN: React.FC<any> = () => null;",
+    }
+    scenes = {
+        key: SimpleNamespace(props={"title": key})
+        for key in candidates
+    }
+    observed: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        if "tsc" in cmd:
+            project = Path(cmd[cmd.index("--project") + 1])
+            observed["project"] = project
+            observed["tsconfig"] = json.loads(project.read_text(encoding="utf-8"))
+        if "still" in cmd:
+            observed.setdefault("stills", []).append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    errors = _batch_smoke_check(
+        candidates,
+        scenes,
+        remotion_dir,
+        public_dir,
+        timeout=30,
+    )
+
+    assert errors == {}
+    tsconfig = observed["tsconfig"]
+    assert tsconfig == {
+        "extends": "../../../tsconfig.json",
+        "files": ["Scene1_AEN.tsx", "Scene2_BEN.tsx"],
+        "include": [],
+    }
+    assert "Broken.tsx" not in json.dumps(tsconfig)
+    assert not Path(observed["project"]).exists()
+    stills = observed["stills"]
+    assert len(stills) == 2
+    assert all(f"--public-dir={public_dir.resolve()}" in command for command in stills)
 
 
 def test_custom_scene_skill_router_selects_domain_guidance() -> None:
