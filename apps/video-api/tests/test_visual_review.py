@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 from video_api.pipeline.visual_review import (
     VisualReviewer,
+    _active_beat,
     _compute_score,
     _parse_review_response,
     _scene_midpoints,
@@ -309,3 +310,66 @@ def test_repair_hint_no_critical_issues():
     hint = result.repair_hint()
     assert "70.0/100" in hint
     assert "no major issues" in hint
+
+
+# ---------------------------------------------------------------------------
+# _active_beat: cross-engine schema (Manim BeatSpec vs Remotion RemotionBeat)
+# ---------------------------------------------------------------------------
+
+def _manim_scene_with_beats():
+    scene = MagicMock()
+    scene.visual_intent = "manim intent"
+    scene.text = "manim narration"
+    b = MagicMock()
+    b.at = 0.5
+    b.key = "core"
+    b.text_hint = "core text"
+    b.visual_action = "core action"
+    scene.beats = [b]
+    return scene
+
+
+def _remotion_scene_with_beats():
+    """RemotionBeat has `anchor`/`note` only — no `at`/`key`/`text_hint`/`visual_action`."""
+    scene = MagicMock()
+    scene.visual_intent = "remotion intent"
+    scene.text = "remotion narration"
+    b1 = type("RB", (), {"anchor": "system call", "note": ""})()
+    b2 = type("RB", (), {"anchor": "kernel boundary", "note": ""})()
+    scene.beats = [b1, b2]
+    return scene
+
+
+def test_active_beat_manim_returns_matching_beat():
+    scene = _manim_scene_with_beats()
+    out = _active_beat(scene, ratio=0.5)
+    assert out["key"] == "core"
+    assert out["at"] == 0.5
+    assert out["text_hint"] == "core text"
+    assert out["visual_action"] == "core action"
+
+
+def test_active_beat_remotion_synthesises_beat_and_folds_anchors():
+    """Regression: Remotion scenes carry RemotionBeat (no `at`), so `_active_beat`
+    must fall into the synthesise branch instead of raising AttributeError. The
+    anchors are folded into the intent so the reviewer still has usable signal."""
+    scene = _remotion_scene_with_beats()
+    out = _active_beat(scene, ratio=0.5)
+    assert out["key"] == "mid"
+    assert out["at"] == 0.5
+    assert "remotion intent" in out["text_hint"]
+    # The anchors are preserved verbatim so the reviewer knows what to look for.
+    assert "system call" in out["text_hint"]
+    assert "kernel boundary" in out["text_hint"]
+    assert out["visual_action"] == out["text_hint"]
+
+
+def test_active_beat_empty_beats_falls_back_to_intent():
+    scene = MagicMock()
+    scene.beats = []
+    scene.visual_intent = "the intent"
+    scene.text = "the narration"
+    out = _active_beat(scene, ratio=0.5)
+    assert out["key"] == "mid"
+    assert out["text_hint"] == "the intent"
+    assert out["visual_action"] == "the intent"
