@@ -20,6 +20,7 @@ def client(tmp_path: Path):
         fake_engine=True,
         data_dir=tmp_path / "data",
         model_id="OpenMOSS-Team/MOSS-TTS-v1.5",
+        image_digest=f"sha256:{'1' * 64}",
     )
     app = create_app(settings)
     with TestClient(app) as test_client:
@@ -68,6 +69,8 @@ def test_healthz_reports_engine_without_auth(client: TestClient) -> None:
     assert body["engine"] == "fake"
     assert body["state"] == "ready"
     assert body["auth"] is True
+    assert body["model_revision"] == "cdd3b911b1585e3f2dbc7775ef10f9926f58850a"
+    assert len(body["engine_profile_id"]) == 64
 
 
 def test_endpoints_require_api_key(client: TestClient) -> None:
@@ -87,6 +90,8 @@ def test_batch_job_completes_and_serves_wav(client: TestClient) -> None:
     assert state["status"] == "completed"
     assert [segment["status"] for segment in state["segments"]] == ["done", "done"]
     assert all(segment["duration_seconds"] > 0 for segment in state["segments"])
+    assert all(len(segment["synthesis_profile_id"]) == 64 for segment in state["segments"])
+    assert state["model_revision"] == "cdd3b911b1585e3f2dbc7775ef10f9926f58850a"
 
     wav = client.get(state["segments"][0]["wav_url"], headers=AUTH)
     assert wav.status_code == 200
@@ -156,6 +161,7 @@ def test_batching_preserves_anchor_and_completes(tmp_path: Path) -> None:
         data_dir=tmp_path / "data",
         model_id="OpenMOSS-Team/MOSS-TTS-v1.5",
         batch_size=4,
+        image_digest=f"sha256:{'1' * 64}",
     )
     app = create_app(settings)
     with TestClient(app) as client:
@@ -188,10 +194,33 @@ def test_sync_endpoint_returns_wav_bytes(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("audio/wav")
     assert response.content[:4] == b"RIFF"
+    assert len(response.headers["x-synthesis-profile-id"]) == 64
+
+
+def test_second_identical_sync_request_hits_the_hardened_cache(client: TestClient) -> None:
+    payload = {"text": "Cache this exact message.\nPlease.", "language": "en"}
+    first = client.post("/v1/tts", json=payload, headers=AUTH)
+    calls = len(client.app.state.engine.calls)
+    second = client.post("/v1/tts", json=payload, headers=AUTH)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.content == first.content
+    assert (
+        second.headers["x-synthesis-profile-id"]
+        == first.headers["x-synthesis-profile-id"]
+    )
+    assert len(client.app.state.engine.calls) == calls
 
 
 def test_model_mismatch_is_rejected(client: TestClient) -> None:
     payload = _batch_payload(model="some-other/model")
+    response = client.post("/v1/tts/batch", json=payload, headers=AUTH)
+    assert response.status_code == 409
+
+
+def test_model_revision_mismatch_is_rejected(client: TestClient) -> None:
+    payload = _batch_payload(model_revision="a" * 40)
     response = client.post("/v1/tts/batch", json=payload, headers=AUTH)
     assert response.status_code == 409
 

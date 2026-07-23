@@ -6,6 +6,12 @@ services:
         required: false
     environment:
       TTS_SERVER_MODEL: ${TTS_SERVER_MODEL:-OpenMOSS-Team/MOSS-TTS-v1.5}
+      TTS_SERVER_MODEL_REVISION: ${TTS_SERVER_MODEL_REVISION:-cdd3b911b1585e3f2dbc7775ef10f9926f58850a}
+      TTS_SERVER_CODEC_MODEL: ${TTS_SERVER_CODEC_MODEL:-OpenMOSS-Team/MOSS-Audio-Tokenizer}
+      TTS_SERVER_CODEC_REVISION: ${TTS_SERVER_CODEC_REVISION:-3cd226ba2947efa357ef453bcad111b6eafba782}
+      # Set to the immutable sha256 digest used by the deployment. If omitted,
+      # persistent CAS reuse is safely isolated to the current process boot.
+      TTS_SERVER_IMAGE_DIGEST: ${TTS_SERVER_IMAGE_DIGEST:-}
       TTS_SERVER_API_KEYS: ${TTS_SERVER_API_KEYS:-}
       TTS_SERVER_DEVICE: ${TTS_SERVER_DEVICE:-auto}
       TTS_SERVER_DTYPE: ${TTS_SERVER_DTYPE:-auto}
@@ -41,6 +47,7 @@ services:
     environment:
       TTS_SERVER_FAKE_ENGINE: "1"
       TTS_SERVER_DATA_DIR: /tmp/tts-data
+      TTS_SERVER_IMAGE_DIGEST: sha256:0000000000000000000000000000000000000000000000000000000000000000
     command: pytest -q
     volumes:
       - ./src:/app/src:ro

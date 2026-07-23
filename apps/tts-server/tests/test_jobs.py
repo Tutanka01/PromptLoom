@@ -24,6 +24,7 @@ def _store(tmp_path: Path) -> tuple[Settings, FakeEngine, AudioCache, JobStore]:
         fake_engine=True,
         data_dir=tmp_path / "data",
         model_id="OpenMOSS-Team/MOSS-TTS-v1.5",
+        image_digest=f"sha256:{'1' * 64}",
     )
     engine = FakeEngine(settings)
     engine._load_safely()
@@ -43,8 +44,12 @@ def _seed(
 ) -> bytes:
     source = tmp_path / f"{name}-source.wav"
     content = _write_wav(source, frames)
-    fingerprint = cache.fingerprint(
-        model_id=settings.model_id,
+    seed_engine = FakeEngine(settings)
+    seed_engine._load_safely()
+    engine_profile = seed_engine.synthesis_profile()
+    assert engine_profile is not None
+    _, fingerprint = cache.identity(
+        engine_profile=engine_profile,
         language="en",
         text=text,
         reference_hash=cache.file_hash(reference),

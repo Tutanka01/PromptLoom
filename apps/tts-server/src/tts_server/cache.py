@@ -1,18 +1,34 @@
-"""Content-addressed WAV cache shared by batch jobs and the sync endpoint.
+"""Versioned content-addressed WAV cache shared by every TTS endpoint.
 
-A fingerprint covers everything that shapes the audio: model id, language,
-normalized text and the *content hash* of the voice reference. MOSS sampling is
-stochastic, so the cache is also what keeps a video's voice stable across
-repair attempts: a re-run with the same text and the same anchor reuses the
-exact same WAV instead of resampling a new take.
+The cache key is fail-closed: an immutable synthesis profile captures the exact
+model/code revisions, image identity, runtime, dtype, attention backend,
+generation policy and output format. A per-request synthesis profile then adds
+the language, exact text and SHA-256 of the voice anchor. The final fingerprint
+namespaces that profile for the WAV cache. Text is never whitespace-normalized,
+because line breaks can change MOSS prosody.
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import time
+import uuid
+from collections.abc import Mapping
 from pathlib import Path
+
+PROFILE_SCHEMA = "promptloom-moss-synthesis-profile-v2"
+CACHE_KEY_SCHEMA = "promptloom-moss-wav-cache-v2"
+
+
+def _canonical_json(payload: Mapping) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
 class AudioCache:
@@ -21,20 +37,68 @@ class AudioCache:
         self.root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def file_hash(path: Path | None) -> str:
+    def file_hash(path: Path | None) -> str | None:
         if path is None:
-            return "none"
+            return None
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1 << 20), b""):
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def fingerprint(self, *, model_id: str, language: str, text: str, reference_hash: str) -> str:
-        payload = "\x00".join(
-            [model_id, language.strip().lower(), " ".join(text.split()), reference_hash]
+    @staticmethod
+    def engine_profile_id(engine_profile: Mapping) -> str:
+        payload = {
+            "schema": PROFILE_SCHEMA,
+            "engine_profile": engine_profile,
+        }
+        return hashlib.sha256(_canonical_json(payload)).hexdigest()
+
+    @staticmethod
+    def synthesis_profile_id(
+        *,
+        engine_profile: Mapping,
+        language: str,
+        text: str,
+        reference_hash: str | None,
+    ) -> str:
+        payload = {
+            "schema": PROFILE_SCHEMA,
+            "engine_profile": engine_profile,
+            "request": {
+                "language": language.strip().lower(),
+                "text": text,
+            },
+            "reference_sha256": reference_hash,
+        }
+        return hashlib.sha256(_canonical_json(payload)).hexdigest()
+
+    @staticmethod
+    def fingerprint(*, synthesis_profile_id: str) -> str:
+        payload = {
+            "schema": CACHE_KEY_SCHEMA,
+            "synthesis_profile_id": synthesis_profile_id,
+        }
+        return hashlib.sha256(_canonical_json(payload)).hexdigest()
+
+    @classmethod
+    def identity(
+        cls,
+        *,
+        engine_profile: Mapping,
+        language: str,
+        text: str,
+        reference_hash: str | None,
+    ) -> tuple[str, str]:
+        profile_id = cls.synthesis_profile_id(
+            engine_profile=engine_profile,
+            language=language,
+            text=text,
+            reference_hash=reference_hash,
         )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+        return profile_id, cls.fingerprint(
+            synthesis_profile_id=profile_id,
+        )
 
     def lookup(self, fingerprint: str) -> Path | None:
         path = self.root / f"{fingerprint}.wav"
@@ -46,9 +110,12 @@ class AudioCache:
 
     def store(self, fingerprint: str, wav_path: Path) -> Path:
         target = self.root / f"{fingerprint}.wav"
-        tmp = self.root / f"{fingerprint}.tmp"
-        shutil.copyfile(wav_path, tmp)
-        os.replace(tmp, target)
+        tmp = self.root / f".{fingerprint}.{uuid.uuid4().hex}.tmp"
+        try:
+            shutil.copyfile(wav_path, tmp)
+            os.replace(tmp, target)
+        finally:
+            tmp.unlink(missing_ok=True)
         return target
 
     def prune(self, ttl_days: float) -> int:

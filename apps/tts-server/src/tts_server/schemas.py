@@ -18,6 +18,7 @@ class BatchRequest(BaseModel):
     language: str = "en"
     # Optional sanity check: if set, must match the model the server loaded.
     model: str | None = None
+    model_revision: str | None = None
     consistent_voice: bool = True
     # Base64 WAV used as the voice-cloning reference for every segment. When
     # absent and consistent_voice=true, the first generated segment anchors
@@ -32,6 +33,7 @@ class SyncRequest(BaseModel):
     text: str = Field(min_length=1)
     language: str = "en"
     model: str | None = None
+    model_revision: str | None = None
     reference_audio_b64: str | None = None
 
 

@@ -12,7 +12,7 @@ Why it exists: the video worker used to load the ~8B MOSS checkpoint in-process,
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/healthz` | Engine state (`loading`/`ready`/`error`), model, GPU/VRAM, queue depth. `200` when ready, `503` otherwise. No auth. |
+| `GET` | `/healthz` | Engine state (`loading`/`ready`/`error`), pinned model/codec revisions, synthesis engine profile, GPU/VRAM and queue depth. `200` when ready, `503` otherwise. No auth. |
 | `POST` | `/v1/tts/batch` | Submit all segments of a video in one call. Returns `202` with a `job_id`. |
 | `GET` | `/v1/jobs/{job_id}` | Per-segment progress + download URLs when done. |
 | `GET` | `/v1/jobs/{job_id}/audio/{key}.wav` | Download the canonical PCM16 segment WAV. |
@@ -27,6 +27,7 @@ All `/v1/*` endpoints require `Authorization: Bearer <key>` (or `X-API-Key: <key
 {
   "language": "en",
   "model": "OpenMOSS-Team/MOSS-TTS-v1.5",
+  "model_revision": "cdd3b911b1585e3f2dbc7775ef10f9926f58850a",
   "consistent_voice": true,
   "reference_audio_b64": null,
   "segments": [
@@ -36,7 +37,8 @@ All `/v1/*` endpoints require `Authorization: Bearer <key>` (or `X-API-Key: <key
 }
 ```
 
-- `model` is an optional sanity check: mismatch with the loaded model returns `409`.
+- `model` and `model_revision` are optional sanity checks: a mismatch with the
+  loaded model or pinned commit returns `409`.
 - `consistent_voice`: segments are synthesized in order; the first WAV (uploaded reference, else first generated segment) becomes the voice-cloning reference for the rest — same behavior as the local `moss` engine.
 - `reference_audio_b64`: optional base64 WAV forced as the reference for every segment. The video worker sends its first locally cached segment here, so a repair run keeps the same timbre.
 
@@ -46,15 +48,17 @@ All `/v1/*` endpoints require `Authorization: Bearer <key>` (or `X-API-Key: <key
 {
   "job_id": "8c1f…",
   "status": "completed",
+  "model_revision": "cdd3b911b1585e3f2dbc7775ef10f9926f58850a",
   "segments": [
     {"key": "Scene1_IntroEN", "status": "done", "cached": false,
+     "synthesis_profile_id": "8b1f…",
      "duration_seconds": 6.42, "wav_url": "/v1/jobs/8c1f…/audio/Scene1_IntroEN.wav",
      "mp3_url": "/v1/jobs/8c1f…/audio/Scene1_IntroEN.mp3"}
   ]
 }
 ```
 
-Statuses: job `queued | running | completed | failed`; segment `pending | running | done | failed`. `cached: true` means the WAV came from the content-addressed cache (model + language + normalized text + reference hash) without touching the GPU.
+Statuses: job `queued | running | completed | failed`; segment `pending | running | done | failed`. `cached: true` means the WAV came from the hardened content-addressed cache without touching the GPU.
 `mp3_url` remains present for compatibility, but no MP3 is produced during
 synthesis. The first request to that URL derives it from the canonical WAV;
 PromptLoom's video pipeline consumes only WAV and encodes AAC once in the final
@@ -72,13 +76,22 @@ barrier. If that first segment is itself a cache hit, it resolves the anchor and
 unlocks admission-time cache checks for the remaining segments. A fully cached
 batch is returned as `completed` and never increases `queue_depth`.
 
+The versioned `synthesis_profile_id` covers the pinned model, remote code and
+codec commits; immutable image digest and runtime versions; resolved dtype and
+attention backend; generation, token-budget and batching policies; language
+and exact text (including whitespace); reference-audio SHA-256; and PCM output
+format. A profile change therefore creates a cold miss instead of reusing
+ambiguous audio. The synchronous endpoint returns the same identifier in the
+`X-Synthesis-Profile-ID` header, while `/healthz` exposes the engine-only
+`engine_profile_id`.
+
 ## Deploy on the GPU server
 
 Prerequisites: NVIDIA driver, Docker, [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), ≥ 24 GB VRAM (the BF16 checkpoint needs ~16-18 GB).
 
 ```bash
 cd apps/tts-server
-cp .env.example .env        # set TTS_SERVER_API_KEYS
+cp .env.example .env        # set API key and immutable image digest
 docker compose up --build -d
 docker compose logs -f tts  # watch the model download/load
 ```
@@ -118,6 +131,10 @@ See `.env.example`. Key variables:
 | --- | --- | --- |
 | `TTS_SERVER_API_KEYS` | empty (auth off) | Comma-separated keys. Empty is for trusted LAN only. |
 | `TTS_SERVER_MODEL` | `OpenMOSS-Team/MOSS-TTS-v1.5` | Model loaded at startup. |
+| `TTS_SERVER_MODEL_REVISION` | `cdd3b9…58850a` | Exact 40-hex commit used for model weights and trusted remote code. Tags and branches are rejected. |
+| `TTS_SERVER_CODEC_MODEL` | `OpenMOSS-Team/MOSS-Audio-Tokenizer` | Codec repository loaded by the MOSS processor. |
+| `TTS_SERVER_CODEC_REVISION` | `3cd226…ba782` | Exact 40-hex codec commit. Tags and branches are rejected. |
+| `TTS_SERVER_IMAGE_DIGEST` | empty | Immutable deployed image identity (`sha256:<64-hex>` or `image@sha256:<64-hex>`). Required for safe CAS reuse across restarts. |
 | `TTS_SERVER_DEVICE` / `TTS_SERVER_DTYPE` | `auto` / `auto` | `auto` = CUDA + BF16 on the GPU box. |
 | `TTS_SERVER_MAX_NEW_TOKENS` | `4096` | Hard token ceiling. The server also derives a per-segment cap from the text length, bounding runaway generations that never emit an end token. |
 | `TTS_SERVER_BATCH_SIZE` | `1` | Same-reference segments generated per batched pass. `1` = sequential. Higher values speed up bandwidth-bound GPUs (DGX Spark / GB10) by reading the weights once for several segments; raise carefully and validate audio. |
@@ -142,5 +159,5 @@ uv venv && uv pip install -e '.[test]' && uv run pytest -q
 
 - The GPU is serialized: one synthesis at a time (queue + lock). `queue_depth` counts only jobs with unresolved misses waiting for the worker; fully cached jobs bypass it. `VIDEO_API_WORKER_CONCURRENCY=1` on the video side matches this; if you ever raise it, misses queue up here.
 - Jobs interrupted by a server restart are marked `failed: interrupted by server restart`; the video worker's retry then mostly hits the cache.
-- MOSS sampling is stochastic: the cache is also what keeps a voice take stable across repair attempts — don't disable it casually.
+- MOSS sampling is stochastic: the cache is also what keeps a voice take stable across repair attempts — don't disable it casually. If `TTS_SERVER_IMAGE_DIGEST` is absent or mutable, the server uses a random boot identity: existing files remain on disk, but cannot hit after a restart.
 - `flash-attn` is optional; when absent the engine falls back to PyTorch SDPA, which is fine. Install it in the image only if you need the extra speed.

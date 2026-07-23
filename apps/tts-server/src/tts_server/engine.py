@@ -9,12 +9,19 @@ being reloaded per video.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
+import importlib.metadata
 import importlib.util
 import logging
+import platform
+import re
 import threading
+import uuid
 import wave
 from pathlib import Path
 
+from tts_server import __version__
 from tts_server.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -74,6 +81,49 @@ AUDIO_TOKENS_PER_SECOND = 12.5
 _MIN_CHARS_PER_SECOND = 5.0
 _TOKEN_HEADROOM = 1.5
 _MIN_NEW_TOKENS = 256
+MOSS_GENERATION_PARAMETERS = {
+    "text_temperature": 1.5,
+    "text_top_p": 1.0,
+    "text_top_k": 50,
+    "audio_temperature": 1.7,
+    "audio_top_p": 0.8,
+    "audio_top_k": 25,
+    "audio_repetition_penalty": 1.0,
+}
+_COMMIT_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+_OCI_DIGEST_RE = re.compile(r"(?:^|@)(sha256:[0-9a-f]{64})$")
+
+
+def _package_version(distribution: str) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _pinned_commit(value: str, variable: str) -> str:
+    revision = value.strip().lower()
+    if not _COMMIT_REVISION_RE.fullmatch(revision):
+        raise ValueError(f"{variable} must be an explicit 40-character commit SHA")
+    return revision
+
+
+def _image_identity(configured: str) -> str:
+    match = _OCI_DIGEST_RE.search(configured.strip().lower())
+    if match:
+        return match.group(1)
+    nonce = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+    if configured:
+        logger.warning(
+            "TTS_SERVER_IMAGE_DIGEST is not an immutable sha256 digest; "
+            "persistent CAS reuse is isolated to this process boot"
+        )
+    else:
+        logger.warning(
+            "TTS_SERVER_IMAGE_DIGEST is unset; persistent CAS reuse is "
+            "isolated to this process boot"
+        )
+    return f"boot-sha256:{nonce}"
 
 
 def estimate_new_tokens(text: str, ceiling: int) -> int:
@@ -98,9 +148,13 @@ class BaseEngine:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._model_revision = settings.model_revision.strip().lower()
+        self._codec_revision = settings.codec_revision.strip().lower()
         self._lock = threading.Lock()
         self._ready = threading.Event()
         self._load_error: str | None = None
+        self._synthesis_profile: dict | None = None
+        self._image_digest = _image_identity(settings.image_digest)
 
     # -- lifecycle -----------------------------------------------------------
     def start_loading(self) -> None:
@@ -110,6 +164,7 @@ class BaseEngine:
     def _load_safely(self) -> None:
         try:
             self._load()
+            self._synthesis_profile = self._build_synthesis_profile()
         except Exception as error:  # noqa: BLE001 - surfaced via state/ensure_ready
             self._load_error = f"{type(error).__name__}: {error}"
             logger.exception("engine.load.failed model=%s", self.settings.model_id)
@@ -119,6 +174,51 @@ class BaseEngine:
 
     def _load(self) -> None:  # pragma: no cover - overridden
         pass
+
+    def _profile_details(self) -> dict:
+        return {
+            "engine": self.name,
+            "device": "unknown",
+            "dtype": "unknown",
+            "attention": "unknown",
+            "generation": {},
+            "audio_format": {},
+        }
+
+    def _build_synthesis_profile(self) -> dict:
+        profile = {
+            "generator": {
+                "name": "promptloom-moss-tts-server",
+                "version": __version__,
+                "profile_version": 2,
+            },
+            "model": {
+                "repo": self.settings.model_id,
+                "revision": self._model_revision,
+                "remote_code_revision": self._model_revision,
+                "codec_repo": self.settings.codec_model_id,
+                "codec_revision": self._codec_revision,
+            },
+            "image_digest": self._image_digest,
+            "runtime": {
+                "python": platform.python_version(),
+                "torch": _package_version("torch"),
+                "transformers": _package_version("transformers"),
+                "soundfile": _package_version("soundfile"),
+                "flash_attn": _package_version("flash-attn"),
+                "torchaudio": _package_version("torchaudio"),
+                "torchcodec": _package_version("torchcodec"),
+                "huggingface_hub": _package_version("huggingface-hub"),
+                "numpy": _package_version("numpy"),
+            },
+        }
+        profile.update(self._profile_details())
+        return profile
+
+    def synthesis_profile(self) -> dict | None:
+        if self._synthesis_profile is None:
+            return None
+        return copy.deepcopy(self._synthesis_profile)
 
     @property
     def state(self) -> str:
@@ -183,7 +283,15 @@ class BaseEngine:
             self._synthesize(text, language, reference, out_path)
 
     def info(self) -> dict:
-        return {"engine": self.name, "model": self.settings.model_id, "state": self.state}
+        return {
+            "engine": self.name,
+            "model": self.settings.model_id,
+            "model_revision": self._model_revision,
+            "codec_model": self.settings.codec_model_id,
+            "codec_revision": self._codec_revision,
+            "image_digest": self._image_digest,
+            "state": self.state,
+        }
 
 
 def _select_torch_device(requested: str) -> str:
@@ -239,9 +347,20 @@ class MossEngine(BaseEngine):
         self._model = None
         self._device: str | None = None
         self._dtype_name: str | None = None
+        self._attention: str | None = None
+        self._sample_rate: int | None = None
 
     def _load(self) -> None:
+        model_revision = _pinned_commit(
+            self.settings.model_revision,
+            "TTS_SERVER_MODEL_REVISION",
+        )
+        codec_revision = _pinned_commit(
+            self.settings.codec_revision,
+            "TTS_SERVER_CODEC_REVISION",
+        )
         import torch
+        from huggingface_hub import snapshot_download
         from transformers import AutoModel, AutoProcessor
 
         device = _select_torch_device(self.settings.device)
@@ -259,10 +378,22 @@ class MossEngine(BaseEngine):
             dtype,
             attn_implementation,
         )
-        processor = AutoProcessor.from_pretrained(self.settings.model_id, trust_remote_code=True)
+        codec_path = snapshot_download(
+            repo_id=self.settings.codec_model_id,
+            revision=codec_revision,
+        )
+        processor = AutoProcessor.from_pretrained(
+            self.settings.model_id,
+            revision=model_revision,
+            code_revision=model_revision,
+            codec_path=codec_path,
+            trust_remote_code=True,
+        )
         processor.audio_tokenizer = processor.audio_tokenizer.to(device)
         model = AutoModel.from_pretrained(
             self.settings.model_id,
+            revision=model_revision,
+            code_revision=model_revision,
             trust_remote_code=True,
             attn_implementation=attn_implementation,
             torch_dtype=dtype,
@@ -273,6 +404,37 @@ class MossEngine(BaseEngine):
         self._model = model
         self._device = device
         self._dtype_name = str(dtype)
+        self._attention = attn_implementation
+        self._sample_rate = int(processor.model_config.sampling_rate)
+
+    def _profile_details(self) -> dict:
+        return {
+            "engine": self.name,
+            "device": self._device,
+            "dtype": self._dtype_name,
+            "attention": self._attention,
+            "generation": {
+                "sampling": dict(MOSS_GENERATION_PARAMETERS),
+                "batching": {
+                    "configured_batch_size": max(1, self.settings.batch_size),
+                    "policy": "ordered-same-reference-v1",
+                    "token_budget": "maximum-estimate-in-batch-v1",
+                },
+                "max_new_tokens_policy": {
+                    "ceiling": self.settings.max_new_tokens,
+                    "audio_tokens_per_second": AUDIO_TOKENS_PER_SECOND,
+                    "minimum_chars_per_second": _MIN_CHARS_PER_SECOND,
+                    "headroom": _TOKEN_HEADROOM,
+                    "floor": _MIN_NEW_TOKENS,
+                },
+            },
+            "audio_format": {
+                "container": "wav",
+                "codec": "pcm_s16le",
+                "sample_rate": self._sample_rate,
+                "channels": 1,
+            },
+        }
 
     def _synthesize(self, text: str, language: str, reference: Path | None, out_path: Path) -> None:
         self._run([text], language, reference, [out_path])
@@ -315,6 +477,7 @@ class MossEngine(BaseEngine):
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 max_new_tokens=max_new,
+                **MOSS_GENERATION_PARAMETERS,
             )
             messages = processor.decode(outputs)
         if len(messages) != len(out_paths):
@@ -343,7 +506,13 @@ class MossEngine(BaseEngine):
 
     def info(self) -> dict:
         data = super().info()
-        data.update({"device": self._device, "dtype": self._dtype_name})
+        data.update(
+            {
+                "device": self._device,
+                "dtype": self._dtype_name,
+                "attention": self._attention,
+            }
+        )
         try:
             import torch
 
@@ -373,6 +542,23 @@ class FakeEngine(BaseEngine):
 
     def _load(self) -> None:
         return None
+
+    def _profile_details(self) -> dict:
+        return {
+            "engine": self.name,
+            "device": "fake",
+            "dtype": "pcm16",
+            "attention": "none",
+            "generation": {
+                "algorithm": "deterministic-silence-v1",
+            },
+            "audio_format": {
+                "container": "wav",
+                "codec": "pcm_s16le",
+                "sample_rate": self.sample_rate,
+                "channels": 1,
+            },
+        }
 
     def _synthesize(self, text: str, language: str, reference: Path | None, out_path: Path) -> None:
         moss_language_name(language)

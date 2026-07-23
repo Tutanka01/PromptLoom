@@ -88,6 +88,7 @@ class SegmentState:
     cached: bool = False
     duration_seconds: float | None = None
     error: str | None = None
+    synthesis_profile_id: str | None = None
 
 
 @dataclass
@@ -102,6 +103,7 @@ class Job:
     error: str | None = None
     finished_at: float | None = None
     has_reference: bool = False
+    model_revision: str = ""
 
 
 class JobStore:
@@ -164,6 +166,7 @@ class JobStore:
             created_at=time.time(),
             segments=[SegmentState(key=key, text=text) for key, text in segments],
             has_reference=reference_bytes is not None,
+            model_revision=self.settings.model_revision.strip().lower(),
         )
         job_dir = self.job_dir(job.id)
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -218,6 +221,7 @@ class JobStore:
                 "cached": segment.cached,
                 "duration_seconds": segment.duration_seconds,
                 "error": segment.error,
+                "synthesis_profile_id": segment.synthesis_profile_id,
             }
             if segment.status == "done":
                 entry["wav_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.wav"
@@ -230,6 +234,7 @@ class JobStore:
             "error": job.error,
             "language": job.language,
             "model": job.model_id,
+            "model_revision": job.model_revision,
             "consistent_voice": job.consistent_voice,
             "created_at": job.created_at,
             "finished_at": job.finished_at,
@@ -264,6 +269,7 @@ class JobStore:
             return
         job.status = "running"
         self._persist(job)
+        self.engine.ensure_ready()
         job_dir = self.job_dir(job.id)
         anchor: Path | None = None
         uploaded_reference = job_dir / REFERENCE_FILE_NAME
@@ -294,13 +300,23 @@ class JobStore:
         self._persist(job)
         logger.info("job.completed id=%s segments=%d", job.id, len(job.segments))
 
-    def _fingerprint(self, job: Job, text: str, anchor: Path | None) -> str:
-        return self.cache.fingerprint(
-            model_id=job.model_id,
+    def _fingerprint(
+        self,
+        job: Job,
+        segment: SegmentState,
+        anchor: Path | None,
+    ) -> str | None:
+        engine_profile = self.engine.synthesis_profile()
+        if engine_profile is None:
+            return None
+        profile_id, fingerprint = self.cache.identity(
+            engine_profile=engine_profile,
             language=job.language,
-            text=text,
+            text=segment.text,
             reference_hash=self.cache.file_hash(anchor),
         )
+        segment.synthesis_profile_id = profile_id
+        return fingerprint
 
     def _finalize_segment(self, job: Job, job_dir: Path, segment: SegmentState, out_path: Path) -> None:
         segment.duration_seconds = wav_duration_seconds(out_path)
@@ -326,7 +342,9 @@ class JobStore:
         anchor: Path | None,
     ) -> bool:
         try:
-            fingerprint = self._fingerprint(job, segment.text, anchor)
+            fingerprint = self._fingerprint(job, segment, anchor)
+            if fingerprint is None:
+                return False
             cached = self.cache.lookup(fingerprint)
             if cached is None:
                 return False
@@ -389,7 +407,9 @@ class JobStore:
         self._persist(job)
         started = time.monotonic()
         out_path = job_dir / f"{segment.key}.wav"
-        fingerprint = self._fingerprint(job, segment.text, anchor)
+        fingerprint = self._fingerprint(job, segment, anchor)
+        if fingerprint is None:
+            raise RuntimeError("synthesis profile is unavailable after engine readiness")
         cached = self.cache.lookup(fingerprint)
         if cached is not None:
             self._copy_cached_wav(cached, out_path)
@@ -417,7 +437,9 @@ class JobStore:
             self._persist(job)
         for segment in segments:
             out_path = job_dir / f"{segment.key}.wav"
-            fingerprint = self._fingerprint(job, segment.text, anchor)
+            fingerprint = self._fingerprint(job, segment, anchor)
+            if fingerprint is None:
+                raise RuntimeError("synthesis profile is unavailable after engine readiness")
             cached = self.cache.lookup(fingerprint)
             if cached is not None:
                 self._copy_cached_wav(cached, out_path)
