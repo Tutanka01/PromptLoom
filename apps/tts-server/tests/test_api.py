@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import shutil
 import time
 from pathlib import Path
 
@@ -100,6 +101,8 @@ def test_batch_job_completes_and_serves_wav(client: TestClient) -> None:
 
 
 def test_batch_mp3_is_encoded_only_when_requested(client: TestClient) -> None:
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not available in this environment")
     response = client.post("/v1/tts/batch", json=_batch_payload(), headers=AUTH)
     job_id = response.json()["job_id"]
     state = _wait_for_job(client, job_id)
