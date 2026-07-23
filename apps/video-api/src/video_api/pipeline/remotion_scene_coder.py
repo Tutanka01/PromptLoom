@@ -252,7 +252,13 @@ class RemotionSceneCoder:
             return
 
         remotion_dir = self.settings.repo_root / "apps" / "video-api" / "remotion"
-        scene_codes = self._code_scenes_in_waves(custom, blueprint, remotion_dir)
+        public_dir = video_dir / "remotion_public"
+        scene_codes = self._code_scenes_in_waves(
+            custom,
+            blueprint,
+            remotion_dir,
+            public_dir,
+        )
         failed = {scene.key for scene in custom} - set(scene_codes)
 
         if scene_codes:
@@ -273,7 +279,11 @@ class RemotionSceneCoder:
         )
 
     def _code_scenes_in_waves(
-        self, custom: list[Any], blueprint: Any, remotion_dir: Path
+        self,
+        custom: list[Any],
+        blueprint: Any,
+        remotion_dir: Path,
+        public_dir: Path,
     ) -> dict[str, str]:
         """Generate all Custom scenes in attempt *waves*.
 
@@ -316,6 +326,7 @@ class RemotionSceneCoder:
                     candidates,
                     scenes_by_key,
                     remotion_dir,
+                    public_dir,
                     self.settings.scene_coder_smoke_timeout_seconds,
                 )
                 errors.update(smoke_errors)
@@ -364,15 +375,16 @@ def _batch_smoke_check(
     candidates: dict[str, str],
     scenes_by_key: dict[str, Any],
     remotion_dir: Path,
+    public_dir: Path,
     timeout: int,
 ) -> dict[str, str]:
     """Typecheck a whole wave of candidates with ONE ``tsc --noEmit``, then render
     one frame per type-clean candidate. Returns {scene_key: error} for failures.
 
     Candidates live under src/jobScenes/<batch_id>/ so their ``../../lib`` import
-    resolves exactly as at render time; tsconfig includes ``src``, so a single tsc
-    run covers every candidate of the wave. tsc errors are attributed per scene by
-    file path in the diagnostic output.
+    resolves exactly as at render time. A per-wave tsconfig allow-lists only these
+    candidates, so another job's temporary sources cannot affect the result. tsc
+    errors are attributed per scene by file path in the diagnostic output.
     """
     batch_id = "smoke_" + uuid.uuid4().hex[:12]
     scenes_dir = remotion_dir / "src" / "jobScenes" / batch_id
@@ -380,12 +392,33 @@ def _batch_smoke_check(
     errors: dict[str, str] = {}
     scenes_dir.mkdir(parents=True, exist_ok=True)
     entries_dir.mkdir(parents=True, exist_ok=True)
+    public_dir.mkdir(parents=True, exist_ok=True)
     try:
         for key, code in candidates.items():
             (scenes_dir / f"{key}.tsx").write_text(code, encoding="utf-8")
 
+        tsconfig_path = scenes_dir / "tsconfig.json"
+        tsconfig_path.write_text(
+            json.dumps(
+                {
+                    "extends": "../../../tsconfig.json",
+                    "files": [f"{key}.tsx" for key in sorted(candidates)],
+                    "include": [],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         proc = subprocess.run(
-            ["npx", "--no-install", "tsc", "--noEmit"],
+            [
+                "npx",
+                "--no-install",
+                "tsc",
+                "--project",
+                str(tsconfig_path),
+                "--noEmit",
+            ],
             cwd=remotion_dir,
             capture_output=True,
             text=True,
@@ -396,7 +429,11 @@ def _batch_smoke_check(
             attributed = False
             for key in candidates:
                 marker = f"jobScenes/{batch_id}/{key}.tsx"
-                lines = [line for line in output.splitlines() if marker in line]
+                lines = [
+                    line
+                    for line in output.splitlines()
+                    if marker in line.replace("\\", "/") or f"{key}.tsx" in line
+                ]
                 if lines:
                     errors[key] = "tsc failed:\n" + "\n".join(lines[:12])
                     attributed = True
@@ -420,7 +457,7 @@ def _batch_smoke_check(
                     [
                         "npx", "--no-install", "remotion", "still",
                         f"src/entries/{batch_id}_{key}.tsx", "Smoke", str(out_png),
-                        "--frame=75", "--log=error",
+                        "--frame=75", f"--public-dir={public_dir.resolve()}", "--log=error",
                     ],
                     remotion_dir,
                     timeout,

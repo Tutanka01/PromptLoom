@@ -12,12 +12,16 @@ import shutil
 import shlex
 import subprocess
 import time
+import wave
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
 SEGMENTS_FILE = ROOT / "segments_en.json"
 OUT_DIR = ROOT / "audio" / "en"
+MOSS_WAV_CHANNELS = 1
+MOSS_WAV_SAMPLE_RATE = 24000
+MOSS_WAV_SAMPLE_WIDTH = 2
 
 
 def bool_env(name: str, default: bool = False) -> bool:
@@ -51,19 +55,10 @@ def ffprobe_duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
-def write_mp3_from_wav(wav_path: Path, mp3_path: Path) -> None:
-    if not shutil.which("ffmpeg"):
-        raise SystemExit("ffmpeg is required to encode MP3.")
-    run(["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-q:a", "2", str(mp3_path)])
-
-
 def should_skip_existing(key: str, force: bool) -> bool:
     wav_path = OUT_DIR / f"{key}.wav"
-    mp3_path = OUT_DIR / f"{key}.mp3"
     if force or not wav_path.exists():
         return False
-    if not mp3_path.exists():
-        write_mp3_from_wav(wav_path, mp3_path)
     print(f"Reusing existing audio for {key}")
     return True
 
@@ -85,7 +80,6 @@ def generate_kokoro(segments: list[dict], voice: str, speed: float, lang: str, f
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating Kokoro segment {key}")
         chunks = []
         for _, _, audio in pipeline(text, voice=voice, speed=speed, split_pattern=r"\n+"):
@@ -94,7 +88,6 @@ def generate_kokoro(segments: list[dict], voice: str, speed: float, lang: str, f
             raise RuntimeError(f"No audio generated for {key}")
         audio = np.concatenate(chunks)
         sf.write(str(wav_path), audio, 24000)
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def generate_chatterbox_turbo(segments: list[dict], exaggeration: float, cfg_weight: float, temperature: float, force: bool) -> None:
@@ -111,7 +104,6 @@ def generate_chatterbox_turbo(segments: list[dict], exaggeration: float, cfg_wei
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating Chatterbox Turbo segment {key}")
         wav = model.generate(
             text,
@@ -120,7 +112,6 @@ def generate_chatterbox_turbo(segments: list[dict], exaggeration: float, cfg_wei
             temperature=temperature,
         )
         ta.save(str(wav_path), wav, model.sr)
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: float, temperature: float, force: bool) -> None:
@@ -137,7 +128,6 @@ def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: f
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating Chatterbox segment {key}")
         wav = model.generate(
             text,
@@ -146,7 +136,6 @@ def generate_chatterbox(segments: list[dict], exaggeration: float, cfg_weight: f
             temperature=temperature,
         )
         ta.save(str(wav_path), wav, model.sr)
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def write_openai_response(response, path: Path) -> None:
@@ -183,7 +172,6 @@ def generate_openai(
         if should_skip_existing(key, force):
             continue
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         source_path = wav_path if response_format == "wav" else OUT_DIR / f"{key}.openai.{response_format}"
         print(f"Generating OpenAI-compatible TTS segment {key} with model {model}")
         response = client.audio.speech.create(
@@ -212,7 +200,6 @@ def generate_openai(
                     str(wav_path),
                 ]
             )
-        write_mp3_from_wav(wav_path, mp3_path)
 
 
 def _select_torch_device(requested: str) -> str:
@@ -438,7 +425,6 @@ def generate_moss(
                 anchor_reference_audio = str(wav_path.resolve())
                 print(f"Using existing {key} audio as MOSS voice reference for following segments")
             continue
-        mp3_path = OUT_DIR / f"{key}.mp3"
         print(f"Generating MOSS TTS segment {key} language={language} model={model_id}")
         if command_template:
             _run_moss_command_template(
@@ -458,7 +444,6 @@ def generate_moss(
             if reference_text:
                 print("Warning: --moss-reference-text is not used by the native MOSS-TTS generator.")
             _generate_moss_audio(processor, model, text, language, anchor_reference_audio, wav_path)
-        write_mp3_from_wav(wav_path, mp3_path)
         if consistent_voice and not anchor_reference_audio:
             anchor_reference_audio = str(wav_path.resolve())
             print(f"Using generated {key} audio as MOSS voice reference for following segments")
@@ -502,6 +487,79 @@ def _download_file(url: str, api_key: str, dest: Path, timeout: float = 600.0) -
             shutil.copyfileobj(response, handle)
     except urllib.error.URLError as error:
         raise RuntimeError(f"Failed to download {url}: {error}") from error
+
+
+def _validate_moss_wav(path: Path, expected_duration: float | None = None) -> float:
+    """Validate a complete canonical MOSS WAV and return its exact duration."""
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        header = handle.read(12)
+    if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
+        raise RuntimeError(f"Invalid MOSS WAV header: {path.name}")
+    declared_size = int.from_bytes(header[4:8], "little") + 8
+    if declared_size > size:
+        raise RuntimeError(
+            f"Truncated MOSS WAV: {path.name} declares {declared_size} bytes, downloaded {size}"
+        )
+
+    try:
+        with wave.open(str(path), "rb") as handle:
+            channels = handle.getnchannels()
+            sample_width = handle.getsampwidth()
+            sample_rate = handle.getframerate()
+            frame_count = handle.getnframes()
+            compression = handle.getcomptype()
+            payload = handle.readframes(frame_count)
+    except (EOFError, OSError, wave.Error) as error:
+        raise RuntimeError(f"Invalid MOSS WAV container {path.name}: {error}") from error
+
+    if compression != "NONE" or sample_width != MOSS_WAV_SAMPLE_WIDTH:
+        raise RuntimeError(
+            f"Invalid MOSS WAV encoding for {path.name}: expected PCM16, "
+            f"got compression={compression} sample_width={sample_width}"
+        )
+    if channels != MOSS_WAV_CHANNELS:
+        raise RuntimeError(
+            f"Invalid MOSS WAV channels for {path.name}: "
+            f"expected {MOSS_WAV_CHANNELS}, got {channels}"
+        )
+    if sample_rate != MOSS_WAV_SAMPLE_RATE:
+        raise RuntimeError(
+            f"Invalid MOSS WAV sample rate for {path.name}: "
+            f"expected {MOSS_WAV_SAMPLE_RATE}, got {sample_rate}"
+        )
+    if frame_count <= 0:
+        raise RuntimeError(f"Empty MOSS WAV: {path.name}")
+    expected_payload_size = frame_count * channels * sample_width
+    if len(payload) != expected_payload_size:
+        raise RuntimeError(
+            f"Truncated MOSS WAV payload for {path.name}: "
+            f"expected {expected_payload_size} bytes, got {len(payload)}"
+        )
+
+    duration = frame_count / float(sample_rate)
+    if expected_duration is not None and abs(duration - float(expected_duration)) > 0.05:
+        raise RuntimeError(
+            f"MOSS WAV duration mismatch for {path.name}: "
+            f"server={float(expected_duration):.3f}s downloaded={duration:.3f}s"
+        )
+    return duration
+
+
+def _download_moss_wav_atomic(
+    url: str,
+    api_key: str,
+    dest: Path,
+    expected_duration: float | None = None,
+) -> None:
+    part_path = dest.with_suffix(f"{dest.suffix}.part")
+    part_path.unlink(missing_ok=True)
+    try:
+        _download_file(url, api_key, part_path)
+        _validate_moss_wav(part_path, expected_duration)
+        os.replace(part_path, dest)
+    finally:
+        part_path.unlink(missing_ok=True)
 
 
 def _absolute_url(base: str, url: str) -> str:
@@ -573,11 +631,53 @@ def generate_moss_remote(
 
     deadline = time.monotonic() + timeout_seconds
     reported_done = -1
+    pending_keys = {segment["key"] for segment in pending}
+    downloaded_keys: set[str] = set()
     while True:
         state = _request_json("GET", job_url, api_key)
-        if state["status"] in {"completed", "failed"}:
+        state_segments = state.get("segments", [])
+        seen_keys: set[str] = set()
+        for remote_segment in state_segments:
+            key = remote_segment.get("key")
+            if key not in pending_keys:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} returned unexpected segment key {key!r}"
+                )
+            if key in seen_keys:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} returned duplicate segment key {key!r}"
+                )
+            seen_keys.add(key)
+            if remote_segment.get("status") != "done" or key in downloaded_keys:
+                continue
+            wav_url = remote_segment.get("wav_url")
+            if not wav_url:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} marked {key} done without a wav_url"
+                )
+            wav_path = OUT_DIR / f"{key}.wav"
+            _download_moss_wav_atomic(
+                _absolute_url(base, wav_url),
+                api_key,
+                wav_path,
+                remote_segment.get("duration_seconds"),
+            )
+            downloaded_keys.add(key)
+            print(f"Downloaded {key}.wav (cached={remote_segment.get('cached')})")
+
+        if state["status"] == "failed":
+            raise RuntimeError(
+                f"TTS server job {created['job_id']} failed: {state.get('error')}"
+            )
+        if state["status"] == "completed":
+            missing = pending_keys - downloaded_keys
+            if missing:
+                raise RuntimeError(
+                    f"TTS server job {created['job_id']} completed without downloadable WAVs: "
+                    f"{', '.join(sorted(missing))}"
+                )
             break
-        done = sum(1 for segment in state.get("segments", []) if segment.get("status") == "done")
+        done = len(downloaded_keys)
         if done != reported_done:
             print(f"TTS server progress: {done}/{len(pending)} segment(s) done")
             reported_done = done
@@ -587,16 +687,6 @@ def generate_moss_remote(
             )
         time.sleep(poll_seconds)
 
-    if state["status"] == "failed":
-        raise RuntimeError(f"TTS server job {created['job_id']} failed: {state.get('error')}")
-
-    for segment in state["segments"]:
-        key = segment["key"]
-        wav_path = OUT_DIR / f"{key}.wav"
-        _download_file(_absolute_url(base, segment["wav_url"]), api_key, wav_path)
-        print(f"Downloaded {key}.wav (cached={segment.get('cached')})")
-        write_mp3_from_wav(wav_path, OUT_DIR / f"{key}.mp3")
-
 
 def write_duration_files(segments: list[dict], tail_padding: float) -> None:
     durations = {}
@@ -604,12 +694,9 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
     for segment in segments:
         key = segment["key"]
         wav_path = OUT_DIR / f"{key}.wav"
-        mp3_path = OUT_DIR / f"{key}.mp3"
         padded_wav_path = OUT_DIR / f"{key}.padded.wav"
         if not wav_path.exists():
             raise FileNotFoundError(wav_path)
-        if not mp3_path.exists():
-            write_mp3_from_wav(wav_path, mp3_path)
         target_duration = round(ffprobe_duration(wav_path) + tail_padding, 3)
         durations[key] = target_duration
         run(
@@ -650,7 +737,6 @@ def write_duration_files(segments: list[dict], tail_padding: float) -> None:
             str(OUT_DIR / "voiceover_en.wav"),
         ]
     )
-    write_mp3_from_wav(OUT_DIR / "voiceover_en.wav", OUT_DIR / "voiceover_en.mp3")
 
 
 def main() -> None:
@@ -786,7 +872,7 @@ def main() -> None:
         )
 
     write_duration_files(segments, args.tail_padding)
-    print(f"Wrote {OUT_DIR / 'voiceover_en.mp3'}")
+    print(f"Wrote {OUT_DIR / 'voiceover_en.wav'}")
 
 
 if __name__ == "__main__":

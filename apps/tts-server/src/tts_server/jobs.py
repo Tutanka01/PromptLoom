@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import queue
 import shutil
 import subprocess
@@ -47,14 +48,36 @@ def wav_duration_seconds(path: Path) -> float | None:
         return None
 
 
-def encode_mp3(wav_path: Path, mp3_path: Path) -> bool:
+def encode_mp3(wav_path: Path, mp3_path: Path) -> None:
+    """Encode the compatibility MP3 lazily and publish it atomically."""
     if not shutil.which("ffmpeg"):
-        return False
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-q:a", "2", str(mp3_path)],
-        capture_output=True,
-    )
-    return result.returncode == 0 and mp3_path.exists()
+        raise RuntimeError("ffmpeg is required to encode MP3")
+    part_path = mp3_path.with_suffix(f"{mp3_path.suffix}.part")
+    part_path.unlink(missing_ok=True)
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(wav_path),
+                "-codec:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                "-f",
+                "mp3",
+                str(part_path),
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0 or not part_path.exists():
+            detail = result.stderr.decode("utf-8", "replace")[-500:]
+            raise RuntimeError(f"ffmpeg failed to encode MP3: {detail}")
+        os.replace(part_path, mp3_path)
+    finally:
+        part_path.unlink(missing_ok=True)
 
 
 @dataclass
@@ -65,6 +88,7 @@ class SegmentState:
     cached: bool = False
     duration_seconds: float | None = None
     error: str | None = None
+    synthesis_profile_id: str | None = None
 
 
 @dataclass
@@ -79,6 +103,7 @@ class Job:
     error: str | None = None
     finished_at: float | None = None
     has_reference: bool = False
+    model_revision: str = ""
 
 
 class JobStore:
@@ -141,21 +166,39 @@ class JobStore:
             created_at=time.time(),
             segments=[SegmentState(key=key, text=text) for key, text in segments],
             has_reference=reference_bytes is not None,
+            model_revision=self.settings.model_revision.strip().lower(),
         )
         job_dir = self.job_dir(job.id)
         job_dir.mkdir(parents=True, exist_ok=True)
-        if reference_bytes:
-            (job_dir / REFERENCE_FILE_NAME).write_bytes(reference_bytes)
+        if reference_bytes is not None:
+            reference_path = job_dir / REFERENCE_FILE_NAME
+            reference_part = reference_path.with_suffix(".wav.part")
+            reference_part.unlink(missing_ok=True)
+            try:
+                reference_part.write_bytes(reference_bytes)
+                os.replace(reference_part, reference_path)
+            finally:
+                reference_part.unlink(missing_ok=True)
         with self._lock:
             self._jobs[job.id] = job
         self._persist(job)
-        self._queue.put(job.id)
+        self._resolve_admission_cache(job, job_dir)
+        misses = sum(1 for segment in job.segments if segment.status != "done")
+        if misses:
+            self._queue.put(job.id)
+        else:
+            job.status = "completed"
+            job.finished_at = time.time()
+            self._persist(job)
         logger.info(
-            "job.created id=%s language=%s segments=%d reference=%s",
+            "job.created id=%s language=%s segments=%d reference=%s "
+            "admission_hits=%d queued_misses=%d",
             job.id,
             language,
             len(job.segments),
             job.has_reference,
+            len(job.segments) - misses,
+            misses,
         )
         return job
 
@@ -171,7 +214,6 @@ class JobStore:
 
     def public_state(self, job: Job) -> dict:
         segments = []
-        job_dir = self.job_dir(job.id)
         for segment in job.segments:
             entry: dict = {
                 "key": segment.key,
@@ -179,11 +221,12 @@ class JobStore:
                 "cached": segment.cached,
                 "duration_seconds": segment.duration_seconds,
                 "error": segment.error,
+                "synthesis_profile_id": segment.synthesis_profile_id,
             }
             if segment.status == "done":
                 entry["wav_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.wav"
-                if (job_dir / f"{segment.key}.mp3").exists():
-                    entry["mp3_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.mp3"
+                # Compatibility URL: the MP3 is encoded only when first requested.
+                entry["mp3_url"] = f"/v1/jobs/{job.id}/audio/{segment.key}.mp3"
             segments.append(entry)
         return {
             "job_id": job.id,
@@ -191,6 +234,7 @@ class JobStore:
             "error": job.error,
             "language": job.language,
             "model": job.model_id,
+            "model_revision": job.model_revision,
             "consistent_voice": job.consistent_voice,
             "created_at": job.created_at,
             "finished_at": job.finished_at,
@@ -213,49 +257,148 @@ class JobStore:
                 logger.exception("job.failed id=%s", job.id)
                 job.status = "failed"
                 job.error = f"{type(error).__name__}: {error}"
+                for segment in job.segments:
+                    if segment.status != "done":
+                        segment.status = "failed"
+                        segment.error = job.error
                 job.finished_at = time.time()
                 self._persist(job)
 
     def _process(self, job: Job) -> None:
+        if job.status == "completed":
+            return
         job.status = "running"
         self._persist(job)
+        self.engine.ensure_ready()
         job_dir = self.job_dir(job.id)
         anchor: Path | None = None
         uploaded_reference = job_dir / REFERENCE_FILE_NAME
         if uploaded_reference.exists():
             anchor = uploaded_reference
 
-        segments = job.segments
-        start_index = 0
+        remaining = job.segments
         # Consistent voice without an uploaded reference: the first segment must
         # be rendered alone because its WAV becomes the cloning anchor for every
         # following segment. Once that anchor exists, all the rest share it and
         # can be generated in one batched pass.
-        if job.consistent_voice and anchor is None and segments:
-            self._render_segment(job, job_dir, segments[0], anchor)
-            anchor = job_dir / f"{segments[0].key}.wav"
-            start_index = 1
+        if job.consistent_voice and anchor is None and job.segments:
+            first = job.segments[0]
+            if first.status != "done":
+                self._render_segment(job, job_dir, first, anchor)
+            anchor = job_dir / f"{first.key}.wav"
+            remaining = job.segments[1:]
 
-        self._render_remaining(job, job_dir, segments[start_index:], anchor)
+        self._render_remaining(
+            job,
+            job_dir,
+            [segment for segment in remaining if segment.status != "done"],
+            anchor,
+        )
 
         job.status = "completed"
         job.finished_at = time.time()
         self._persist(job)
         logger.info("job.completed id=%s segments=%d", job.id, len(job.segments))
 
-    def _fingerprint(self, job: Job, text: str, anchor: Path | None) -> str:
-        return self.cache.fingerprint(
-            model_id=job.model_id,
+    def _fingerprint(
+        self,
+        job: Job,
+        segment: SegmentState,
+        anchor: Path | None,
+    ) -> str | None:
+        engine_profile = self.engine.synthesis_profile()
+        if engine_profile is None:
+            return None
+        profile_id, fingerprint = self.cache.identity(
+            engine_profile=engine_profile,
             language=job.language,
-            text=text,
+            text=segment.text,
             reference_hash=self.cache.file_hash(anchor),
         )
+        segment.synthesis_profile_id = profile_id
+        return fingerprint
 
     def _finalize_segment(self, job: Job, job_dir: Path, segment: SegmentState, out_path: Path) -> None:
-        encode_mp3(out_path, job_dir / f"{segment.key}.mp3")
         segment.duration_seconds = wav_duration_seconds(out_path)
         segment.status = "done"
+        segment.error = None
         self._persist(job)
+
+    @staticmethod
+    def _copy_cached_wav(cached: Path, out_path: Path) -> None:
+        part_path = out_path.with_suffix(f"{out_path.suffix}.part")
+        part_path.unlink(missing_ok=True)
+        try:
+            shutil.copyfile(cached, part_path)
+            os.replace(part_path, out_path)
+        finally:
+            part_path.unlink(missing_ok=True)
+
+    def _materialize_cache_hit(
+        self,
+        job: Job,
+        job_dir: Path,
+        segment: SegmentState,
+        anchor: Path | None,
+    ) -> bool:
+        try:
+            fingerprint = self._fingerprint(job, segment, anchor)
+            if fingerprint is None:
+                return False
+            cached = self.cache.lookup(fingerprint)
+            if cached is None:
+                return False
+            out_path = job_dir / f"{segment.key}.wav"
+            self._copy_cached_wav(cached, out_path)
+        except OSError as error:
+            logger.warning(
+                "job.cache_hit.unreadable id=%s key=%s error=%s",
+                job.id,
+                segment.key,
+                error,
+            )
+            return False
+        segment.cached = True
+        self._finalize_segment(job, job_dir, segment, out_path)
+        logger.info("job.segment.admission_hit id=%s key=%s", job.id, segment.key)
+        return True
+
+    def _resolve_admission_cache(self, job: Job, job_dir: Path) -> None:
+        """Publish every cache hit whose voice-reference hash is already known."""
+        if not job.segments:
+            return
+        uploaded_reference = job_dir / REFERENCE_FILE_NAME
+        anchor = uploaded_reference if uploaded_reference.exists() else None
+
+        if anchor is not None or not job.consistent_voice:
+            for segment in job.segments:
+                self._materialize_cache_hit(job, job_dir, segment, anchor)
+            return
+
+        # With implicit consistent-voice anchoring, later fingerprints depend on
+        # the first WAV. A miss keeps that segment as the GPU barrier; a hit
+        # resolves the anchor immediately and unlocks preflight for the rest.
+        first = job.segments[0]
+        if not self._materialize_cache_hit(job, job_dir, first, None):
+            return
+        anchor = job_dir / f"{first.key}.wav"
+        for segment in job.segments[1:]:
+            self._materialize_cache_hit(job, job_dir, segment, anchor)
+
+    def ensure_mp3(self, job: Job, key: str) -> Path:
+        """Return a segment MP3, creating it on demand from the canonical WAV."""
+        segment = next((item for item in job.segments if item.key == key), None)
+        if segment is None or segment.status != "done":
+            raise FileNotFoundError(f"audio not generated yet for {key}")
+        job_dir = self.job_dir(job.id)
+        wav_path = job_dir / f"{key}.wav"
+        mp3_path = job_dir / f"{key}.mp3"
+        if not wav_path.exists():
+            raise FileNotFoundError(wav_path)
+        with self._lock:
+            if not mp3_path.exists():
+                encode_mp3(wav_path, mp3_path)
+        return mp3_path
 
     def _render_segment(
         self, job: Job, job_dir: Path, segment: SegmentState, anchor: Path | None
@@ -264,10 +407,12 @@ class JobStore:
         self._persist(job)
         started = time.monotonic()
         out_path = job_dir / f"{segment.key}.wav"
-        fingerprint = self._fingerprint(job, segment.text, anchor)
+        fingerprint = self._fingerprint(job, segment, anchor)
+        if fingerprint is None:
+            raise RuntimeError("synthesis profile is unavailable after engine readiness")
         cached = self.cache.lookup(fingerprint)
         if cached is not None:
-            shutil.copyfile(cached, out_path)
+            self._copy_cached_wav(cached, out_path)
             segment.cached = True
         else:
             self.engine.synthesize(segment.text, job.language, anchor, out_path)
@@ -292,10 +437,12 @@ class JobStore:
             self._persist(job)
         for segment in segments:
             out_path = job_dir / f"{segment.key}.wav"
-            fingerprint = self._fingerprint(job, segment.text, anchor)
+            fingerprint = self._fingerprint(job, segment, anchor)
+            if fingerprint is None:
+                raise RuntimeError("synthesis profile is unavailable after engine readiness")
             cached = self.cache.lookup(fingerprint)
             if cached is not None:
-                shutil.copyfile(cached, out_path)
+                self._copy_cached_wav(cached, out_path)
                 segment.cached = True
                 self._finalize_segment(job, job_dir, segment, out_path)
             else:

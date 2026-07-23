@@ -15,7 +15,7 @@ visual_review sont partagés (`pipeline/engine.py` sélectionne le moteur, le re
 ```
 video_dir/
   segments_en.json      # {segments:[{key,title,text}]}  -> generate_voice_en.py (Chatterbox)
-  generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.mp3
+  generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.wav PCM16
   scenes_map.json       # {fps, scenes:[{key, component, custom, props}]} (ordonné)
   build_video_json.py   # durations.json + scenes_map.json -> video.json
   render_en.sh          # build video.json, injecte l'entrée par job, npx remotion render -> final/<slug>-en-silent.mp4
@@ -77,6 +77,10 @@ diverger. `captionMode` vaut `off` (masque) ou `full`/`keywords` (continu). Les
 transitions de scene sont purement visuelles : aucun effet sonore n'est ajoute
 aux coupes.
 
+La chaîne audio interne reste en WAV PCM16 depuis les segments TTS jusqu'au
+mastering/loudnorm. L'assembleur encode ensuite directement l'unique piste AAC
+192 kb/s du MP4 final ; aucun MP3 intermédiaire n'est produit.
+
 ### Direction artistique (thèmes bornés)
 
 Le blueprint choisit une palette via le champ `art_direction` (un de `default`,
@@ -105,8 +109,9 @@ puis l'**encadre** (analogues des gardes Manim) :
 1. allow-list d'imports : seulement `react`, `remotion`, et le barrel `../../lib` ;
 2. scan d'API interdites (`eval`/`Function`/`fetch`/`require`/`import()`/`process`/`fs`/…) ;
 3. export du nom exact = clé de scène ;
-4. `tsc --noEmit` sur le projet avec le candidat en place ;
-5. smoke `remotion still` d'une frame de la scène isolée.
+4. `tsc --noEmit` avec un `tsconfig` éphémère limité aux candidats de la vague ;
+5. smoke `remotion still` d'une frame de la scène isolée, avec le `publicDir`
+   propre au job.
 
 Échec après `VIDEO_API_SCENE_CODER_ATTEMPTS` tentatives → **fallback déterministe**
 vers une `BulletScene` construite depuis la narration (`fallback_custom_to_palette`).
@@ -116,13 +121,24 @@ Le rendu global réussit toujours. Désactiver le code libre :
 Surface autorisée pour le code libre : le barrel `remotion/src/lib.ts` (catalogue +
 primitives + style + hooks Remotion courants). Skill LLM : `docs/remotion-skill.md`.
 
-## Isolation par job
+## Isolation TypeScript et médias par job
 
 `render_en.sh` injecte les scènes Custom + une **entrée par job** dans le projet
-Remotion partagé sous un id unique : `src/jobScenes/<id>/` et `src/entries/<id>.tsx`
-(nettoyés via `trap` en fin de rendu). Pas de mutation de fichiers partagés → sûr en
-concurrence ; `node_modules` résolus depuis le projet partagé. `$VIDEO_API_REMOTION_DIR`
-override le chemin (défaut `repo_root/apps/video-api/remotion`).
+Remotion partagé sous un id unique : `src/jobScenes/<id>/` et
+`src/entries/<id>.tsx`, nettoyés via `trap` en fin de rendu.
+
+Le scene-coder crée aussi un `tsconfig.json` éphémère dans le dossier unique de
+chaque vague. Sa liste `files` contient uniquement les candidats de cette vague :
+`tsc --noEmit` ne voit donc ni les sources temporaires ni les erreurs d'un autre
+job, et le `tsconfig` racine partagé n'est jamais modifié.
+
+Les médias sont copiés sous
+`<video_dir>/remotion_public/job-assets/<id>/`. Les commandes `remotion still`
+et `remotion render` reçoivent toutes les deux ce dossier avec `--public-dir` :
+un smoke check ou un bundle ne peut pas charger les médias d'un autre job. Seuls
+le runtime et `node_modules` restent partagés en lecture seule.
+`$VIDEO_API_REMOTION_DIR` remplace le chemin du runtime partagé (défaut
+`repo_root/apps/video-api/remotion`).
 
 ## Qualité / verify
 

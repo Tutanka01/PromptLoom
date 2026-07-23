@@ -5,14 +5,15 @@ shells out to, exactly like the Manim path:
 
 - ``segments_en.json``      -> consumed by the copied ``generate_voice_en.py``
                                (Chatterbox), which writes ``audio/en/durations.json``
-                               + ``voiceover_en.mp3``.
+                               + the PCM ``voiceover_en.wav``.
 - ``scenes_map.json``       -> ordered [{key, component, props}]; the render maps
                                each scene to a registered React component.
 - ``build_video_json.py``   -> durations.json + scenes_map.json -> ``video.json``
                                (durationInFrames = round(seconds * 60)).
 - ``render_en.sh``          -> builds video.json, injects this job's custom scenes
                                + a per-job entry into the *shared* Remotion project
-                               (isolated by a unique id => concurrency-safe), runs
+                               and passes a job-local ``publicDir`` (isolated by
+                               a unique id => concurrency-safe), runs
                                ``npx remotion render`` -> ``final/<slug>-en-silent.mp4``.
 - ``remotion_scenes/*.tsx`` -> bespoke ``Custom`` scene components (written by the
                                Remotion scene-coder); ``jobScenes_index.ts`` re-exports
@@ -214,21 +215,18 @@ fi
 python3 build_video_json.py
 
 # 2. Inject this job's custom scenes + a per-job entry into the shared project.
-#    Isolated by ENTRY_ID so concurrent jobs never collide; cleaned up on exit.
+#    Sources are namespaced by ENTRY_ID and the public directory stays job-local.
 ENTRY_DIR="${{REMOTION_DIR}}/src/entries"
 SCENES_DIR="${{REMOTION_DIR}}/src/jobScenes/${{ENTRY_ID}}"
-ASSET_DIR="${{REMOTION_DIR}}/public/job-assets/${{ENTRY_ID}}"
-mkdir -p "${{ENTRY_DIR}}" "${{SCENES_DIR}}" "${{ASSET_DIR}}"
-cleanup() {{ rm -f "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx"; rm -rf "${{SCENES_DIR}}" "${{ASSET_DIR}}"; }}
+PUBLIC_DIR="${{VIDEO_DIR}}/remotion_public"
+mkdir -p "${{ENTRY_DIR}}" "${{SCENES_DIR}}" "${{PUBLIC_DIR}}"
+cleanup() {{ rm -f "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx"; rm -rf "${{SCENES_DIR}}"; }}
 trap cleanup EXIT
 
 if compgen -G "remotion_scenes/*.tsx" > /dev/null; then
   cp -f remotion_scenes/*.tsx "${{SCENES_DIR}}/"
 fi
 cp -f jobScenes_index.ts "${{SCENES_DIR}}/index.ts"
-if compgen -G "assets/*" > /dev/null; then
-  cp -f assets/* "${{ASSET_DIR}}/"
-fi
 
 cat > "${{ENTRY_DIR}}/${{ENTRY_ID}}.tsx" <<'REMOTION_ENTRY_EOF'
 {entry_body}REMOTION_ENTRY_EOF
@@ -243,6 +241,7 @@ mkdir -p final
     --crf="${{CRF}}" \\
     --concurrency="{concurrency}" \\
     --x264-preset="{x264_preset}" \\
+    --public-dir="${{PUBLIC_DIR}}" \\
     --log=error )
 
 echo "Wrote {silent}"
@@ -289,9 +288,15 @@ class RemotionMaterializer:
         assets_dir = video_dir / "assets"
         if assets_dir.exists():
             shutil.rmtree(assets_dir)
+        public_dir = video_dir / "remotion_public"
+        if public_dir.exists():
+            shutil.rmtree(public_dir)
+        public_assets_dir = public_dir / "job-assets" / entry_id
+        public_assets_dir.mkdir(parents=True, exist_ok=True)
         workspace_assets = workspace / "assets"
         if workspace_assets.exists():
             shutil.copytree(workspace_assets, assets_dir)
+            shutil.copytree(assets_dir, public_assets_dir, dirs_exist_ok=True)
 
         (docs_dir / "script.md").write_text(_script_markdown(blueprint), encoding="utf-8")
         (video_dir / "segments_en.json").write_text(

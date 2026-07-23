@@ -8,7 +8,7 @@ parameters changed since that WAV was generated. This module closes that gap:
 - ``voice_signature``  -> stable hash of the resolved voice command + env, so a
   change of engine/voice/params invalidates every segment.
 - ``prune_stale_audio`` -> called by the materializers *instead of* deleting the
-  whole ``audio/`` directory. It removes only the WAV/MP3 of segments whose
+  whole ``audio/`` directory. It removes only the WAV artifacts of segments whose
   text-or-params hash changed (or that disappeared), and records the new hashes
   in ``audio/en/cache.json``. Surviving WAVs are then reused by the generator,
   so a repair attempt that only rewrites two scenes only re-synthesizes two
@@ -160,6 +160,8 @@ def segment_fingerprint(text: str, signature: str) -> str:
 def _segment_files(audio_dir: Path, key: str) -> list[Path]:
     return [
         audio_dir / f"{key}.wav",
+        audio_dir / f"{key}.wav.part",
+        # Remove legacy MP3s left by jobs created before the PCM-only pipeline.
         audio_dir / f"{key}.mp3",
         audio_dir / f"{key}.padded.wav",
         *audio_dir.glob(f"{key}.openai.*"),

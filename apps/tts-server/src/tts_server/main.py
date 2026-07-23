@@ -67,11 +67,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-    def _validate_model(requested: str | None) -> None:
+    def _validate_model(requested: str | None, requested_revision: str | None) -> None:
         if requested and requested != settings.model_id:
             raise HTTPException(
                 status_code=409,
                 detail=f"this server runs {settings.model_id!r}, not {requested!r}",
+            )
+        if requested_revision and requested_revision.lower() != settings.model_revision.lower():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"this server runs model revision {settings.model_revision!r}, "
+                    f"not {requested_revision!r}"
+                ),
             )
 
     def _decode_reference(encoded: str | None) -> bytes | None:
@@ -93,6 +101,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> JSONResponse:
         info = engine.info()
+        engine_profile = engine.synthesis_profile()
+        if engine_profile is not None:
+            info["engine_profile_id"] = cache.engine_profile_id(engine_profile)
         info.update(
             {
                 "version": __version__,
@@ -112,7 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_api_key)],
     )
     def create_batch(body: BatchRequest) -> JobCreated:
-        _validate_model(body.model)
+        _validate_model(body.model, body.model_revision)
         _validate_language(body.language)
         if len(body.segments) > settings.max_segments:
             raise HTTPException(
@@ -153,7 +164,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         if filename not in allowed:
             raise HTTPException(status_code=404, detail="unknown audio file")
-        path = jobs.job_dir(job_id) / filename
+        if filename.endswith(".mp3"):
+            try:
+                path = jobs.ensure_mp3(job, filename.removesuffix(".mp3"))
+            except FileNotFoundError as error:
+                raise HTTPException(status_code=404, detail="audio not generated yet") from error
+            except RuntimeError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+        else:
+            path = jobs.job_dir(job_id) / filename
         if not path.exists():
             raise HTTPException(status_code=404, detail="audio not generated yet")
         media_type = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"
@@ -161,7 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/tts", dependencies=[Depends(require_api_key)])
     def synthesize_sync(body: SyncRequest) -> Response:
-        _validate_model(body.model)
+        _validate_model(body.model, body.model_revision)
         _validate_language(body.language)
         if len(body.text) > settings.max_text_chars:
             raise HTTPException(
@@ -173,22 +192,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if reference:
                 reference_path = Path(tmp_dir) / "reference.wav"
                 reference_path.write_bytes(reference)
-            fingerprint = cache.fingerprint(
-                model_id=settings.model_id,
+            try:
+                engine.ensure_ready(timeout=5)
+            except EngineNotReady as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+            engine_profile = engine.synthesis_profile()
+            if engine_profile is None:
+                raise HTTPException(status_code=503, detail="synthesis profile is unavailable")
+            profile_id, fingerprint = cache.identity(
+                engine_profile=engine_profile,
                 language=body.language,
                 text=body.text,
                 reference_hash=cache.file_hash(reference_path),
             )
             cached = cache.lookup(fingerprint)
             if cached is not None:
-                return Response(content=cached.read_bytes(), media_type="audio/wav")
+                return Response(
+                    content=cached.read_bytes(),
+                    media_type="audio/wav",
+                    headers={"X-Synthesis-Profile-ID": profile_id},
+                )
             out_path = Path(tmp_dir) / "out.wav"
-            try:
-                engine.ensure_ready(timeout=5)
-            except EngineNotReady as error:
-                raise HTTPException(status_code=503, detail=str(error)) from error
             engine.synthesize(body.text, body.language, reference_path, out_path)
             cache.store(fingerprint, out_path)
-            return Response(content=out_path.read_bytes(), media_type="audio/wav")
+            return Response(
+                content=out_path.read_bytes(),
+                media_type="audio/wav",
+                headers={"X-Synthesis-Profile-ID": profile_id},
+            )
 
     return app

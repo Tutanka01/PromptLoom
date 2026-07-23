@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+DEFAULT_MODEL_REVISION = "cdd3b911b1585e3f2dbc7775ef10f9926f58850a"
+DEFAULT_CODEC_MODEL = "OpenMOSS-Team/MOSS-Audio-Tokenizer"
+DEFAULT_CODEC_REVISION = "3cd226ba2947efa357ef453bcad111b6eafba782"
+
 
 def _bool_env(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -26,6 +30,27 @@ class Settings:
     )
     model_id: str = field(
         default_factory=lambda: os.getenv("TTS_SERVER_MODEL", "OpenMOSS-Team/MOSS-TTS-v1.5")
+    )
+    model_revision: str = field(
+        default_factory=lambda: os.getenv(
+            "TTS_SERVER_MODEL_REVISION",
+            DEFAULT_MODEL_REVISION,
+        )
+    )
+    codec_model_id: str = field(
+        default_factory=lambda: os.getenv("TTS_SERVER_CODEC_MODEL", DEFAULT_CODEC_MODEL)
+    )
+    codec_revision: str = field(
+        default_factory=lambda: os.getenv(
+            "TTS_SERVER_CODEC_REVISION",
+            DEFAULT_CODEC_REVISION,
+        )
+    )
+    # OCI digest injected by the deployment (for example
+    # ghcr.io/org/image@sha256:...). If absent, the engine creates a boot-scoped
+    # identity so persistent cache entries cannot cross an unknown image.
+    image_digest: str = field(
+        default_factory=lambda: os.getenv("TTS_SERVER_IMAGE_DIGEST", "").strip()
     )
     device: str = field(default_factory=lambda: os.getenv("TTS_SERVER_DEVICE", "auto"))
     dtype: str = field(default_factory=lambda: os.getenv("TTS_SERVER_DTYPE", "auto"))
