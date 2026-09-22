@@ -266,6 +266,11 @@ class RemotionEngine:
         # Remotion renders at the configured frame rate (default 30).
         self.output_fps = float(settings.render_fps)
 
+    def forget_scene_codes(self, scene_keys: set[str] | None = None) -> None:
+        # Validated Custom TSX is reused across repair attempts while the
+        # scene's coder input is unchanged; see RemotionSceneCoder.
+        self.scene_coder.forget(scene_keys)
+
     def generate_blueprint(
         self,
         prompt: str,

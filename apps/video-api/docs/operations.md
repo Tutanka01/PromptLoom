@@ -325,6 +325,16 @@ VIDEO_API_MANIM_RENDER_JOBS=auto  # "auto" = moitie des CPU du worker, max 6 ; e
 VIDEO_API_VOICE_RENDER_OVERLAP=1  # rend chaque scene des que son WAV est pret ; 0 = voix puis rendu
 ```
 
+Chevauchement voix/scene coding (**Remotion et Manim**) :
+
+```text
+VIDEO_API_VOICE_CODEGEN_OVERLAP=1 # voix lancee pendant le scene coding ; 0 = voix apres la validation statique
+```
+
+Le gain est maximal avec un TTS distant ou GPU (`moss-remote`, `openai`) et des
+scenes Custom a coder. Avec un TTS CPU, voix et smoke checks se partagent les
+coeurs. Mesurer avec `voice.seconds` et `voice.wait_seconds` dans `report.json`.
+
 Le chevauchement voix/rendu est speculatif : la duree d'une scene est calculee
 comme le fait `generate_voice_en.py`, et le rendu final reutilise la scene
 seulement si `durations.json` donne exactement la meme duree ; sinon elle est

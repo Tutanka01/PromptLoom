@@ -115,7 +115,11 @@ puis l'**encadre** (analogues des gardes Manim) :
 
 Échec après `VIDEO_API_SCENE_CODER_ATTEMPTS` tentatives → **fallback déterministe**
 vers une `BulletScene` construite depuis la narration (`fallback_custom_to_palette`).
-Le rendu global réussit toujours. Désactiver le code libre :
+Le rendu global réussit toujours. Lors d'une réparation, le code TSX validé d'une
+scène Custom est repris tel quel (sans appel LLM ni smoke check) tant que l'entrée
+du scene coder de cette scène n'a pas changé ; les scènes signalées par la revue
+visuelle sont recodées, et toutes le sont après un échec de rendu ou de
+vérification. Désactiver le code libre :
 `VIDEO_API_SCENE_CODER_ENABLED=0` (toutes les scènes Custom retombent sur la palette).
 
 Surface autorisée pour le code libre : le barrel `remotion/src/lib.ts` (catalogue +

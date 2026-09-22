@@ -440,6 +440,9 @@ Le rapport peut contenir :
 - `llm_usage` : appels et tokens (`prompt_tokens`, `completion_tokens`) du job,
   au total et par etape (`blueprint`, `scene_coder`, `visual_review`) avec les
   modeles utilises. Aussi present dans `error.json` d'un job en echec ;
+- `voice` : `overlap` (`scene_codegen` si la voix a tourne pendant le scene
+  coding, `off` sinon), `seconds` (duree de la voix) et `wait_seconds` (temps
+  passe a attendre la voix apres le scene coding) ;
 - `render` (moteur Manim) : parallelisme, secondes par scene rendue et scenes
   reprises du cache ; `render.overlap` detaille les scenes rendues pendant la
   voix (`reused` reprises par le rendu final, `wasted` re-rendues, `failed`).

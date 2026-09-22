@@ -93,6 +93,8 @@ services:
       VIDEO_API_MANIM_RENDER_JOBS: ${VIDEO_API_MANIM_RENDER_JOBS:-auto}
       # Manim engine: render each scene as soon as its voice WAV is ready (0 = off).
       VIDEO_API_VOICE_RENDER_OVERLAP: ${VIDEO_API_VOICE_RENDER_OVERLAP:-1}
+      # Both engines: start the voice during scene coding (0 = after validation).
+      VIDEO_API_VOICE_CODEGEN_OVERLAP: ${VIDEO_API_VOICE_CODEGEN_OVERLAP:-1}
       # Word-level forced alignment (Remotion): narration-synced visual cues.
       VIDEO_API_ALIGN_ENABLED: ${VIDEO_API_ALIGN_ENABLED:-1}
       VIDEO_API_ALIGN_DEVICE: ${VIDEO_API_ALIGN_DEVICE:-auto}

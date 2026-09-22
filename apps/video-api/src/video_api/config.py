@@ -109,6 +109,12 @@ class Settings:
     voice_render_overlap: bool = field(
         default_factory=lambda: _bool_env("VIDEO_API_VOICE_RENDER_OVERLAP", True)
     )
+    # Both engines: start the voice right after materialization, while the
+    # scene coder works (the voice only reads segments_en.json). 0 = voice
+    # after scene coding and static validation.
+    voice_codegen_overlap: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_VOICE_CODEGEN_OVERLAP", True)
+    )
     # Job-resolved editorial controls. Environment values are defaults; the
     # worker replaces them from VideoJob.production_config before selecting an
     # engine. They are ordinary fields so every downstream component sees one

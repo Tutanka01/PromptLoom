@@ -215,6 +215,18 @@ pas sur une scene fautive. Pour forcer le mode 100% deterministe : `VIDEO_API_SC
 
 Le worker lance `generate_voice_en.py`.
 
+Avec `VIDEO_API_VOICE_CODEGEN_OVERLAP=1` (defaut, deux moteurs), la voix demarre
+juste apres la materialisation, en tache de fond, pendant que le scene coder et
+la validation statique travaillent : le script de voix ne lit que
+`segments_en.json`, que le scene coder ne modifie pas. Le compteur de segments
+du Studio ne s'affiche qu'une fois l'etape `voice_generation` atteinte. Une
+erreur TTS fait toujours echouer le job, a l'etape `voice_generation`. Si le
+scene coding ou la validation echoue, le worker attend la fin de la voix avant
+la reparation (les segments termines restent en cache) et garde l'erreur de
+scene comme cause. `report.json` donne `voice.seconds` (duree totale de la voix)
+et `voice.wait_seconds` (attente restante apres le scene coding). `0` = voix
+apres la validation statique, comme avant.
+
 Par defaut :
 
 ```text
@@ -275,7 +287,8 @@ re-rendues. Les logs Manim par scene sont dans `render_logs/<Scene>.log`, les
 statistiques dans `render_stats.json` et sous `render` dans `report.json`.
 
 Chevauchement voix/rendu (Manim, `VIDEO_API_VOICE_RENDER_OVERLAP=1`) : pendant
-l'etape voix, `SpeculativeRenderer` surveille `audio/en/`. Des qu'un WAV est
+l'etape voix, `SpeculativeRenderer` surveille `audio/en/` (les WAV deja termines
+pendant le scene coding sont pris des son demarrage). Des qu'un WAV est
 complet, la duree de la scene est calculee avec la formule du script de voix
 (`round(ffprobe + tail_padding, 3)`) et la scene est rendue dans une copie
 temporaire du dossier (`render_spec/<Scene>/`) ne contenant que cette duree ; le

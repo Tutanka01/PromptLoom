@@ -368,6 +368,44 @@ class VideoPipeline:
         flagged = _flagged_scene_keys(exc.result) if isinstance(exc, VisualReviewError) else set()
         forget(flagged or None)
 
+    def _generate_and_validate_scenes(
+        self, session: Session, job: VideoJob, blueprint: Any, video_dir: Path
+    ) -> None:
+        self._update(session, job, "generating_sources", 26, "scene_codegen")
+        # Bump the sub-step counter after each scene the engine finishes
+        # coding — the Studio then shows "3/8 scènes générées" while
+        # the LLM works through the blueprint. Thread-safe via a lock
+        # because the manim coder parallelises scenes.
+        scenes_total = len(blueprint.scenes)
+        scene_count = [0]
+        scene_lock = threading.Lock()
+
+        def _on_scene_done(_key: str) -> None:
+            with scene_lock:
+                scene_count[0] += 1
+                current = scene_count[0]
+            set_substep(session, job, "scenes", current, scenes_total)
+
+        self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
+
+        self._update(session, job, "static_validation", 30, "static_validation")
+        self.engine.validate_static(video_dir)
+        logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
+
+    def _log_voice_start(self, job: VideoJob, overlap: str) -> None:
+        engine = self.settings.voice_engine.strip().lower()
+        logger.info(
+            "job.voice.start job_id=%s engine=%s model=%s overlap=%s",
+            job.id,
+            self.settings.voice_engine,
+            self.settings.openai_tts_model
+            if engine == "openai"
+            else self.settings.moss_tts_model
+            if engine in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
+            else "",
+            overlap,
+        )
+
     def _start_speculative_render(
         self,
         blueprint: Any,
@@ -553,56 +591,21 @@ class VideoPipeline:
                     video_dir,
                 )
 
-                self._update(session, job, "generating_sources", 26, "scene_codegen")
-                # Bump the sub-step counter after each scene the engine finishes
-                # coding — the Studio then shows "3/8 scènes générées" while
-                # the LLM works through the blueprint. Thread-safe via a lock
-                # because the manim coder parallelises scenes.
-                _scenes_total = len(blueprint.scenes)
-                _scene_count = [0]
-                _scene_lock = threading.Lock()
-
-                def _on_scene_done(_key: str) -> None:
-                    with _scene_lock:
-                        _scene_count[0] += 1
-                        current = _scene_count[0]
-                    set_substep(session, job, "scenes", current, _scenes_total)
-
-                self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
-
-                self._update(session, job, "static_validation", 30, "static_validation")
-                self.engine.validate_static(video_dir)
-                logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
-
-                self._update(session, job, "voice_generation", 40, "voice_generation")
                 voice_args, voice_env = voice_command_for_settings(self.settings)
-                logger.info(
-                    "job.voice.start job_id=%s engine=%s model=%s",
-                    job.id,
-                    self.settings.voice_engine,
-                    self.settings.openai_tts_model
-                    if self.settings.voice_engine.strip().lower() == "openai"
-                    else self.settings.moss_tts_model
-                    if self.settings.voice_engine.strip().lower()
-                    in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
-                    else "",
-                )
                 # generate_voice_en.py prints "Generating <engine> segment ..."
                 # for every supported engine (openai / kokoro / chatterbox /
                 # chatterbox turbo / moss / moss-remote). The parser matches
                 # every label, so we install the reporter unconditionally —
                 # a non-matching line is a no-op inside the reporter.
+                # The voice only reads segments_en.json, so it can run while the
+                # scene coder works; the reporter then stays silent until the
+                # worker thread reaches the voice step and hands over the session.
+                voice_overlap = self.settings.voice_codegen_overlap
                 voice_on_line = TTSSegmentReporter(
-                    session, job, total_segments=len(blueprint.scenes)
+                    session, job, total_segments=len(blueprint.scenes), deferred=voice_overlap
                 )
-                final_render_quality = render_quality_for_profile(self.quality_profile)
-                # Draft (ql) keeps Manim's 15 fps preset; the final render
-                # follows VIDEO_API_RENDER_FPS like Remotion.
-                manim_fps = str(self.settings.render_fps) if final_render_quality == "qh" else ""
-                speculative = self._start_speculative_render(
-                    blueprint, video_dir, voice_args, final_render_quality, manim_fps
-                )
-                try:
+
+                def _run_voice() -> None:
                     runner.run(
                         voice_args,
                         cwd=video_dir,
@@ -610,12 +613,63 @@ class VideoPipeline:
                         env=voice_env,
                         on_line=voice_on_line,
                     )
+
+                background_voice: _BackgroundTask | None = None
+                if voice_overlap:
+                    self._log_voice_start(job, overlap="scene_codegen")
+                    background_voice = _BackgroundTask(_run_voice, name=f"voice-{job.id}").start()
+
+                try:
+                    self._generate_and_validate_scenes(session, job, blueprint, video_dir)
+                    self._update(session, job, "voice_generation", 40, "voice_generation")
+                except Exception:
+                    if background_voice is not None:
+                        # Never leave a voice process writing into video_dir
+                        # behind a repair attempt: let it finish (its segments
+                        # stay cached) and keep the scene error as the cause.
+                        background_voice.wait_quietly()
+                    raise
+                if background_voice is None:
+                    self._log_voice_start(job, overlap="off")
+                final_render_quality = render_quality_for_profile(self.quality_profile)
+                # Draft (ql) keeps Manim's 15 fps preset; the final render
+                # follows VIDEO_API_RENDER_FPS like Remotion.
+                manim_fps = str(self.settings.render_fps) if final_render_quality == "qh" else ""
+                voice_wait_started = time.monotonic()
+                speculative = None
+                if background_voice is None or not background_voice.done():
+                    speculative = self._start_speculative_render(
+                        blueprint, video_dir, voice_args, final_render_quality, manim_fps
+                    )
+                try:
+                    if background_voice is not None:
+                        voice_on_line.activate()
+                        background_voice.wait()
+                    else:
+                        _run_voice()
                 except BaseException:
                     if speculative is not None:
                         speculative.stop(abort=True)
                     raise
+                voice_report = {
+                    "overlap": "scene_codegen" if background_voice is not None else "off",
+                    "seconds": round(
+                        background_voice.elapsed
+                        if background_voice is not None
+                        else time.monotonic() - voice_wait_started,
+                        2,
+                    ),
+                    "wait_seconds": round(time.monotonic() - voice_wait_started, 2),
+                }
                 speculative_stats = speculative.stop() if speculative is not None else None
-                logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
+                logger.info(
+                    "job.voice.done job_id=%s engine=%s overlap=%s seconds=%.2f wait_seconds=%.2f",
+                    job.id,
+                    self.settings.voice_engine,
+                    voice_report["overlap"],
+                    voice_report["seconds"],
+                    voice_report["wait_seconds"],
+                )
                 if speculative_stats is not None:
                     logger.info(
                         "job.render.overlap job_id=%s rendered=%d failed=%d",
@@ -805,6 +859,7 @@ class VideoPipeline:
                 final_report["subtitles"] = subtitle_files
                 final_report["timings"] = _timings_from_marks(self._step_marks)
                 final_report["llm_usage"] = llm_usage.snapshot()
+                final_report["voice"] = voice_report
                 render_stats_path = video_dir / "render_stats.json"
                 if render_stats_path.exists():
                     final_report["render"] = json.loads(render_stats_path.read_text(encoding="utf-8"))
@@ -870,6 +925,45 @@ def _overlap_summary(speculative: dict, render_stats: dict) -> dict:
         "speculative_seconds": speculative["rendered_seconds"],
         "failed": speculative["failed"],
     }
+
+
+class _BackgroundTask:
+    """Run one blocking call on a daemon thread; wait() re-raises its error in
+    the caller, so a background voice failure fails the job like a foreground
+    one."""
+
+    def __init__(self, target: Any, name: str) -> None:
+        self._target = target
+        self._error: BaseException | None = None
+        self._started = 0.0
+        self.elapsed = 0.0
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
+
+    def start(self) -> "_BackgroundTask":
+        self._started = time.monotonic()
+        self._thread.start()
+        return self
+
+    def _run(self) -> None:
+        try:
+            self._target()
+        except BaseException as exc:  # re-raised by wait()
+            self._error = exc
+        finally:
+            self.elapsed = time.monotonic() - self._started
+
+    def done(self) -> bool:
+        return not self._thread.is_alive()
+
+    def wait(self) -> None:
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+
+    def wait_quietly(self) -> None:
+        self._thread.join()
+        if self._error is not None:
+            logger.warning("background_task.failed name=%s error=%s", self._thread.name, self._error)
 
 
 def _flagged_scene_keys(review: Any) -> set[str]:
