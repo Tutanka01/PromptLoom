@@ -654,7 +654,7 @@ class Materializer:
         video_dir.mkdir(parents=True, exist_ok=True)
         # render_cache/ survives on purpose (see manim_render.py): its keys cover
         # the scene code, style, duration and quality, so stale entries never hit.
-        for generated_name in ["media", "final", "renders", "render_logs"]:
+        for generated_name in ["media", "final", "renders", "render_logs", "render_spec"]:
             generated_path = video_dir / generated_name
             if generated_path.exists():
                 shutil.rmtree(generated_path)

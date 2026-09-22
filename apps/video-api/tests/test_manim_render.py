@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+import wave
 from pathlib import Path
 
 import pytest
 
-from video_api.pipeline.manim_render import render, resolve_jobs, scene_cache_keys
+from video_api.pipeline.manim_render import (
+    SpeculativeRenderer,
+    render,
+    resolve_jobs,
+    scene_cache_keys,
+    wav_is_complete,
+)
 
 MODULE = '''from manim import *
 
@@ -25,7 +33,9 @@ class SceneBEN(Base):
         self.b = 2
 '''
 
-FAKE_MANIM = '''import sys
+FAKE_MANIM = '''import os
+import sys
+import time
 from pathlib import Path
 
 args = sys.argv[1:]
@@ -37,14 +47,16 @@ assert args[0] == "--media_dir"
 media_dir = Path(args[1])
 module, key = args[2], args[3]
 quality = height + "p" + fps
-with open("calls.txt", "a", encoding="utf-8") as calls:
+with open(os.environ.get("CALLS_FILE", "calls.txt"), "a", encoding="utf-8") as calls:
     calls.write(key + "\\n")
+time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
 if key.startswith("Boom"):
     print("Traceback: kaboom")
     sys.exit(3)
 out = media_dir / "videos" / Path(module).stem / quality / (key + ".mp4")
 out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(key + open(module).read(), encoding="utf-8")
+durations = Path("audio/en/durations.json")
+out.write_text(key + open(module).read() + (durations.read_text() if durations.exists() else ""), encoding="utf-8")
 '''
 
 
@@ -141,3 +153,82 @@ def test_render_failure_surfaces_scene_log(tmp_path: Path) -> None:
         render(root, "demo_en.py", ["BoomEN"], "qh", 1, root / "concat_en.txt", command=command)
     assert "kaboom" in (root / "render_logs" / "BoomEN.log").read_text(encoding="utf-8")
     assert not (root / "concat_en.txt").exists()
+
+
+def _write_wav(path: Path, seconds: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(24000)
+        handle.writeframes(b"\x00\x00" * int(24000 * seconds))
+
+
+def _wav_seconds(path: Path) -> float:
+    with wave.open(str(path), "rb") as handle:
+        return handle.getnframes() / handle.getframerate()
+
+
+def test_wav_is_complete(tmp_path: Path) -> None:
+    wav = tmp_path / "a.wav"
+    _write_wav(wav, 0.5)
+    assert wav_is_complete(wav, min_age_seconds=0)
+    assert not wav_is_complete(wav, min_age_seconds=60)
+    data = wav.read_bytes()
+    truncated = tmp_path / "b.wav"
+    truncated.write_bytes(data[: len(data) // 2])
+    assert not wav_is_complete(truncated, min_age_seconds=0)
+    assert not wav_is_complete(tmp_path / "missing.wav", min_age_seconds=0)
+
+
+def _speculative(root: Path, command: list[str], scenes: list[str], jobs: int = 2) -> SpeculativeRenderer:
+    return SpeculativeRenderer(
+        root, "demo_en.py", scenes, "qh", "30", jobs, 0.45,
+        command=command, probe=_wav_seconds, poll_seconds=0.05, min_wav_age_seconds=0,
+    )
+
+
+def _wait_for(predicate, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.05)
+
+
+def test_speculative_render_feeds_the_final_pass(tmp_path: Path, monkeypatch) -> None:
+    root, command = _workspace(tmp_path)
+    (root / "audio" / "en" / "durations.json").unlink()
+    monkeypatch.setenv("CALLS_FILE", str(root / "calls.txt"))
+    scenes = ["SceneAEN", "SceneBEN"]
+    spec = _speculative(root, command, scenes).start()
+    _write_wav(root / "audio" / "en" / "SceneAEN.wav", 1.0)
+    _write_wav(root / "audio" / "en" / "SceneBEN.wav", 2.0)
+    _wait_for(lambda: len(spec.rendered_seconds) == 2)
+    stats = spec.stop()
+    assert sorted(stats["rendered_seconds"]) == scenes and stats["failed"] == {}
+    assert not (root / "render_spec").exists()
+    assert "SceneAEN" in (root / "render_logs" / "SceneAEN.speculative.log").name
+
+    # The voice script's durations: SceneAEN matches the speculation exactly,
+    # SceneBEN does not (e.g. a different tail padding) and renders again.
+    (root / "audio" / "en" / "durations.json").write_text(json.dumps({"SceneAEN": 1.45, "SceneBEN": 9.0}))
+    (root / "calls.txt").unlink()
+    final = render(root, "demo_en.py", scenes, "qh", 2, root / "concat_en.txt", command=command, fps="30")
+    assert final["cached"] == ["SceneAEN"]
+    assert _calls(root) == ["SceneBEN"]
+    reused = (root / "render_cache" / "qh-30fps").glob("SceneAEN-*.mp4")
+    assert '"SceneAEN": 1.45' in next(reused).read_text()
+
+
+def test_speculative_abort_kills_running_renders(tmp_path: Path, monkeypatch) -> None:
+    root, command = _workspace(tmp_path)
+    monkeypatch.setenv("CALLS_FILE", str(root / "calls.txt"))
+    monkeypatch.setenv("FAKE_SLEEP", "30")
+    spec = _speculative(root, command, ["SceneAEN"], jobs=1).start()
+    _write_wav(root / "audio" / "en" / "SceneAEN.wav", 1.0)
+    _wait_for(lambda: (root / "calls.txt").exists())
+    started = time.monotonic()
+    stats = spec.stop(abort=True)
+    assert time.monotonic() - started < 10
+    assert stats["rendered_seconds"] == {} and stats["failed"] == {}
+    assert not list((root / "render_cache" / "qh-30fps").glob("*.mp4"))

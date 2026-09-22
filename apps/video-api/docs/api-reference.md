@@ -441,7 +441,8 @@ Le rapport peut contenir :
   au total et par etape (`blueprint`, `scene_coder`, `visual_review`) avec les
   modeles utilises. Aussi present dans `error.json` d'un job en echec ;
 - `render` (moteur Manim) : parallelisme, secondes par scene rendue et scenes
-  reprises du cache.
+  reprises du cache ; `render.overlap` detaille les scenes rendues pendant la
+  voix (`reused` reprises par le rendu final, `wasted` re-rendues, `failed`).
 
 Les artefacts avances inspectables incluent `research.json`, `proposal.json`,
 `scene_plan.json`, `asset_manifest.json` et `motion_plan_report.json`.

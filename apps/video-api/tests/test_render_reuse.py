@@ -104,3 +104,29 @@ def test_llm_usage_accumulates_per_stage() -> None:
     assert snap["by_stage"]["visual_review"]["calls"] == 1
     llm_usage.reset()
     assert llm_usage.snapshot()["calls"] == 0
+
+
+def test_tail_padding_and_overlap_summary() -> None:
+    from video_api.pipeline.production import _overlap_summary, _tail_padding
+
+    assert _tail_padding(["python", "generate_voice_en.py", "--tail-padding", "0.450"]) == 0.45
+    assert _tail_padding(["python", "generate_voice_en.py"]) is None
+    summary = _overlap_summary(
+        {"rendered_seconds": {"A": 3.0, "B": 4.0}, "failed": {}},
+        {"cached": ["A", "C"]},
+    )
+    assert summary["reused"] == ["A"] and summary["wasted"] == ["B"]
+
+
+def test_speculative_render_only_for_manim_with_overlap(tmp_path: Path) -> None:
+    blueprint = fake_blueprint("Explain derivatives", "math")
+    args = ["python", "generate_voice_en.py", "--tail-padding", "0.45"]
+    off = VideoPipeline(Settings(repo_root=_REPO_ROOT, fake_llm=True, voice_render_overlap=False))
+    assert off._start_speculative_render(blueprint, tmp_path, args, "qh", "30") is None
+    remotion = VideoPipeline(Settings(repo_root=_REPO_ROOT, fake_llm=True, render_engine="remotion"))
+    assert remotion._start_speculative_render(blueprint, tmp_path, args, "qh", "30") is None
+    manim = VideoPipeline(Settings(repo_root=_REPO_ROOT, fake_llm=True, render_engine="manim"))
+    assert manim._start_speculative_render(blueprint, tmp_path, ["python"], "qh", "30") is None
+    spec = manim._start_speculative_render(blueprint, tmp_path, args, "qh", "30")
+    assert spec is not None
+    spec.stop()

@@ -104,6 +104,11 @@ class Settings:
     manim_render_jobs: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_MANIM_RENDER_JOBS", "auto").strip() or "auto"
     )
+    # Manim engine: render each scene as soon as its WAV is ready, while the
+    # rest of the voice is still being generated. 0 = voice then render.
+    voice_render_overlap: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_VOICE_RENDER_OVERLAP", True)
+    )
     # Job-resolved editorial controls. Environment values are defaults; the
     # worker replaces them from VideoJob.production_config before selecting an
     # engine. They are ordinary fields so every downstream component sees one

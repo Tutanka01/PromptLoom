@@ -274,6 +274,17 @@ ou de verification), si bien que seules les scenes modifiees sont recodees et
 re-rendues. Les logs Manim par scene sont dans `render_logs/<Scene>.log`, les
 statistiques dans `render_stats.json` et sous `render` dans `report.json`.
 
+Chevauchement voix/rendu (Manim, `VIDEO_API_VOICE_RENDER_OVERLAP=1`) : pendant
+l'etape voix, `SpeculativeRenderer` surveille `audio/en/`. Des qu'un WAV est
+complet, la duree de la scene est calculee avec la formule du script de voix
+(`round(ffprobe + tail_padding, 3)`) et la scene est rendue dans une copie
+temporaire du dossier (`render_spec/<Scene>/`) ne contenant que cette duree ; le
+MP4 va dans `render_cache/`. `render_en.sh` tourne ensuite avec le
+`durations.json` officiel : une scene speculee avec la bonne duree est un hit de
+cache, une divergence est simplement re-rendue. La synchro voix/image ne depend
+donc jamais de la speculation. Bilan sous `render.overlap` dans `report.json`
+(`reused`, `wasted`, `failed`), logs dans `render_logs/<Scene>.speculative.log`.
+
 ### 7. Revue visuelle (optionnelle)
 
 Activee par `VIDEO_API_VISION_ENABLED=1`. Elle s'execute apres l'assemblage final

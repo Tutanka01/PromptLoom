@@ -322,7 +322,15 @@ tentatives de reparation) :
 
 ```text
 VIDEO_API_MANIM_RENDER_JOBS=auto  # "auto" = moitie des CPU du worker, max 6 ; entier sinon
+VIDEO_API_VOICE_RENDER_OVERLAP=1  # rend chaque scene des que son WAV est pret ; 0 = voix puis rendu
 ```
+
+Le chevauchement voix/rendu est speculatif : la duree d'une scene est calculee
+comme le fait `generate_voice_en.py`, et le rendu final reutilise la scene
+seulement si `durations.json` donne exactement la meme duree ; sinon elle est
+re-rendue. Une erreur TTS tue les rendus en cours et fait echouer le job comme
+avant. Avec un TTS sur CPU (Kokoro, Chatterbox sans GPU), voix et rendu se
+partagent les coeurs : mesurer avec `0` et `1` avant de choisir.
 
 Compter ~0,5 Go de RAM par process Manim. Le detail (scenes rendues, reprises du
 cache, secondes par scene) est ecrit dans `render_stats.json` et sous `render`

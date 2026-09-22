@@ -368,6 +368,34 @@ class VideoPipeline:
         flagged = _flagged_scene_keys(exc.result) if isinstance(exc, VisualReviewError) else set()
         forget(flagged or None)
 
+    def _start_speculative_render(
+        self,
+        blueprint: Any,
+        video_dir: Path,
+        voice_args: list[str],
+        quality: str,
+        fps: str,
+    ) -> Any | None:
+        """Manim only: render scenes as their WAVs land, during the voice step."""
+        if self.engine.name != "manim" or not self.settings.voice_render_overlap:
+            return None
+        tail_padding = _tail_padding(voice_args)
+        if tail_padding is None:
+            logger.info("render.overlap.skip reason=no_tail_padding_in_voice_command")
+            return None
+        from video_api.pipeline.manim_render import SpeculativeRenderer, resolve_jobs
+
+        scene_keys = [scene.key for scene in blueprint.scenes]
+        return SpeculativeRenderer(
+            video_dir,
+            f"{blueprint.slug.replace('-', '_')}_en.py",
+            scene_keys,
+            quality,
+            fps,
+            resolve_jobs(self.settings.manim_render_jobs, len(scene_keys)),
+            tail_padding,
+        ).start()
+
     def _run_with_repairs(
         self,
         session: Session,
@@ -567,14 +595,34 @@ class VideoPipeline:
                 voice_on_line = TTSSegmentReporter(
                     session, job, total_segments=len(blueprint.scenes)
                 )
-                runner.run(
-                    voice_args,
-                    cwd=video_dir,
-                    log_name="voice.log",
-                    env=voice_env,
-                    on_line=voice_on_line,
+                final_render_quality = render_quality_for_profile(self.quality_profile)
+                # Draft (ql) keeps Manim's 15 fps preset; the final render
+                # follows VIDEO_API_RENDER_FPS like Remotion.
+                manim_fps = str(self.settings.render_fps) if final_render_quality == "qh" else ""
+                speculative = self._start_speculative_render(
+                    blueprint, video_dir, voice_args, final_render_quality, manim_fps
                 )
+                try:
+                    runner.run(
+                        voice_args,
+                        cwd=video_dir,
+                        log_name="voice.log",
+                        env=voice_env,
+                        on_line=voice_on_line,
+                    )
+                except BaseException:
+                    if speculative is not None:
+                        speculative.stop(abort=True)
+                    raise
+                speculative_stats = speculative.stop() if speculative is not None else None
                 logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
+                if speculative_stats is not None:
+                    logger.info(
+                        "job.render.overlap job_id=%s rendered=%d failed=%d",
+                        job.id,
+                        len(speculative_stats["rendered_seconds"]),
+                        len(speculative_stats["failed"]),
+                    )
 
                 cued_scenes = 0
                 subtitle_files: dict[str, str] = {}
@@ -642,7 +690,6 @@ class VideoPipeline:
                 visual_review_result: VisualReviewResult | None = None
 
                 self._update(session, job, "render_final", 55, "render_final")
-                final_render_quality = render_quality_for_profile(self.quality_profile)
                 render_on_line = None
                 if self.engine.name == "remotion":
                     # Remotion's renderMedia prints one "Rendered X/Y" line per
@@ -665,9 +712,7 @@ class VideoPipeline:
                     env={
                         "QUALITY": final_render_quality,
                         "MANIM_RENDER_JOBS": self.settings.manim_render_jobs,
-                        # Draft (ql) keeps Manim's 15 fps preset; the final
-                        # render follows VIDEO_API_RENDER_FPS like Remotion.
-                        "MANIM_FPS": str(self.settings.render_fps) if final_render_quality == "qh" else "",
+                        "MANIM_FPS": manim_fps,
                     },
                     on_line=render_on_line,
                 )
@@ -763,6 +808,10 @@ class VideoPipeline:
                 render_stats_path = video_dir / "render_stats.json"
                 if render_stats_path.exists():
                     final_report["render"] = json.loads(render_stats_path.read_text(encoding="utf-8"))
+                    if speculative_stats is not None:
+                        final_report["render"]["overlap"] = _overlap_summary(
+                            speculative_stats, final_report["render"]
+                        )
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")
                 job.final_video_path = str(final_video)
@@ -799,6 +848,28 @@ class VideoPipeline:
                     attempt + 1,
                     type(exc).__name__,
                 )
+
+
+def _tail_padding(voice_args: list[str]) -> float | None:
+    for flag, value in zip(voice_args, voice_args[1:]):
+        if flag == "--tail-padding":
+            try:
+                return float(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _overlap_summary(speculative: dict, render_stats: dict) -> dict:
+    """Which speculative renders the final pass actually reused."""
+    cached = set(render_stats.get("cached", []))
+    speculated = set(speculative["rendered_seconds"])
+    return {
+        "reused": sorted(speculated & cached),
+        "wasted": sorted(speculated - cached),
+        "speculative_seconds": speculative["rendered_seconds"],
+        "failed": speculative["failed"],
+    }
 
 
 def _flagged_scene_keys(review: Any) -> set[str]:
