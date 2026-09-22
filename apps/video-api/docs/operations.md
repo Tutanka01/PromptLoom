@@ -322,8 +322,19 @@ tentatives de reparation) :
 
 ```text
 VIDEO_API_MANIM_RENDER_JOBS=auto  # "auto" = moitie des CPU du worker, max 6 ; entier sinon
-VIDEO_API_VOICE_RENDER_OVERLAP=1  # rend chaque scene des que son WAV est pret ; 0 = voix puis rendu
+VIDEO_API_VOICE_RENDER_OVERLAP=0  # rendu speculatif pendant la voix ; 0 par defaut (non mesure)
 ```
+
+`VIDEO_API_MANIM_RENDER_JOBS` est valide au chargement des reglages : une valeur
+non entiere ou negative retombe sur `auto` avec un `config.manim_render_jobs.invalid`
+dans les logs, au lieu de faire echouer le rendu.
+
+`VIDEO_API_VOICE_RENDER_OVERLAP` (rendu speculatif) est **desactive par defaut** :
+la fenetre utile ne s'ouvre que si la voix tourne encore quand le scene coding se
+termine, et le gain n'a pas encore ete mesure sur un job reel. Pour le mesurer,
+mettre `1` et comparer `render.overlap.reused` / `render.overlap.wasted` dans
+`report.json`. C'est une optimisation pure : si elle ne peut pas demarrer, le job
+continue (`render.overlap.skip reason=start_failed` dans les logs).
 
 Chevauchement voix/scene coding (**Remotion et Manim**) :
 
@@ -334,6 +345,14 @@ VIDEO_API_VOICE_CODEGEN_OVERLAP=1 # voix lancee pendant le scene coding ; 0 = vo
 Le gain est maximal avec un TTS distant ou GPU (`moss-remote`, `openai`) et des
 scenes Custom a coder. Avec un TTS CPU, voix et smoke checks se partagent les
 coeurs. Mesurer avec `voice.seconds` et `voice.wait_seconds` dans `report.json`.
+
+Cout cote reparation : si le scene coding echoue pendant que la voix tourne, le
+worker attend la fin de la voix avant de reparer, pour ne jamais laisser un
+process ecrire dans `video_dir` derriere une nouvelle tentative (les segments
+deja produits restent en cache et sont reutilises). Cette attente est mesuree :
+`job.repair.voice_drain ... seconds=` dans les logs, et
+`repair_voice_drain_seconds` a la fin de `attempt_<n>_error.txt`. Si elle
+s'avere couteuse en pratique, tuer le process devient l'option a etudier.
 
 Le chevauchement voix/rendu est speculatif : la duree d'une scene est calculee
 comme le fait `generate_voice_en.py`, et le rendu final reutilise la scene

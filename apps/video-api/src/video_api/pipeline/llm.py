@@ -662,7 +662,18 @@ class LLMClient:
             return {}
         return {"chat_template_kwargs": {"enable_thinking": False}}
 
-    def _complete(self, client: Any, messages: list[dict], *, temperature: float, json_mode: bool) -> str:
+    def _complete(
+        self,
+        client: Any,
+        messages: list[dict],
+        *,
+        temperature: float,
+        json_mode: bool,
+        stage: str,
+    ) -> str:
+        """*stage* is the llm_usage bucket this call is billed to. It is required
+        because _complete is shared by every LLM step: hard-coding one label here
+        used to bill blueprint repairs and batch translations as "blueprint"."""
         kwargs: dict[str, Any] = {}
         if json_mode and self.settings.llm_response_format == "json_object":
             kwargs["response_format"] = {"type": "json_object"}
@@ -676,7 +687,7 @@ class LLMClient:
             messages=messages,
             **kwargs,
         )
-        llm_usage.record("blueprint", self.settings.openai_model, response)
+        llm_usage.record(stage, self.settings.openai_model, response)
         content = response.choices[0].message.content or ""
         finish = response.choices[0].finish_reason
         if not content.strip():
@@ -816,6 +827,7 @@ class LLMClient:
             ],
             temperature=self.settings.llm_temperature,
             json_mode=True,
+            stage="blueprint",
         )
         logger.info("llm.request.done model=%s response_chars=%d", self.settings.openai_model, len(content))
         data = _coerce_blueprint_shape(_extract_json_object(content))
@@ -877,6 +889,7 @@ class LLMClient:
             ],
             temperature=0.2,
             json_mode=True,
+            stage="translate",
         )
         logger.info("llm.translate.done language=%s response_chars=%d", language, len(content))
         data = _coerce_blueprint_shape(_extract_json_object(content))
@@ -939,6 +952,7 @@ class LLMClient:
             ],
             temperature=0.2,
             json_mode=True,
+            stage="translate",
         )
         logger.info("llm.translate_remotion.done language=%s response_chars=%d", language, len(content))
         data = rb.normalize_remotion_blueprint(_extract_json_object(content), target)
@@ -1045,6 +1059,7 @@ class LLMClient:
             ],
             temperature=self.settings.llm_temperature,
             json_mode=True,
+            stage="blueprint",
         )
         logger.info("llm.remotion.request.done model=%s response_chars=%d", self.settings.openai_model, len(content))
         data = rb.normalize_remotion_blueprint(_extract_json_object(content), effective_target)
@@ -1112,6 +1127,7 @@ class LLMClient:
             ],
             temperature=self.settings.llm_temperature,
             json_mode=True,
+            stage="blueprint_outline",
         )
         outline = _extract_json_object(content)
         if not isinstance(outline, dict):
@@ -1182,6 +1198,7 @@ class LLMClient:
         target_language_name: str = "English",
         production_context: dict[str, Any] | None = None,
         research_context: dict[str, Any] | None = None,
+        stage: str = "blueprint_scenes",
     ) -> list[dict]:
         """Write scenes in parallel (pass 2). With *only_keys*, rewrite just those
         scenes — used by the scene-level visual-review repair, where *feedback_by_key*
@@ -1254,6 +1271,7 @@ class LLMClient:
                         ],
                         temperature=self.settings.llm_temperature,
                         json_mode=True,
+                        stage=stage,
                     )
                     payload = _extract_json_object(content)
                 except Exception as exc:
@@ -1367,6 +1385,7 @@ class LLMClient:
             only_keys=set(feedback_by_key),
             feedback_by_key=feedback_by_key,
             previous_by_key=previous_by_key,
+            stage="blueprint_scenes_repair",
         )
         rewritten_by_key = {scene["key"]: scene for scene in rewritten}
         scenes: list[dict] = []
@@ -1456,6 +1475,7 @@ class LLMClient:
             ],
             temperature=0.2,
             json_mode=True,
+            stage="blueprint_repair",
         )
         logger.info("llm.remotion.repair.done model=%s response_chars=%d", self.settings.openai_model, len(content))
         data = rb.normalize_remotion_blueprint(_extract_json_object(content), target)
@@ -1528,6 +1548,7 @@ class LLMClient:
             ],
             temperature=0.15,
             json_mode=True,
+            stage="blueprint_repair",
         )
         logger.info("llm.repair.done model=%s response_chars=%d", self.settings.openai_model, len(content))
         data = _extract_json_object(content)

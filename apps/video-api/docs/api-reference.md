@@ -438,8 +438,12 @@ Le rapport peut contenir :
 - `timings` : duree en secondes de chaque etape (`steps_seconds`, cumulee sur
   les tentatives de reparation) et `total_seconds` ;
 - `llm_usage` : appels et tokens (`prompt_tokens`, `completion_tokens`) du job,
-  au total et par etape (`blueprint`, `scene_coder`, `visual_review`) avec les
-  modeles utilises. Aussi present dans `error.json` d'un job en echec ;
+  au total et par etape avec les modeles utilises. Chaque appel est facture a son
+  etape reelle : `blueprint` (generation), `blueprint_outline` (passe 1 Remotion),
+  `blueprint_scenes` (passe 2 Remotion), `blueprint_scenes_repair` (reecriture des
+  scenes signalees par la revue), `blueprint_repair` (reparation du JSON),
+  `translate` (jobs secondaires d'un batch multilingue), `scene_coder` et
+  `visual_review`. Aussi present dans `error.json` d'un job en echec ;
 - `voice` : `overlap` (`scene_codegen` si la voix a tourne pendant le scene
   coding, `off` sinon), `seconds` (duree de la voix) et `wait_seconds` (temps
   passe a attendre la voix apres le scene coding) ;

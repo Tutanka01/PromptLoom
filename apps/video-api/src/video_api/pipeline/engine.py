@@ -23,6 +23,7 @@ from typing import Any, Callable, Protocol
 
 from video_api.config import Settings
 from video_api.pipeline.llm import LLMClient
+from video_api.pipeline.visual_review import SCENE_MIN_SCORE
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +323,7 @@ class RemotionEngine:
                     line += f" Suggestion: {issue.suggestion}"
                 feedback.setdefault(issue.scene_key, []).append(line)
         for score in getattr(review, "scene_scores", []) or []:
-            if score.score < 60 and score.scene_key not in feedback:
+            if score.score < SCENE_MIN_SCORE and score.scene_key not in feedback:
                 feedback[score.scene_key] = [
                     f"scene scored {score.score:.0f}/100 — the visual does not carry the narration; "
                     "make the props concrete and topic-specific"

@@ -274,19 +274,35 @@ La video finale doit etre en 1080p a `VIDEO_API_RENDER_FPS` (30 par defaut) avec
 exactement une fois ; une revue visuelle en echec coute un rendu
 supplementaire (par choix : les scenes fautives sont reecrites puis re-rendues).
 
+**Changement de defaut** : le rendu final Manim suivait le preset `qh` de Manim
+(1080p60) ; il suit desormais `VIDEO_API_RENDER_FPS`, comme Remotion, soit
+1080p30 par defaut. C'est une baisse de qualite assumee, pas un effet de bord du
+rendu parallele : mettre `VIDEO_API_RENDER_FPS=60` pour retrouver l'ancien
+comportement. Consequence pour les mesures : un avant/apres qui compare le
+parallelisme doit fixer le fps des deux cotes, sinon les deux effets se melangent.
+
 Moteur Manim : `render_en.sh` delegue a `render_scenes.py` (copie de
 `pipeline/manim_render.py`), qui lance un process Manim par scene, jusqu'a
 `VIDEO_API_MANIM_RENDER_JOBS` en parallele, chacun avec son propre `--media_dir`.
 Chaque scene rendue est gardee dans `render_cache/<qualite>/<Scene>-<cle>.mp4` ;
 la cle couvre le code de la scene, la partie partagee du module, le style, la
 duree audio, la narration et la qualite. Lors d'une reparation, le worker garde
-le code valide des scenes dont l'entree du scene coder n'a pas change (toutes
-sauf les scenes signalees par la revue visuelle ; aucune apres un echec de rendu
-ou de verification), si bien que seules les scenes modifiees sont recodees et
-re-rendues. Les logs Manim par scene sont dans `render_logs/<Scene>.log`, les
+le code valide des scenes dont l'entree du scene coder n'a pas change, si bien
+que seules les scenes modifiees sont recodees et re-rendues. Ce qu'il oublie
+depend de l'etape en echec, parce qu'oublier une scene change aussi sa cle de
+cache de rendu et coute un re-rendu :
+
+| Etape en echec | Code de scene invalide |
+| --- | --- |
+| Portail de mouvement (pre-rendu) | rien |
+| Revue visuelle | uniquement les scenes signalees |
+| Voix, alignement, assemblage | rien — ces etapes ne lisent jamais le code de scene, donc une panne TTS ou ffmpeg transitoire ne doit pas tout recoder |
+| Rendu Manim | la ou les scenes nommees dans l'erreur (`manim failed for <Scene>`) ; tout si aucune n'est identifiable |
+| Scene coding, validation statique, verification | tout | Les logs Manim par scene sont dans `render_logs/<Scene>.log`, les
 statistiques dans `render_stats.json` et sous `render` dans `report.json`.
 
-Chevauchement voix/rendu (Manim, `VIDEO_API_VOICE_RENDER_OVERLAP=1`) : pendant
+Chevauchement voix/rendu (Manim, `VIDEO_API_VOICE_RENDER_OVERLAP=1`, **desactive
+par defaut** tant qu'il n'est pas mesure sur un job reel) : pendant
 l'etape voix, `SpeculativeRenderer` surveille `audio/en/` (les WAV deja termines
 pendant le scene coding sont pris des son demarrage). Des qu'un WAV est
 complet, la duree de la scene est calculee avec la formule du script de voix
@@ -297,6 +313,11 @@ MP4 va dans `render_cache/`. `render_en.sh` tourne ensuite avec le
 cache, une divergence est simplement re-rendue. La synchro voix/image ne depend
 donc jamais de la speculation. Bilan sous `render.overlap` dans `report.json`
 (`reused`, `wasted`, `failed`), logs dans `render_logs/<Scene>.speculative.log`.
+C'est une optimisation pure : si la speculation ne peut pas demarrer (reglage
+invalide, binaire manquant), le job continue sans elle
+(`render.overlap.skip reason=start_failed`). Elle ne doit jamais lever, sinon
+l'erreur remonterait dans la boucle de reparation en laissant le thread voix de
+fond en vie.
 
 ### 7. Revue visuelle (optionnelle)
 

@@ -154,14 +154,17 @@ class _VoiceRunner:
         return CompletedProcess(args, 0, stdout="", stderr="")
 
 
-def _overlap_pipeline(tmp_path: Path, monkeypatch, job_id: str, overlap: bool):
+def _overlap_pipeline(tmp_path: Path, monkeypatch, job_id: str, overlap: bool, max_repairs: int = 0):
     import dataclasses
 
     import video_api.pipeline.production as production
 
     pipeline, _, job_id, _ = _pipeline(
-        tmp_path, monkeypatch, review_passes=True, max_repairs=0, job_id=job_id
+        tmp_path, monkeypatch, review_passes=True, max_repairs=max_repairs, job_id=job_id
     )
+    # A repair attempt re-plans through repair_blueprint; hand it back the same
+    # real blueprint so the second attempt runs on serialisable data.
+    pipeline.engine.repair_blueprint.return_value = pipeline.engine.generate_blueprint.return_value
     pipeline.settings = dataclasses.replace(pipeline.settings, voice_codegen_overlap=overlap)
     monkeypatch.setattr(production, "voice_command_for_settings", lambda s: (["voice"], None))
     workspace = Path(pipeline.settings.jobs_root) / job_id
@@ -235,3 +238,54 @@ def test_codegen_failure_waits_for_background_voice(tmp_path: Path, monkeypatch)
         with pytest.raises(ValueError, match="static validation failed"):
             pipeline._run_with_repairs(session, job, workspace, runner, workspace / "reports")
     assert runner.voice_finished.is_set()
+
+
+def test_codegen_failure_records_how_long_the_voice_drain_cost(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Waiting for the background voice before repairing is a latency cost we
+    chose to pay; it has to be measurable before anyone argues for killing the
+    process instead."""
+    pipeline, job_id, workspace = _overlap_pipeline(
+        tmp_path, monkeypatch, "job-voice-drain", True, max_repairs=1
+    )
+    runner = _VoiceRunner(voice_delay=0.2)
+    attempts: list[int] = []
+
+    def generate_scenes(*_a, **_k):
+        attempts.append(len(attempts))
+        if len(attempts) == 1:
+            runner.voice_started.wait(timeout=5)
+            raise ValueError("static validation failed")
+
+    pipeline.engine.generate_scenes.side_effect = generate_scenes
+
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        pipeline._run_with_repairs(session, job, workspace, runner, workspace / "reports")
+        assert job.status == "completed"
+
+    report = (workspace / "attempt_0_error.txt").read_text(encoding="utf-8")
+    assert "repair_voice_drain_seconds=" in report
+    drained = float(report.rsplit("repair_voice_drain_seconds=", 1)[1].strip())
+    assert drained >= 0.0
+    # The measurement belongs to the failing attempt only.
+    assert not (workspace / "attempt_1_error.txt").exists()
+
+
+def test_voice_failure_does_not_invalidate_any_scene_code(tmp_path: Path, monkeypatch) -> None:
+    """A transient TTS failure must not re-code every scene: that would also
+    change every render cache key."""
+    pipeline, job_id, workspace = _overlap_pipeline(
+        tmp_path, monkeypatch, "job-voice-forget", True, max_repairs=1
+    )
+    runner = _VoiceRunner(voice_error=RuntimeError("remote TTS unavailable"))
+    forgotten: list = []
+    pipeline.engine.forget_scene_codes.side_effect = forgotten.append
+
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        with pytest.raises(RuntimeError, match="remote TTS unavailable"):
+            pipeline._run_with_repairs(session, job, workspace, runner, workspace / "reports")
+
+    assert forgotten == []

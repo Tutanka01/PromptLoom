@@ -91,6 +91,13 @@ def test_resolve_jobs() -> None:
     assert resolve_jobs("", 1) == 1
 
 
+def test_resolve_jobs_never_raises_on_a_typo() -> None:
+    """A malformed MANIM_RENDER_JOBS must degrade to auto, not fail every render
+    (and, in the worker, not escape into the repair loop)."""
+    for bad in ("4cpu", "-2", "auto ", "  ", None, "NaN"):
+        assert 1 <= resolve_jobs(bad, 8) <= 8
+
+
 def _workspace(tmp_path: Path, module: str = MODULE) -> tuple[Path, list[str]]:
     (tmp_path / "demo_en.py").write_text(module, encoding="utf-8")
     (tmp_path / "demo_style.py").write_text("STYLE", encoding="utf-8")
@@ -232,3 +239,15 @@ def test_speculative_abort_kills_running_renders(tmp_path: Path, monkeypatch) ->
     assert time.monotonic() - started < 10
     assert stats["rendered_seconds"] == {} and stats["failed"] == {}
     assert not list((root / "render_cache" / "qh-30fps").glob("*.mp4"))
+
+
+def test_main_repeats_the_failed_scene_on_the_last_line(tmp_path: Path, capsys) -> None:
+    """The worker only keeps the tail of the log, so the scene name has to be the
+    last thing printed for the repair loop to narrow its invalidation."""
+    from video_api.pipeline.manim_render import failed_scene_keys
+
+    long_traceback = "\n".join(f"  frame {i} of a very long manim traceback" for i in range(200))
+    message = f"manim failed for SceneAEN (rc=1), full log: x\n{long_traceback}"
+    assert failed_scene_keys(message) == {"SceneAEN"}
+    assert failed_scene_keys(message[-6000:]) == set()
+    assert failed_scene_keys((message + "\nrender.failed scene=SceneAEN")[-6000:]) == {"SceneAEN"}

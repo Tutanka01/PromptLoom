@@ -18,6 +18,13 @@ from video_api.schemas import (
 )
 from video_api.schemas import VideoBlueprint
 
+# A scene scored below this is "the visual does not carry the narration" and is
+# rewritten on a repair. Deliberately lower than Settings.visual_review_min_score
+# (75), which gates the video as a whole: one weak scene must not fail a good
+# video, and a video that only just passes must not trigger a full re-code.
+# Imported by the repair paths so the number lives in exactly one place.
+SCENE_MIN_SCORE = 60.0
+
 
 logger = logging.getLogger(__name__)
 

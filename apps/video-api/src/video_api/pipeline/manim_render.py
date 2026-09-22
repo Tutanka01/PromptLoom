@@ -15,6 +15,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,26 @@ from typing import Callable
 QUALITIES = ("ql", "qm", "qh", "qp", "qk")
 CACHE_VERSION = "1"
 
+# The renderer fails one scene at a time and names it. The worker reads these
+# out of the failed command's log tail to invalidate only that scene's cached
+# code instead of re-coding the whole module; see failed_scene_keys.
+_SCENE_FAILURE_RE = re.compile(
+    r"manim failed for ([A-Za-z_]\w*)"
+    r"|manim produced \d+ videos for ([A-Za-z_]\w*)"
+    r"|render\.failed scene=([A-Za-z_]\w*)"
+)
+
+
+def failed_scene_keys(message: str) -> set[str]:
+    """Scene keys named by a render failure. Empty means "could not tell", and
+    the caller must stay conservative."""
+    return {
+        group
+        for match in _SCENE_FAILURE_RE.finditer(message)
+        for group in match.groups()
+        if group
+    }
+
 
 def default_jobs(scene_count: int) -> int:
     try:
@@ -37,10 +58,29 @@ def default_jobs(scene_count: int) -> int:
 
 
 def resolve_jobs(raw: str | None, scene_count: int) -> int:
+    """Never raises: a malformed setting falls back to "auto" with a warning.
+    A typo in MANIM_RENDER_JOBS must not fail the render (nor, in the worker,
+    escape into the repair loop and leave the background voice thread behind)."""
     value = (raw or "").strip().lower()
     if value in {"", "0", "auto"}:
         return default_jobs(scene_count)
-    return max(1, min(scene_count, int(value)))
+    try:
+        parsed = int(value)
+    except ValueError:
+        print(
+            f"MANIM_RENDER_JOBS={raw!r} is not an integer; falling back to auto",
+            file=sys.stderr,
+            flush=True,
+        )
+        return default_jobs(scene_count)
+    if parsed < 0:
+        print(
+            f"MANIM_RENDER_JOBS={raw!r} is negative; falling back to auto",
+            file=sys.stderr,
+            flush=True,
+        )
+        return default_jobs(scene_count)
+    return max(1, min(scene_count, parsed))
 
 
 def _shared_and_scene_sources(module_source: str, scene_keys: list[str]) -> tuple[str, dict[str, str]]:
@@ -440,6 +480,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr, flush=True)
+        # Repeat the scene name on the very last line: the worker only keeps the
+        # last few KB of the log, and a long Manim traceback can push the
+        # original "manim failed for <Scene>" out of that window.
+        for key in sorted(failed_scene_keys(str(exc))):
+            print(f"render.failed scene={key}", file=sys.stderr, flush=True)
         return 1
     return 0
 

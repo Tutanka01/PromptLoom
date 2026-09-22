@@ -28,7 +28,7 @@ from video_api.pipeline.engine import make_engine
 from video_api.pipeline.editorial import MotionQualityError, write_editorial_artifacts
 from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
-from video_api.pipeline.visual_review import VisualReviewer
+from video_api.pipeline.visual_review import SCENE_MIN_SCORE, VisualReviewer
 from video_api.pipeline.substep import (
     ManimSceneReporter,
     SubstepReporter,
@@ -44,6 +44,11 @@ from video_api.voices import VoiceSelectionError, apply_job_voice
 
 
 logger = logging.getLogger(__name__)
+
+# Stages that never read the generated scene code, so their failure says nothing
+# about it. Invalidating a scene here would re-code it AND change its render
+# cache key — a transient TTS or ffmpeg blip must not cost a full re-render.
+_SCENE_CODE_INNOCENT_STEPS = frozenset({"voice_generation", "audio_alignment", "assemble_final"})
 
 __all__ = ["VideoPipeline", "VisualReviewError", "voice_command_for_settings"]
 
@@ -358,15 +363,39 @@ class VideoPipeline:
                 self._notify_terminal(session, job)
                 return failure_status
 
-    def _forget_suspect_scene_codes(self, exc: Exception) -> None:
+    def _forget_suspect_scene_codes(self, exc: Exception, step: str) -> None:
         """Before a repair, drop the cached scene code that may have caused the
-        failure: only the flagged scenes after a visual review, nothing after a
-        pre-render motion gate, everything otherwise."""
+        failure — and only that, because forgetting a scene also changes its
+        render cache key and costs a re-render.
+
+        * pre-render motion gate: nothing (the sources are not at fault yet);
+        * visual review: the flagged scenes;
+        * voice / alignment / assembly: nothing — these stages never read the
+          scene code, so a transient TTS or ffmpeg failure must not re-code
+          every scene and throw away the whole render cache;
+        * Manim render: the scenes the renderer named, when it named any;
+        * anything else (codegen, static validation, verify, render without an
+          identifiable scene): everything, as before.
+        """
         forget = getattr(self.engine, "forget_scene_codes", None)
         if forget is None or isinstance(exc, MotionQualityError):
             return
-        flagged = _flagged_scene_keys(exc.result) if isinstance(exc, VisualReviewError) else set()
-        forget(flagged or None)
+        if isinstance(exc, VisualReviewError):
+            flagged = _flagged_scene_keys(exc.result)
+            logger.info("job.repair.forget scope=%s step=%s", sorted(flagged) or "all", step)
+            forget(flagged or None)
+            return
+        if step in _SCENE_CODE_INNOCENT_STEPS:
+            logger.info("job.repair.forget scope=none step=%s", step)
+            return
+        if step == "render_final":
+            named = _manim_failed_scene_keys(str(exc))
+            if named:
+                logger.info("job.repair.forget scope=%s step=%s", sorted(named), step)
+                forget(named)
+                return
+        logger.info("job.repair.forget scope=all step=%s", step)
+        forget(None)
 
     def _generate_and_validate_scenes(
         self, session: Session, job: VideoJob, blueprint: Any, video_dir: Path
@@ -414,25 +443,34 @@ class VideoPipeline:
         quality: str,
         fps: str,
     ) -> Any | None:
-        """Manim only: render scenes as their WAVs land, during the voice step."""
+        """Manim only: render scenes as their WAVs land, during the voice step.
+
+        Pure optimisation, so it never fails the job: the final render redoes
+        (or reuses from cache) whatever the speculation did not produce. Raising
+        here would abort the job between the voice thread's start and its join,
+        leaving that daemon thread writing WAVs into the next attempt."""
         if self.engine.name != "manim" or not self.settings.voice_render_overlap:
             return None
-        tail_padding = _tail_padding(voice_args)
-        if tail_padding is None:
-            logger.info("render.overlap.skip reason=no_tail_padding_in_voice_command")
-            return None
-        from video_api.pipeline.manim_render import SpeculativeRenderer, resolve_jobs
+        try:
+            tail_padding = _tail_padding(voice_args)
+            if tail_padding is None:
+                logger.info("render.overlap.skip reason=no_tail_padding_in_voice_command")
+                return None
+            from video_api.pipeline.manim_render import SpeculativeRenderer, resolve_jobs
 
-        scene_keys = [scene.key for scene in blueprint.scenes]
-        return SpeculativeRenderer(
-            video_dir,
-            f"{blueprint.slug.replace('-', '_')}_en.py",
-            scene_keys,
-            quality,
-            fps,
-            resolve_jobs(self.settings.manim_render_jobs, len(scene_keys)),
-            tail_padding,
-        ).start()
+            scene_keys = [scene.key for scene in blueprint.scenes]
+            return SpeculativeRenderer(
+                video_dir,
+                f"{blueprint.slug.replace('-', '_')}_en.py",
+                scene_keys,
+                quality,
+                fps,
+                resolve_jobs(self.settings.manim_render_jobs, len(scene_keys)),
+                tail_padding,
+            ).start()
+        except Exception as exc:
+            logger.warning("render.overlap.skip reason=start_failed error=%s", exc)
+            return None
 
     def _run_with_repairs(
         self,
@@ -445,6 +483,9 @@ class VideoPipeline:
     ) -> None:
         last_error: Exception | None = None
         blueprint_data: dict | None = None
+        # Set when a failing attempt had to drain a background voice run; read
+        # and cleared by the repair handler below.
+        self._repair_voice_drain_seconds: float | None = None
         max_attempts = self.settings.max_repair_attempts + 1
         for attempt in range(max_attempts):
             try:
@@ -627,7 +668,20 @@ class VideoPipeline:
                         # Never leave a voice process writing into video_dir
                         # behind a repair attempt: let it finish (its segments
                         # stay cached) and keep the scene error as the cause.
+                        # Killing it would be cheaper in latency, so measure the
+                        # cost before deciding: the delay is logged and lands in
+                        # attempt_<n>_error.txt as repair_voice_drain_seconds.
+                        drain_started = time.monotonic()
                         background_voice.wait_quietly()
+                        self._repair_voice_drain_seconds = round(
+                            time.monotonic() - drain_started, 2
+                        )
+                        logger.info(
+                            "job.repair.voice_drain job_id=%s step=%s seconds=%.2f",
+                            job.id,
+                            job.current_step,
+                            self._repair_voice_drain_seconds,
+                        )
                     raise
                 if background_voice is None:
                     self._log_voice_start(job, overlap="off")
@@ -882,8 +936,15 @@ class VideoPipeline:
                     raise
                 last_error = exc
                 attempt_report = workspace / f"attempt_{attempt}_error.txt"
+                drained = self._repair_voice_drain_seconds
+                self._repair_voice_drain_seconds = None
                 attempt_report.write_text(
-                    traceback.format_exc(),
+                    traceback.format_exc()
+                    + (
+                        f"\nrepair_voice_drain_seconds={drained}\n"
+                        if drained is not None
+                        else ""
+                    ),
                     encoding="utf-8",
                 )
                 logger.exception(
@@ -896,7 +957,7 @@ class VideoPipeline:
                 )
                 if attempt >= self.settings.max_repair_attempts:
                     raise
-                self._forget_suspect_scene_codes(exc)
+                self._forget_suspect_scene_codes(exc, job.current_step or "")
                 logger.info(
                     "job.repair.schedule job_id=%s next_attempt=%d previous_error=%s",
                     job.id,
@@ -966,6 +1027,18 @@ class _BackgroundTask:
             logger.warning("background_task.failed name=%s error=%s", self._thread.name, self._error)
 
 
+def _manim_failed_scene_keys(message: str) -> set[str]:
+    """Scene keys named by render_scenes.py in a failed render's log tail.
+
+    The renderer fails one scene at a time with "manim failed for <Scene>", so a
+    render failure can usually be narrowed to that scene instead of re-coding
+    the whole module. An empty result means "could not tell" and the caller
+    falls back to invalidating everything."""
+    from video_api.pipeline.manim_render import failed_scene_keys
+
+    return failed_scene_keys(message)
+
+
 def _flagged_scene_keys(review: Any) -> set[str]:
     flagged = {
         issue.scene_key
@@ -973,7 +1046,9 @@ def _flagged_scene_keys(review: Any) -> set[str]:
         if issue.severity in ("blocker", "major") and issue.scene_key != "unknown"
     }
     flagged.update(
-        score.scene_key for score in getattr(review, "scene_scores", []) or [] if score.score < 60
+        score.scene_key
+        for score in getattr(review, "scene_scores", []) or []
+        if score.score < SCENE_MIN_SCORE
     )
     return flagged
 

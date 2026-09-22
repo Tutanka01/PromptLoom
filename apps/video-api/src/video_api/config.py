@@ -1,11 +1,37 @@
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
 from video_api import timing
+
+
+logger = logging.getLogger(__name__)
+
+
+def _render_jobs_env() -> str:
+    """Validate VIDEO_API_MANIM_RENDER_JOBS once, at settings load. A typo must
+    degrade to "auto" here rather than raise deep inside the pipeline, where the
+    ValueError would escape into the repair loop."""
+    raw = os.getenv("VIDEO_API_MANIM_RENDER_JOBS", "auto").strip()
+    if not raw or raw.lower() == "auto":
+        return "auto"
+    try:
+        parsed = int(raw)
+    except ValueError:
+        logger.warning(
+            "config.manim_render_jobs.invalid value=%r reason=not_an_integer falling_back=auto", raw
+        )
+        return "auto"
+    if parsed < 0:
+        logger.warning(
+            "config.manim_render_jobs.invalid value=%r reason=negative falling_back=auto", raw
+        )
+        return "auto"
+    return "auto" if parsed == 0 else str(parsed)
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -101,13 +127,13 @@ class Settings:
     )
     # Manim engine: scenes rendered in parallel, one process each. "auto" =
     # half the CPUs available to the worker, capped at 6 (~0.5 GB RAM per process).
-    manim_render_jobs: str = field(
-        default_factory=lambda: os.getenv("VIDEO_API_MANIM_RENDER_JOBS", "auto").strip() or "auto"
-    )
+    manim_render_jobs: str = field(default_factory=_render_jobs_env)
     # Manim engine: render each scene as soon as its WAV is ready, while the
-    # rest of the voice is still being generated. 0 = voice then render.
+    # rest of the voice is still being generated. Off by default: the window is
+    # narrow (it only opens when the voice outlives the scene coding) and the
+    # gain is unmeasured on a real job — opt in to measure it.
     voice_render_overlap: bool = field(
-        default_factory=lambda: _bool_env("VIDEO_API_VOICE_RENDER_OVERLAP", True)
+        default_factory=lambda: _bool_env("VIDEO_API_VOICE_RENDER_OVERLAP", False)
     )
     # Both engines: start the voice right after materialization, while the
     # scene coder works (the voice only reads segments_en.json). 0 = voice
