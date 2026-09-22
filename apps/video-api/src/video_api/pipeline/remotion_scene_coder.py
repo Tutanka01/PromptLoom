@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from video_api import llm_usage
 from video_api.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,7 @@ class RemotionSceneCoder:
         if extra:
             request["extra_body"] = extra
         response = client.chat.completions.create(**request)
+        llm_usage.record("scene_coder", self._model(), response)
         content = response.choices[0].message.content or ""
         if not content.strip():
             raise ValueError(

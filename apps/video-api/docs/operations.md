@@ -309,16 +309,28 @@ VIDEO_API_REMOTION_DIR=           # optionnel, defaut <repo>/apps/video-api/remo
 ```
 
 Leviers vitesse du rendu **Remotion** (VM sans GPU, rendu CPU-bound ; toutes les passes
-en profitent, sans effet sur Manim) :
+en profitent). `VIDEO_API_RENDER_FPS` s'applique aussi au rendu final Manim :
 
 ```text
-VIDEO_API_RENDER_FPS=30           # 30 (defaut) ~= 2x moins de frames qu'en 60
+VIDEO_API_RENDER_FPS=30           # 30 (defaut) ~= 2x moins de frames qu'en 60 ; Remotion et Manim
 VIDEO_API_REMOTION_CONCURRENCY=75%  # entier ou %, "75%" ~= 12 tabs/16 coeurs ; "50%" si OOM
 VIDEO_API_RENDER_X264_PRESET=faster # encode plus vite, qualite ~identique a crf 18
 ```
 
-`verify.py` controle desormais `VIDEO_API_RENDER_FPS` (et plus 60 en dur) au pass final
-pour le moteur Remotion ; Manim reste verifie a 60 fps (preset `-qh` fixe).
+Levier vitesse du rendu **Manim** (un process par scene, cache par scene entre
+tentatives de reparation) :
+
+```text
+VIDEO_API_MANIM_RENDER_JOBS=auto  # "auto" = moitie des CPU du worker, max 6 ; entier sinon
+```
+
+Compter ~0,5 Go de RAM par process Manim. Le detail (scenes rendues, reprises du
+cache, secondes par scene) est ecrit dans `render_stats.json` et sous `render`
+dans `report.json`.
+
+`verify.py` controle `VIDEO_API_RENDER_FPS` au pass final pour les deux moteurs.
+Manim rend le final en `-qh --fps <VIDEO_API_RENDER_FPS>` (1080p30 par defaut) ; le
+profil `draft` garde le preset `-ql` (480p15).
 
 `remotion` bascule le rendu vers React/Remotion (palette de composants testes + code
 libre encadre par scene), en gardant TTS Chatterbox, `assemble_en.sh` et `verify.py`.

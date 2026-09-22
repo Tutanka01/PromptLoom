@@ -258,9 +258,21 @@ QUALITY=qh ./render_en.sh
 ./assemble_en.sh
 ```
 
-La video finale doit etre en 1080p60 avec audio. Un job qui passe est rendu
-exactement une fois ; une revue visuelle en echec coute un rendu complet
+La video finale doit etre en 1080p a `VIDEO_API_RENDER_FPS` (30 par defaut) avec audio. Un job qui passe est rendu
+exactement une fois ; une revue visuelle en echec coute un rendu
 supplementaire (par choix : les scenes fautives sont reecrites puis re-rendues).
+
+Moteur Manim : `render_en.sh` delegue a `render_scenes.py` (copie de
+`pipeline/manim_render.py`), qui lance un process Manim par scene, jusqu'a
+`VIDEO_API_MANIM_RENDER_JOBS` en parallele, chacun avec son propre `--media_dir`.
+Chaque scene rendue est gardee dans `render_cache/<qualite>/<Scene>-<cle>.mp4` ;
+la cle couvre le code de la scene, la partie partagee du module, le style, la
+duree audio, la narration et la qualite. Lors d'une reparation, le worker garde
+le code valide des scenes dont l'entree du scene coder n'a pas change (toutes
+sauf les scenes signalees par la revue visuelle ; aucune apres un echec de rendu
+ou de verification), si bien que seules les scenes modifiees sont recodees et
+re-rendues. Les logs Manim par scene sont dans `render_logs/<Scene>.log`, les
+statistiques dans `render_stats.json` et sous `render` dans `report.json`.
 
 ### 7. Revue visuelle (optionnelle)
 

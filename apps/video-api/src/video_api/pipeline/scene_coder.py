@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from video_api import llm_usage
 from video_api.config import Settings
 from video_api.schemas import SceneSpec, VideoBlueprint
 
@@ -173,6 +174,7 @@ class SceneCoder:
                 response = client.chat.completions.create(**request)
             else:
                 raise
+        llm_usage.record("scene_coder", self._model(), response)
         choice = response.choices[0]
         message = choice.message
         content = message.content or ""

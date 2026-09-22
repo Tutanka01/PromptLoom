@@ -13,6 +13,8 @@ both write the same ``video_dir`` contract (segments_en.json / generate_voice_en
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -68,17 +70,36 @@ class Engine(Protocol):
 
 class ManimEngine:
     name = "manim"
-    # Manim's -qh quality preset renders at 1080p60; render_fps does not apply here.
-    output_fps = 60.0
 
     def __init__(self, settings: Settings, llm: LLMClient):
         from video_api.pipeline.materialize import Materializer
         from video_api.pipeline.scene_coder import SceneCoder
 
         self.settings = settings
+        # The final render passes --fps render_fps on top of Manim's -qh preset.
+        self.output_fps = float(settings.render_fps)
         self.llm = llm
         self.materializer = Materializer(settings)
         self.scene_coder = SceneCoder(settings)
+        # scene_key -> (fingerprint of the scene coder input, validated code).
+        # Lives for one job run: a repair attempt that leaves a scene's spec
+        # untouched reuses its code, which also lets render_cache/ hit.
+        self._code_cache: dict[str, tuple[str, str]] = {}
+
+    def forget_scene_codes(self, scene_keys: set[str] | None = None) -> None:
+        if scene_keys is None:
+            self._code_cache.clear()
+            return
+        for key in scene_keys:
+            self._code_cache.pop(key, None)
+
+    def _scene_fingerprint(self, scene: Any, blueprint: Any) -> str:
+        payload = {
+            "model": self.scene_coder._model(),
+            "context": self.scene_coder._build_scene_context(scene, blueprint),
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def generate_blueprint(
         self,
@@ -162,6 +183,16 @@ class ManimEngine:
         smoke_gate = threading.Semaphore(2)
 
         def _code_one_scene(scene: Any) -> tuple[str, str | None]:
+            fingerprint = self._scene_fingerprint(scene, blueprint)
+            cached = self._code_cache.get(scene.key)
+            if cached is not None and cached[0] == fingerprint:
+                logger.info("scene_codegen.reuse scene=%s", scene.key)
+                if on_scene_done is not None:
+                    try:
+                        on_scene_done(scene.key)
+                    except Exception:
+                        logger.exception("on_scene_done.failed scene=%s", scene.key)
+                return scene.key, cached[1]
             prev_code = ""
             prev_error = ""
             for attempt in range(self.settings.scene_coder_attempts):
@@ -184,6 +215,7 @@ class ManimEngine:
                                 self.settings.scene_coder_smoke_timeout_seconds,
                             )
                     logger.info("scene_codegen.success scene=%s attempt=%d", scene.key, attempt)
+                    self._code_cache[scene.key] = (fingerprint, code)
                     if on_scene_done is not None:
                         try:
                             on_scene_done(scene.key)

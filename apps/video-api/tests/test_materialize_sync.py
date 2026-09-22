@@ -34,7 +34,9 @@ def test_generated_manim_uses_renderer_time_compatibility(tmp_path: Path) -> Non
         assert ghost not in manim_source
 
     render_script = (video_dir / "render_en.sh").read_text(encoding="utf-8")
-    assert "media/videos/prompt_to_academic_video_en/${QUALITY_DIR}/Scene1_HookEN.mp4" in render_script
+    assert "render_scenes.py --module prompt_to_academic_video_en.py" in render_script
+    assert "  Scene1_HookEN\n" in render_script
+    assert (video_dir / "render_scenes.py").exists()
 
     assemble_script = (video_dir / "assemble_en.sh").read_text(encoding="utf-8")
     assert 'AUDIO="${AUDIO:-audio/en/voiceover_en.wav}"' in assemble_script

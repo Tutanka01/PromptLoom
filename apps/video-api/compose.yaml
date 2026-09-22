@@ -84,11 +84,13 @@ services:
       # manim (default) keeps the Python/Manim path; remotion switches to the
       # React/Remotion render engine (same TTS, assemble, verify).
       VIDEO_API_RENDER_ENGINE: ${VIDEO_API_RENDER_ENGINE:-manim}
-      # Render speed knobs (Remotion engine): output fps (30 default ~halves frames
+      # Render speed knobs: output fps (Remotion + Manim final; 30 default ~halves frames
       # vs 60), Chrome render concurrency (int or "75%"), and the x264 preset.
       VIDEO_API_RENDER_FPS: ${VIDEO_API_RENDER_FPS:-30}
       VIDEO_API_REMOTION_CONCURRENCY: ${VIDEO_API_REMOTION_CONCURRENCY:-75%}
       VIDEO_API_RENDER_X264_PRESET: ${VIDEO_API_RENDER_X264_PRESET:-faster}
+      # Manim engine: scenes rendered in parallel ("auto" = half the CPUs, max 6).
+      VIDEO_API_MANIM_RENDER_JOBS: ${VIDEO_API_MANIM_RENDER_JOBS:-auto}
       # Word-level forced alignment (Remotion): narration-synced visual cues.
       VIDEO_API_ALIGN_ENABLED: ${VIDEO_API_ALIGN_ENABLED:-1}
       VIDEO_API_ALIGN_DEVICE: ${VIDEO_API_ALIGN_DEVICE:-auto}

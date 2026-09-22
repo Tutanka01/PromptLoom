@@ -435,6 +435,13 @@ Le rapport peut contenir :
   gate final `delivery` ;
 - `subtitles` : chemins workspace des sidecars `.srt`/`.vtt` (vide si
   `captions: "off"` ou si l'alignement n'a rien produit).
+- `timings` : duree en secondes de chaque etape (`steps_seconds`, cumulee sur
+  les tentatives de reparation) et `total_seconds` ;
+- `llm_usage` : appels et tokens (`prompt_tokens`, `completion_tokens`) du job,
+  au total et par etape (`blueprint`, `scene_coder`, `visual_review`) avec les
+  modeles utilises. Aussi present dans `error.json` d'un job en echec ;
+- `render` (moteur Manim) : parallelisme, secondes par scene rendue et scenes
+  reprises du cache.
 
 Les artefacts avances inspectables incluent `research.json`, `proposal.json`,
 `scene_plan.json`, `asset_manifest.json` et `motion_plan_report.json`.

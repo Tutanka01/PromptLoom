@@ -84,7 +84,8 @@ class Settings:
     render_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower())
     # Render speed knobs (no-GPU VM: the Remotion render is CPU-bound on software GL,
     # so concurrency + frame count + x264 preset are the real levers).
-    # - render_fps: output frame rate. 30 (default) halves the frames to encode vs 60
+    # - render_fps: output frame rate (Remotion, and the Manim final render via --fps).
+    #   30 (default) halves the frames to encode vs 60
     #   for explainer content; raise to 60 for maximum smoothness.
     # - remotion_concurrency: passed to `remotion render --concurrency`. Accepts an int
     #   or a percentage ("75%" ~= 12 tabs on 16 cores). Each Chrome tab uses ~0.5-1 GB,
@@ -97,6 +98,11 @@ class Settings:
     )
     render_x264_preset: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_RENDER_X264_PRESET", "faster")
+    )
+    # Manim engine: scenes rendered in parallel, one process each. "auto" =
+    # half the CPUs available to the worker, capped at 6 (~0.5 GB RAM per process).
+    manim_render_jobs: str = field(
+        default_factory=lambda: os.getenv("VIDEO_API_MANIM_RENDER_JOBS", "auto").strip() or "auto"
     )
     # Job-resolved editorial controls. Environment values are defaults; the
     # worker replaces them from VideoJob.production_config before selecting an

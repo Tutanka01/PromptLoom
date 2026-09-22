@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from video_api import llm_usage
 from video_api.config import Settings
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.verify import extract_frame
@@ -346,6 +347,7 @@ class VisualReviewer:
             response_format={"type": "json_object"},
             max_tokens=self.settings.visual_review_max_tokens,
         )
+        llm_usage.record("visual_review", self._model(), response)
         raw_text = response.choices[0].message.content or ""
         raw_json = _extract_json_object(raw_text)
 

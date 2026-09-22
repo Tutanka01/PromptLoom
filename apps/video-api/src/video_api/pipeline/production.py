@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from video_api import timing
+from video_api import llm_usage, timing
 from video_api.config import (
     Settings,
     apply_quality_profile,
@@ -278,6 +278,7 @@ class VideoPipeline:
             job = session.get(VideoJob, job_id)
             if job is None:
                 raise RuntimeError(f"job not found: {job_id}")
+            llm_usage.reset()
             self._apply_profile(getattr(job, "quality_profile", None))
             self._apply_production_config(getattr(job, "production_config", None))
             self.settings = dataclasses.replace(self.settings, voice_language=job.language or "en")
@@ -338,6 +339,7 @@ class VideoPipeline:
                             "error": str(exc),
                             "traceback": traceback.format_exc(),
                             "current_step": job.current_step,
+                            "llm_usage": llm_usage.snapshot(),
                         },
                         indent=2,
                     )
@@ -355,6 +357,16 @@ class VideoPipeline:
                 self._update(session, job, failure_status, job.progress, job.current_step or "failed", str(exc))
                 self._notify_terminal(session, job)
                 return failure_status
+
+    def _forget_suspect_scene_codes(self, exc: Exception) -> None:
+        """Before a repair, drop the cached scene code that may have caused the
+        failure: only the flagged scenes after a visual review, nothing after a
+        pre-render motion gate, everything otherwise."""
+        forget = getattr(self.engine, "forget_scene_codes", None)
+        if forget is None or isinstance(exc, MotionQualityError):
+            return
+        flagged = _flagged_scene_keys(exc.result) if isinstance(exc, VisualReviewError) else set()
+        forget(flagged or None)
 
     def _run_with_repairs(
         self,
@@ -650,7 +662,13 @@ class VideoPipeline:
                     ["./render_en.sh"],
                     cwd=video_dir,
                     log_name="render-final.log",
-                    env={"QUALITY": final_render_quality},
+                    env={
+                        "QUALITY": final_render_quality,
+                        "MANIM_RENDER_JOBS": self.settings.manim_render_jobs,
+                        # Draft (ql) keeps Manim's 15 fps preset; the final
+                        # render follows VIDEO_API_RENDER_FPS like Remotion.
+                        "MANIM_FPS": str(self.settings.render_fps) if final_render_quality == "qh" else "",
+                    },
                     on_line=render_on_line,
                 )
                 logger.info(
@@ -741,6 +759,10 @@ class VideoPipeline:
                     )
                 final_report["subtitles"] = subtitle_files
                 final_report["timings"] = _timings_from_marks(self._step_marks)
+                final_report["llm_usage"] = llm_usage.snapshot()
+                render_stats_path = video_dir / "render_stats.json"
+                if render_stats_path.exists():
+                    final_report["render"] = json.loads(render_stats_path.read_text(encoding="utf-8"))
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")
                 job.final_video_path = str(final_video)
@@ -770,12 +792,25 @@ class VideoPipeline:
                 )
                 if attempt >= self.settings.max_repair_attempts:
                     raise
+                self._forget_suspect_scene_codes(exc)
                 logger.info(
                     "job.repair.schedule job_id=%s next_attempt=%d previous_error=%s",
                     job.id,
                     attempt + 1,
                     type(exc).__name__,
                 )
+
+
+def _flagged_scene_keys(review: Any) -> set[str]:
+    flagged = {
+        issue.scene_key
+        for issue in getattr(review, "issues", []) or []
+        if issue.severity in ("blocker", "major") and issue.scene_key != "unknown"
+    }
+    flagged.update(
+        score.scene_key for score in getattr(review, "scene_scores", []) or [] if score.score < 60
+    )
+    return flagged
 
 
 def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:

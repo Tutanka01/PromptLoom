@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from video_api import timing
+from video_api import llm_usage, timing
 from video_api.config import Settings
 from video_api.languages import language_name, normalize_language
 from video_api.schemas import BeatSpec, RemotionBlueprint, SceneSpec, VideoBlueprint
@@ -676,6 +676,7 @@ class LLMClient:
             messages=messages,
             **kwargs,
         )
+        llm_usage.record("blueprint", self.settings.openai_model, response)
         content = response.choices[0].message.content or ""
         finish = response.choices[0].finish_reason
         if not content.strip():
