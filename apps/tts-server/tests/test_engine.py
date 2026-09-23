@@ -367,8 +367,10 @@ def test_failed_load_retries_on_demand(tmp_path, monkeypatch) -> None:
         engine.ensure_ready(timeout=2)
     assert engine.state == "error"
 
-    # Skip the retry cooldown, then the next request recovers.
-    engine._last_load_attempt = 0
+    # Skip the retry cooldown, then the next request recovers. "Older than the
+    # cooldown" must be relative to the clock: time.monotonic() starts near 0
+    # on a freshly booted machine, where an absolute 0 is still inside it.
+    engine._last_load_attempt = time.monotonic() - engine._LOAD_RETRY_COOLDOWN - 1.0
     engine.ensure_ready(timeout=2)
     assert engine.state == "ready"
     assert attempts["n"] == 2
