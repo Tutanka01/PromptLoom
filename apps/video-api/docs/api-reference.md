@@ -435,6 +435,24 @@ Le rapport peut contenir :
   gate final `delivery` ;
 - `subtitles` : chemins workspace des sidecars `.srt`/`.vtt` (vide si
   `captions: "off"` ou si l'alignement n'a rien produit).
+- `timings` : duree en secondes de chaque etape (`steps_seconds`, cumulee sur
+  les tentatives de reparation) et `total_seconds` ;
+- `llm_usage` : appels et tokens (`prompt_tokens`, `completion_tokens`) du job,
+  au total et par etape avec les modeles utilises : `by_stage.<etape>.calls`,
+  `.prompt_tokens`, `.completion_tokens`, `.models`. Chaque appel est facture a son
+  etape reelle : `blueprint` (generation), `blueprint_outline` (passe 1 Remotion),
+  `blueprint_scenes` (passe 2 Remotion), `blueprint_scenes_repair` (reecriture des
+  scenes signalees par la revue), `blueprint_repair` (reparation du JSON),
+  `translate` (jobs secondaires d'un batch multilingue), `scene_coder` et
+  `visual_review`. Aussi present dans `error.json` d'un job en echec ;
+- `voice` : `overlap` (`scene_codegen` si la voix a tourne pendant le scene
+  coding, `off` sinon), `seconds` (duree de la voix) et `wait_seconds` (temps
+  passe a attendre la voix apres le scene coding) ;
+- `render` (moteur Manim) : parallelisme, secondes par scene rendue et scenes
+  reprises du cache ; `render.overlap` detaille les scenes rendues pendant la
+  voix (`reused` reprises par le rendu final, `wasted` re-rendues, `failed`,
+  `skipped` si la scene depend d'une autre scene et n'est jamais speculee,
+  `speculative_seconds` par scene).
 
 Les artefacts avances inspectables incluent `research.json`, `proposal.json`,
 `scene_plan.json`, `asset_manifest.json` et `motion_plan_report.json`.

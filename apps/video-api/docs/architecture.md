@@ -215,6 +215,18 @@ pas sur une scene fautive. Pour forcer le mode 100% deterministe : `VIDEO_API_SC
 
 Le worker lance `generate_voice_en.py`.
 
+Avec `VIDEO_API_VOICE_CODEGEN_OVERLAP=1` (defaut, deux moteurs), la voix demarre
+juste apres la materialisation, en tache de fond, pendant que le scene coder et
+la validation statique travaillent : le script de voix ne lit que
+`segments_en.json`, que le scene coder ne modifie pas. Le compteur de segments
+du Studio ne s'affiche qu'une fois l'etape `voice_generation` atteinte. Une
+erreur TTS fait toujours echouer le job, a l'etape `voice_generation`. Si le
+scene coding ou la validation echoue, le worker attend la fin de la voix avant
+la reparation (les segments termines restent en cache) et garde l'erreur de
+scene comme cause. `report.json` donne `voice.seconds` (duree totale de la voix)
+et `voice.wait_seconds` (attente restante apres le scene coding). `0` = voix
+apres la validation statique, comme avant.
+
 Par defaut :
 
 ```text
@@ -258,9 +270,63 @@ QUALITY=qh ./render_en.sh
 ./assemble_en.sh
 ```
 
-La video finale doit etre en 1080p60 avec audio. Un job qui passe est rendu
-exactement une fois ; une revue visuelle en echec coute un rendu complet
+La video finale doit etre en 1080p au fps du moteur (30 par defaut pour Remotion,
+60 pour Manim) avec audio. Un job qui passe est rendu
+exactement une fois ; une revue visuelle en echec coute un rendu
 supplementaire (par choix : les scenes fautives sont reecrites puis re-rendues).
+
+**Fps du rendu final Manim** : le rendu final suit desormais
+`VIDEO_API_MANIM_RENDER_FPS` (60 par defaut, soit le fps natif du preset `qh`,
+donc sortie inchangee) au lieu d'etre fige par le preset. Le mettre a `30`
+divise par deux le temps d'encodage, au prix de la fluidite (c'est le defaut de
+Remotion, qui garde son propre reglage `VIDEO_API_RENDER_FPS=30`). Consequence
+pour les mesures : un avant/apres qui compare le parallelisme doit fixer le fps
+des deux cotes, sinon les deux effets se melangent.
+
+Moteur Manim : `render_en.sh` delegue a `render_scenes.py` (copie de
+`pipeline/manim_render.py`), qui lance un process Manim par scene, jusqu'a
+`VIDEO_API_MANIM_RENDER_JOBS` en parallele, chacun avec son propre `--media_dir`.
+Chaque scene rendue est gardee dans
+`render_cache/<qualite>[-<fps>fps]/<Scene>-<cle>.mp4` (ex. `render_cache/qh-60fps/`,
+`render_cache/ql/` pour un draft sans `--fps`) ;
+la cle couvre le code de la scene, la partie partagee du module, le style, la
+duree audio, la narration, la qualite et le fps. Lors d'une reparation, le worker garde
+le code valide des scenes dont l'entree du scene coder n'a pas change, si bien
+que seules les scenes modifiees sont recodees et re-rendues. Ce qu'il oublie
+depend de l'etape en echec, parce qu'oublier une scene change aussi sa cle de
+cache de rendu et coute un re-rendu :
+
+| Etape en echec | Code de scene invalide |
+| --- | --- |
+| Portail de mouvement (pre-rendu) | rien |
+| Revue visuelle | uniquement les scenes signalees ; tout si aucune n'est identifiable |
+| Voix, alignement, assemblage | rien — ces etapes ne lisent jamais le code de scene, donc une panne TTS ou ffmpeg transitoire ne doit pas tout recoder |
+| Rendu Manim | la ou les scenes nommees dans l'erreur (`manim failed for <Scene>`) ; tout si aucune n'est identifiable |
+| Scene coding, validation statique, verification | tout |
+
+Les logs Manim par scene sont dans `render_logs/<Scene>.log`, les
+statistiques dans `render_stats.json` et sous `render` dans `report.json`.
+
+Chevauchement voix/rendu (Manim, `VIDEO_API_VOICE_RENDER_OVERLAP=1`, **desactive
+par defaut** tant qu'il n'est pas mesure sur un job reel) : pendant
+l'etape voix, `SpeculativeRenderer` surveille `audio/en/` (les WAV deja termines
+pendant le scene coding sont pris des son demarrage). Des qu'un WAV est
+complet, la duree de la scene est calculee avec la formule du script de voix
+(`round(ffprobe + tail_padding, 3)`) et la scene est rendue dans une copie
+temporaire du dossier (`render_spec/<Scene>/`) ne contenant que cette duree ; le
+MP4 va dans `render_cache/`. `render_en.sh` tourne ensuite avec le
+`durations.json` officiel : une scene speculee avec la bonne duree est un hit de
+cache, une divergence est simplement re-rendue. La synchro voix/image ne depend
+donc jamais la speculation. Bilan sous `render.overlap` dans `report.json`
+(`reused`, `wasted`, `failed`, `skipped`), logs dans `render_logs/<Scene>.speculative.log`.
+Une scene dont les pixels dependraient de la duree ou du texte d'une autre scene
+n'est jamais speculee (`skipped`) : la cle de cache ne couvre que la duree et la
+narration de la scene elle-meme, donc elle produirait le meme digest avec
+d'autres pixels. C'est une optimisation pure : si la speculation ne peut pas demarrer (reglage
+invalide, binaire manquant), le job continue sans elle
+(`render.overlap.skip reason=start_failed`). Elle ne doit jamais lever, sinon
+l'erreur remonterait dans la boucle de reparation en laissant le thread voix de
+fond en vie.
 
 ### 7. Revue visuelle (optionnelle)
 

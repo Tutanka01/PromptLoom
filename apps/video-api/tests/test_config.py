@@ -151,3 +151,55 @@ def test_dotenv_loads_missing_values_without_overriding(monkeypatch, tmp_path):
     assert Settings().openai_base_url == "https://from-file.test/v1"
     assert Settings().openai_model == "model-from-process"
     assert Settings().openai_api_key == "key-from-file"
+
+
+def test_manim_render_jobs_falls_back_to_auto_on_a_bad_value(monkeypatch, caplog):
+    """A typo must be caught here, at settings load, with a warning: raising it
+    later (inside _start_speculative_render) would abort the job while the
+    background voice thread is still running."""
+    for bad in ("4cpu", "-2", "", "   "):
+        monkeypatch.setenv("VIDEO_API_MANIM_RENDER_JOBS", bad)
+        assert Settings().manim_render_jobs == "auto"
+
+    monkeypatch.setenv("VIDEO_API_MANIM_RENDER_JOBS", "4cpu")
+    with caplog.at_level("WARNING", logger="video_api.config"):
+        Settings()
+    assert "config.manim_render_jobs.invalid" in caplog.text
+
+    monkeypatch.setenv("VIDEO_API_MANIM_RENDER_JOBS", " 4 ")
+    assert Settings().manim_render_jobs == "4"
+    monkeypatch.setenv("VIDEO_API_MANIM_RENDER_JOBS", "0")
+    assert Settings().manim_render_jobs == "auto"
+
+
+def test_fps_knobs_fall_back_to_their_default_on_a_bad_value(monkeypatch, caplog):
+    """Same rule as VIDEO_API_MANIM_RENDER_JOBS: a typo degrades to the documented
+    default at load instead of raising while a job is already running."""
+    for bad in ("30fps", "-1", "0", "auto"):
+        monkeypatch.setenv("VIDEO_API_RENDER_FPS", bad)
+        assert Settings().render_fps == 30
+        monkeypatch.setenv("VIDEO_API_MANIM_RENDER_FPS", bad)
+        assert Settings().manim_render_fps == 60
+
+    monkeypatch.setenv("VIDEO_API_MANIM_RENDER_FPS", "60fps")
+    with caplog.at_level("WARNING", logger="video_api.config"):
+        Settings()
+    assert "config.int.invalid" in caplog.text
+
+    monkeypatch.setenv("VIDEO_API_MANIM_RENDER_FPS", " 30 ")
+    assert Settings().manim_render_fps == 30
+
+
+def test_manim_render_fps_keeps_the_preset_rate_by_default(monkeypatch):
+    """60 is the -qh preset's own frame rate: the Manim output is unchanged unless
+    the operator asks for 30."""
+    monkeypatch.delenv("VIDEO_API_MANIM_RENDER_FPS", raising=False)
+    assert Settings().manim_render_fps == 60
+
+
+def test_voice_render_overlap_is_off_by_default(monkeypatch):
+    """Speculative Manim render: opt-in until it is measured on a real job."""
+    monkeypatch.delenv("VIDEO_API_VOICE_RENDER_OVERLAP", raising=False)
+    assert Settings().voice_render_overlap is False
+    monkeypatch.setenv("VIDEO_API_VOICE_RENDER_OVERLAP", "1")
+    assert Settings().voice_render_overlap is True

@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from video_api import timing
+from video_api import llm_usage, timing
 from video_api.config import (
     Settings,
     apply_quality_profile,
@@ -28,7 +28,7 @@ from video_api.pipeline.engine import make_engine
 from video_api.pipeline.editorial import MotionQualityError, write_editorial_artifacts
 from video_api.pipeline.llm import LLMClient
 from video_api.pipeline.verify import verify_mp4
-from video_api.pipeline.visual_review import VisualReviewer
+from video_api.pipeline.visual_review import SCENE_MIN_SCORE, VisualReviewer
 from video_api.pipeline.substep import (
     ManimSceneReporter,
     SubstepReporter,
@@ -44,6 +44,11 @@ from video_api.voices import VoiceSelectionError, apply_job_voice
 
 
 logger = logging.getLogger(__name__)
+
+# Stages that never read the generated scene code, so their failure says nothing
+# about it. Invalidating a scene here would re-code it AND change its render
+# cache key — a transient TTS or ffmpeg blip must not cost a full re-render.
+_SCENE_CODE_INNOCENT_STEPS = frozenset({"voice_generation", "audio_alignment", "assemble_final"})
 
 __all__ = ["VideoPipeline", "VisualReviewError", "voice_command_for_settings"]
 
@@ -103,6 +108,9 @@ class VideoPipeline:
             "cinematic": "cinematic",
         }[options.mode]
         render_fps = 60 if options.mode == "cinematic" and engine == "remotion" else self.settings.render_fps
+        manim_render_fps = (
+            60 if options.mode == "cinematic" and engine == "manim" else self.settings.manim_render_fps
+        )
         self.settings = dataclasses.replace(
             self.settings,
             render_engine=engine,
@@ -111,6 +119,7 @@ class VideoPipeline:
             transition_profile=transition_profile,
             delivery_promise=options.delivery_promise or "technical_explainer",
             render_fps=render_fps,
+            manim_render_fps=manim_render_fps,
         )
         self.llm = LLMClient(self.settings)
         self.engine = make_engine(self.settings, self.llm)
@@ -278,6 +287,7 @@ class VideoPipeline:
             job = session.get(VideoJob, job_id)
             if job is None:
                 raise RuntimeError(f"job not found: {job_id}")
+            llm_usage.reset()
             self._apply_profile(getattr(job, "quality_profile", None))
             self._apply_production_config(getattr(job, "production_config", None))
             self.settings = dataclasses.replace(self.settings, voice_language=job.language or "en")
@@ -338,6 +348,7 @@ class VideoPipeline:
                             "error": str(exc),
                             "traceback": traceback.format_exc(),
                             "current_step": job.current_step,
+                            "llm_usage": llm_usage.snapshot(),
                         },
                         indent=2,
                     )
@@ -356,6 +367,115 @@ class VideoPipeline:
                 self._notify_terminal(session, job)
                 return failure_status
 
+    def _forget_suspect_scene_codes(self, exc: Exception, step: str) -> None:
+        """Before a repair, drop the cached scene code that may have caused the
+        failure — and only that, because forgetting a scene also changes its
+        render cache key and costs a re-render.
+
+        * pre-render motion gate: nothing (the sources are not at fault yet);
+        * visual review: the flagged scenes;
+        * voice / alignment / assembly: nothing — these stages never read the
+          scene code, so a transient TTS or ffmpeg failure must not re-code
+          every scene and throw away the whole render cache;
+        * Manim render: the scenes the renderer named, when it named any;
+        * anything else (codegen, static validation, verify, render without an
+          identifiable scene): everything, as before.
+        """
+        forget = getattr(self.engine, "forget_scene_codes", None)
+        if forget is None or isinstance(exc, MotionQualityError):
+            return
+        if isinstance(exc, VisualReviewError):
+            flagged = _flagged_scene_keys(exc.result)
+            logger.info("job.repair.forget scope=%s step=%s", sorted(flagged) or "all", step)
+            forget(flagged or None)
+            return
+        if step in _SCENE_CODE_INNOCENT_STEPS:
+            logger.info("job.repair.forget scope=none step=%s", step)
+            return
+        if step == "render_final":
+            named = _manim_failed_scene_keys(str(exc))
+            if named:
+                logger.info("job.repair.forget scope=%s step=%s", sorted(named), step)
+                forget(named)
+                return
+        logger.info("job.repair.forget scope=all step=%s", step)
+        forget(None)
+
+    def _generate_and_validate_scenes(
+        self, session: Session, job: VideoJob, blueprint: Any, video_dir: Path
+    ) -> None:
+        self._update(session, job, "generating_sources", 26, "scene_codegen")
+        # Bump the sub-step counter after each scene the engine finishes
+        # coding — the Studio then shows "3/8 scènes générées" while
+        # the LLM works through the blueprint. Thread-safe via a lock
+        # because the manim coder parallelises scenes.
+        scenes_total = len(blueprint.scenes)
+        scene_count = [0]
+        scene_lock = threading.Lock()
+
+        def _on_scene_done(_key: str) -> None:
+            with scene_lock:
+                scene_count[0] += 1
+                current = scene_count[0]
+            set_substep(session, job, "scenes", current, scenes_total)
+
+        self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
+
+        self._update(session, job, "static_validation", 30, "static_validation")
+        self.engine.validate_static(video_dir)
+        logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
+
+    def _log_voice_start(self, job: VideoJob, overlap: str) -> None:
+        engine = self.settings.voice_engine.strip().lower()
+        logger.info(
+            "job.voice.start job_id=%s engine=%s model=%s overlap=%s",
+            job.id,
+            self.settings.voice_engine,
+            self.settings.openai_tts_model
+            if engine == "openai"
+            else self.settings.moss_tts_model
+            if engine in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
+            else "",
+            overlap,
+        )
+
+    def _start_speculative_render(
+        self,
+        blueprint: Any,
+        video_dir: Path,
+        voice_args: list[str],
+        quality: str,
+        fps: str,
+    ) -> Any | None:
+        """Manim only: render scenes as their WAVs land, during the voice step.
+
+        Pure optimisation, so it never fails the job: the final render redoes
+        (or reuses from cache) whatever the speculation did not produce. Raising
+        here would abort the job between the voice thread's start and its join,
+        leaving that daemon thread writing WAVs into the next attempt."""
+        if self.engine.name != "manim" or not self.settings.voice_render_overlap:
+            return None
+        try:
+            tail_padding = _tail_padding(voice_args)
+            if tail_padding is None:
+                logger.info("render.overlap.skip reason=no_tail_padding_in_voice_command")
+                return None
+            from video_api.pipeline.manim_render import SpeculativeRenderer, resolve_jobs
+
+            scene_keys = [scene.key for scene in blueprint.scenes]
+            return SpeculativeRenderer(
+                video_dir,
+                f"{blueprint.slug.replace('-', '_')}_en.py",
+                scene_keys,
+                quality,
+                fps,
+                resolve_jobs(self.settings.manim_render_jobs, len(scene_keys)),
+                tail_padding,
+            ).start()
+        except Exception as exc:
+            logger.warning("render.overlap.skip reason=start_failed error=%s", exc)
+            return None
+
     def _run_with_repairs(
         self,
         session: Session,
@@ -367,6 +487,9 @@ class VideoPipeline:
     ) -> None:
         last_error: Exception | None = None
         blueprint_data: dict | None = None
+        # Set when a failing attempt had to drain a background voice run; read
+        # and cleared by the repair handler below.
+        self._repair_voice_drain_seconds: float | None = None
         max_attempts = self.settings.max_repair_attempts + 1
         for attempt in range(max_attempts):
             try:
@@ -513,56 +636,119 @@ class VideoPipeline:
                     video_dir,
                 )
 
-                self._update(session, job, "generating_sources", 26, "scene_codegen")
-                # Bump the sub-step counter after each scene the engine finishes
-                # coding — the Studio then shows "3/8 scènes générées" while
-                # the LLM works through the blueprint. Thread-safe via a lock
-                # because the manim coder parallelises scenes.
-                _scenes_total = len(blueprint.scenes)
-                _scene_count = [0]
-                _scene_lock = threading.Lock()
-
-                def _on_scene_done(_key: str) -> None:
-                    with _scene_lock:
-                        _scene_count[0] += 1
-                        current = _scene_count[0]
-                    set_substep(session, job, "scenes", current, _scenes_total)
-
-                self.engine.generate_scenes(blueprint, video_dir, on_scene_done=_on_scene_done)
-
-                self._update(session, job, "static_validation", 30, "static_validation")
-                self.engine.validate_static(video_dir)
-                logger.info("job.static_validation.done job_id=%s video_dir=%s", job.id, video_dir)
-
-                self._update(session, job, "voice_generation", 40, "voice_generation")
                 voice_args, voice_env = voice_command_for_settings(self.settings)
-                logger.info(
-                    "job.voice.start job_id=%s engine=%s model=%s",
-                    job.id,
-                    self.settings.voice_engine,
-                    self.settings.openai_tts_model
-                    if self.settings.voice_engine.strip().lower() == "openai"
-                    else self.settings.moss_tts_model
-                    if self.settings.voice_engine.strip().lower()
-                    in {"moss", "moss-tts", "moss_tts", "moss-remote", "moss_remote", "remote-moss"}
-                    else "",
-                )
                 # generate_voice_en.py prints "Generating <engine> segment ..."
                 # for every supported engine (openai / kokoro / chatterbox /
                 # chatterbox turbo / moss / moss-remote). The parser matches
                 # every label, so we install the reporter unconditionally —
                 # a non-matching line is a no-op inside the reporter.
+                # The voice only reads segments_en.json, so it can run while the
+                # scene coder works; the reporter then stays silent until the
+                # worker thread reaches the voice step and hands over the session.
+                voice_overlap = self.settings.voice_codegen_overlap
                 voice_on_line = TTSSegmentReporter(
-                    session, job, total_segments=len(blueprint.scenes)
+                    session, job, total_segments=len(blueprint.scenes), deferred=voice_overlap
                 )
-                runner.run(
-                    voice_args,
-                    cwd=video_dir,
-                    log_name="voice.log",
-                    env=voice_env,
-                    on_line=voice_on_line,
+
+                def _run_voice() -> None:
+                    runner.run(
+                        voice_args,
+                        cwd=video_dir,
+                        log_name="voice.log",
+                        env=voice_env,
+                        on_line=voice_on_line,
+                    )
+
+                background_voice: _BackgroundTask | None = None
+                if voice_overlap:
+                    self._log_voice_start(job, overlap="scene_codegen")
+                    background_voice = _BackgroundTask(_run_voice, name=f"voice-{job.id}").start()
+
+                try:
+                    self._generate_and_validate_scenes(session, job, blueprint, video_dir)
+                    self._update(session, job, "voice_generation", 40, "voice_generation")
+                except Exception as exc:
+                    # Only a repair needs a quiet video_dir, and only a repair
+                    # re-materializes it. A cancel or a soft time limit ends the
+                    # job here, so draining would just hold the worker slot for
+                    # the whole TTS run. The reporter is still deferred (its
+                    # activate() is never reached), so the abandoned voice thread
+                    # counts segments without touching the DB session.
+                    if background_voice is not None and not _is_terminal_abort(exc):
+                        # Never leave a voice process writing into video_dir
+                        # behind a repair attempt: let it finish (its segments
+                        # stay cached) and keep the scene error as the cause.
+                        # Killing it would be cheaper in latency, so measure the
+                        # cost before deciding: the delay is logged and lands in
+                        # attempt_<n>_error.txt as repair_voice_drain_seconds.
+                        drain_started = time.monotonic()
+                        background_voice.wait_quietly()
+                        self._repair_voice_drain_seconds = round(
+                            time.monotonic() - drain_started, 2
+                        )
+                        logger.info(
+                            "job.repair.voice_drain job_id=%s step=%s seconds=%.2f",
+                            job.id,
+                            job.current_step,
+                            self._repair_voice_drain_seconds,
+                        )
+                    elif background_voice is not None:
+                        logger.info(
+                            "job.voice.abandoned job_id=%s step=%s reason=%s",
+                            job.id,
+                            job.current_step,
+                            type(exc).__name__,
+                        )
+                    raise
+                if background_voice is None:
+                    self._log_voice_start(job, overlap="off")
+                final_render_quality = render_quality_for_profile(self.quality_profile)
+                # Draft (ql) keeps Manim's 15 fps preset; the final render follows
+                # VIDEO_API_MANIM_RENDER_FPS (60 = the -qh preset's own rate).
+                manim_fps = str(self.settings.manim_render_fps) if final_render_quality == "qh" else ""
+                voice_wait_started = time.monotonic()
+                speculative = None
+                if background_voice is None or not background_voice.done():
+                    speculative = self._start_speculative_render(
+                        blueprint, video_dir, voice_args, final_render_quality, manim_fps
+                    )
+                try:
+                    if background_voice is not None:
+                        voice_on_line.activate()
+                        background_voice.wait()
+                    else:
+                        _run_voice()
+                except BaseException:
+                    if speculative is not None:
+                        speculative.stop(abort=True)
+                    raise
+                voice_report = {
+                    "overlap": "scene_codegen" if background_voice is not None else "off",
+                    "seconds": round(
+                        background_voice.elapsed
+                        if background_voice is not None
+                        else time.monotonic() - voice_wait_started,
+                        2,
+                    ),
+                    "wait_seconds": round(time.monotonic() - voice_wait_started, 2),
+                }
+                speculative_stats = speculative.stop() if speculative is not None else None
+                logger.info(
+                    "job.voice.done job_id=%s engine=%s overlap=%s seconds=%.2f wait_seconds=%.2f",
+                    job.id,
+                    self.settings.voice_engine,
+                    voice_report["overlap"],
+                    voice_report["seconds"],
+                    voice_report["wait_seconds"],
                 )
-                logger.info("job.voice.done job_id=%s engine=%s", job.id, self.settings.voice_engine)
+                if speculative_stats is not None:
+                    logger.info(
+                        "job.render.overlap job_id=%s rendered=%d failed=%d skipped=%d",
+                        job.id,
+                        len(speculative_stats["rendered_seconds"]),
+                        len(speculative_stats["failed"]),
+                        len(speculative_stats["skipped"]),
+                    )
 
                 cued_scenes = 0
                 subtitle_files: dict[str, str] = {}
@@ -630,7 +816,6 @@ class VideoPipeline:
                 visual_review_result: VisualReviewResult | None = None
 
                 self._update(session, job, "render_final", 55, "render_final")
-                final_render_quality = render_quality_for_profile(self.quality_profile)
                 render_on_line = None
                 if self.engine.name == "remotion":
                     # Remotion's renderMedia prints one "Rendered X/Y" line per
@@ -650,7 +835,11 @@ class VideoPipeline:
                     ["./render_en.sh"],
                     cwd=video_dir,
                     log_name="render-final.log",
-                    env={"QUALITY": final_render_quality},
+                    env={
+                        "QUALITY": final_render_quality,
+                        "MANIM_RENDER_JOBS": self.settings.manim_render_jobs,
+                        "MANIM_FPS": manim_fps,
+                    },
                     on_line=render_on_line,
                 )
                 logger.info(
@@ -741,6 +930,15 @@ class VideoPipeline:
                     )
                 final_report["subtitles"] = subtitle_files
                 final_report["timings"] = _timings_from_marks(self._step_marks)
+                final_report["llm_usage"] = llm_usage.snapshot()
+                final_report["voice"] = voice_report
+                render_stats_path = video_dir / "render_stats.json"
+                if render_stats_path.exists():
+                    final_report["render"] = json.loads(render_stats_path.read_text(encoding="utf-8"))
+                    if speculative_stats is not None:
+                        final_report["render"]["overlap"] = _overlap_summary(
+                            speculative_stats, final_report["render"]
+                        )
                 report_path = reports_dir / "report.json"
                 report_path.write_text(json.dumps(final_report, indent=2) + "\n", encoding="utf-8")
                 job.final_video_path = str(final_video)
@@ -752,12 +950,19 @@ class VideoPipeline:
                 # A Celery soft time limit means the whole job is out of budget:
                 # retrying the full pipeline would just hit the hard kill. A
                 # cancelled job must not be "repaired" either.
-                if isinstance(exc, JobCancelled) or type(exc).__name__ == "SoftTimeLimitExceeded":
+                if _is_terminal_abort(exc):
                     raise
                 last_error = exc
                 attempt_report = workspace / f"attempt_{attempt}_error.txt"
+                drained = self._repair_voice_drain_seconds
+                self._repair_voice_drain_seconds = None
                 attempt_report.write_text(
-                    traceback.format_exc(),
+                    traceback.format_exc()
+                    + (
+                        f"\nrepair_voice_drain_seconds={drained}\n"
+                        if drained is not None
+                        else ""
+                    ),
                     encoding="utf-8",
                 )
                 logger.exception(
@@ -770,12 +975,108 @@ class VideoPipeline:
                 )
                 if attempt >= self.settings.max_repair_attempts:
                     raise
+                self._forget_suspect_scene_codes(exc, job.current_step or "")
                 logger.info(
                     "job.repair.schedule job_id=%s next_attempt=%d previous_error=%s",
                     job.id,
                     attempt + 1,
                     type(exc).__name__,
                 )
+
+
+def _tail_padding(voice_args: list[str]) -> float | None:
+    for flag, value in zip(voice_args, voice_args[1:]):
+        if flag == "--tail-padding":
+            try:
+                return float(value)
+            except ValueError:
+                return None
+    return None
+
+
+def _overlap_summary(speculative: dict, render_stats: dict) -> dict:
+    """Which speculative renders the final pass actually reused."""
+    cached = set(render_stats.get("cached", []))
+    speculated = set(speculative["rendered_seconds"])
+    return {
+        "reused": sorted(speculated & cached),
+        "wasted": sorted(speculated - cached),
+        "speculative_seconds": speculative["rendered_seconds"],
+        "failed": speculative["failed"],
+        "skipped": speculative.get("skipped", {}),
+    }
+
+
+class _BackgroundTask:
+    """Run one blocking call on a daemon thread; wait() re-raises its error in
+    the caller, so a background voice failure fails the job like a foreground
+    one."""
+
+    def __init__(self, target: Any, name: str) -> None:
+        self._target = target
+        self._error: BaseException | None = None
+        self._started = 0.0
+        self.elapsed = 0.0
+        self._thread = threading.Thread(target=self._run, name=name, daemon=True)
+
+    def start(self) -> "_BackgroundTask":
+        self._started = time.monotonic()
+        self._thread.start()
+        return self
+
+    def _run(self) -> None:
+        try:
+            self._target()
+        except BaseException as exc:  # re-raised by wait()
+            self._error = exc
+        finally:
+            self.elapsed = time.monotonic() - self._started
+
+    def done(self) -> bool:
+        return not self._thread.is_alive()
+
+    def wait(self) -> None:
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+
+    def wait_quietly(self) -> None:
+        self._thread.join()
+        if self._error is not None:
+            logger.warning("background_task.failed name=%s error=%s", self._thread.name, self._error)
+
+
+def _is_terminal_abort(exc: Exception) -> bool:
+    """True for the failures that end the job without a repair attempt: a user
+    cancel, and Celery's soft time limit — retrying the full pipeline would just
+    hit the hard kill, and a cancelled job must not be "repaired" either."""
+    return isinstance(exc, JobCancelled) or type(exc).__name__ == "SoftTimeLimitExceeded"
+
+
+def _manim_failed_scene_keys(message: str) -> set[str]:
+    """Scene keys named by render_scenes.py in a failed render's log tail.
+
+    The renderer fails one scene at a time with "manim failed for <Scene>", so a
+    render failure can usually be narrowed to that scene instead of re-coding
+    the whole module. An empty result means "could not tell" and the caller
+    falls back to invalidating everything."""
+    from video_api.pipeline.manim_render import failed_scene_keys
+
+    return failed_scene_keys(message)
+
+
+def _flagged_scene_keys(review: Any) -> set[str]:
+    flagged = {
+        issue.scene_key
+        for issue in getattr(review, "issues", []) or []
+        if issue.severity in ("blocker", "major") and issue.scene_key != "unknown"
+    }
+    flagged.update(
+        score.scene_key
+        for score in getattr(review, "scene_scores", []) or []
+        if score.score < SCENE_MIN_SCORE
+    )
+    return flagged
 
 
 def _minimum_final_duration(target_duration_seconds: int, default_min_duration_seconds: int) -> int:

@@ -496,10 +496,6 @@ def build_single_scene_module(slug_module: str, scene_class_code: str) -> str:
 
 def _render_script(blueprint: VideoBlueprint, slug_module: str) -> str:
     scene_lines = "\n".join(f"  {scene.key}" for scene in blueprint.scenes)
-    concat_lines = "\n".join(
-        f"file 'media/videos/{slug_module}_en/${{QUALITY_DIR}}/{scene.key}.mp4'"
-        for scene in blueprint.scenes
-    )
     return f'''#!/usr/bin/env bash
 set -euo pipefail
 
@@ -510,22 +506,12 @@ SCENES=(
 {scene_lines}
 )
 
-if [[ "${{MANIM_USE_UV:-1}}" == "1" ]]; then
-  uv run --with manim python -m manim "-${{QUALITY}}" {slug_module}_en.py "${{SCENES[@]}}"
-else
-  python -m manim "-${{QUALITY}}" {slug_module}_en.py "${{SCENES[@]}}"
-fi
-
-QUALITY_DIR="720p30"
-if [[ "${{QUALITY}}" == "ql" ]]; then
-  QUALITY_DIR="480p15"
-elif [[ "${{QUALITY}}" == "qh" ]]; then
-  QUALITY_DIR="1080p60"
-fi
-
-cat > concat_en.txt <<EOF
-{concat_lines}
-EOF
+# One Manim process per scene (MANIM_RENDER_JOBS in parallel, "auto" by
+# default), reusing render_cache/ for scenes unchanged since the last render.
+# MANIM_FPS overrides the quality preset's frame rate (empty = preset).
+python3 render_scenes.py --module {slug_module}_en.py --quality "${{QUALITY}}" \\
+  --fps "${{MANIM_FPS:-}}" --jobs "${{MANIM_RENDER_JOBS:-auto}}" \\
+  --concat concat_en.txt "${{SCENES[@]}}"
 
 mkdir -p final
 ffmpeg -y -f concat -safe 0 -i concat_en.txt -c copy final/{blueprint.slug}-en-silent.mp4
@@ -666,7 +652,9 @@ class Materializer:
         )
         docs_dir.mkdir(parents=True, exist_ok=True)
         video_dir.mkdir(parents=True, exist_ok=True)
-        for generated_name in ["media", "final", "renders"]:
+        # render_cache/ survives on purpose (see manim_render.py): its keys cover
+        # the scene code, style, duration and quality, so stale entries never hit.
+        for generated_name in ["media", "final", "renders", "render_logs", "render_spec"]:
             generated_path = video_dir / generated_name
             if generated_path.exists():
                 shutil.rmtree(generated_path)
@@ -706,6 +694,7 @@ class Materializer:
         if not voice_src.exists():
             raise FileNotFoundError(f"Missing reference voice generator: {voice_src}")
         shutil.copyfile(voice_src, video_dir / "generate_voice_en.py")
+        shutil.copyfile(Path(__file__).with_name("manim_render.py"), video_dir / "render_scenes.py")
 
         (video_dir / f"{slug_module}_en.py").write_text(
             _manim_code(blueprint, slug_module),

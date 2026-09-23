@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -234,6 +235,7 @@ class TTSSegmentReporter:
         job: VideoJob,
         total_segments: int,
         min_interval_seconds: float = 0.0,
+        deferred: bool = False,
     ) -> None:
         self._session = session
         self._job = job
@@ -243,15 +245,32 @@ class TTSSegmentReporter:
         # Same rationale as SubstepReporter: -inf guarantees the very first
         # segment start commits even on a fresh-monotonic-clock CI runner.
         self._last_write = float("-inf")
+        # Deferred: the voice runs in the background while the worker thread
+        # still owns the (non thread-safe) DB session. Segments are counted but
+        # nothing is written until activate().
+        self._active = not deferred
+        self._lock = threading.Lock()
+
+    def activate(self) -> None:
+        with self._lock:
+            self._active = True
+            if self._count:
+                self._write()
 
     def __call__(self, _stream: str, line: str) -> None:
         if not parse_openai_tts_segment_start(line):
             return
-        self._count += 1
-        now = time.monotonic()
-        if now - self._last_write < self._min_interval and self._count < self._total:
-            return
-        self._last_write = now
+        with self._lock:
+            self._count += 1
+            if not self._active:
+                return
+            now = time.monotonic()
+            if now - self._last_write < self._min_interval and self._count < self._total:
+                return
+            self._last_write = now
+            self._write()
+
+    def _write(self) -> None:
         self._job.substep_unit = "segments"
         self._job.substep_current = self._count
         self._job.substep_total = self._total

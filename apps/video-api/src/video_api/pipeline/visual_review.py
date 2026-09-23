@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from video_api import llm_usage
 from video_api.config import Settings
 from video_api.pipeline.commands import CommandRunner
 from video_api.pipeline.verify import extract_frame
@@ -16,6 +17,13 @@ from video_api.schemas import (
     _DIMENSION_WEIGHTS,
 )
 from video_api.schemas import VideoBlueprint
+
+# A scene scored below this is "the visual does not carry the narration" and is
+# rewritten on a repair. Deliberately lower than Settings.visual_review_min_score
+# (75), which gates the video as a whole: one weak scene must not fail a good
+# video, and a video that only just passes must not trigger a full re-code.
+# Imported by the repair paths so the number lives in exactly one place.
+SCENE_MIN_SCORE = 60.0
 
 
 logger = logging.getLogger(__name__)
@@ -346,6 +354,7 @@ class VisualReviewer:
             response_format={"type": "json_object"},
             max_tokens=self.settings.visual_review_max_tokens,
         )
+        llm_usage.record("visual_review", self._model(), response)
         raw_text = response.choices[0].message.content or ""
         raw_json = _extract_json_object(raw_text)
 

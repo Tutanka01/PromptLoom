@@ -108,7 +108,9 @@ Il ecrit :
 - `beats_en.json` ;
 - code Manim ;
 - style ;
-- scripts `render_en.sh` et `assemble_en.sh`.
+- scripts `render_en.sh` et `assemble_en.sh` ;
+- `render_scenes.py`, copie de `pipeline/manim_render.py` (bibliotheque standard
+  uniquement) : rendu parallele un process par scene et cache `render_cache/`.
 
 Le blueprint reste du JSON valide. Le code par scene est produit par un scene
 coder encadre (Manim ou TSX Remotion), avec validation et fallback

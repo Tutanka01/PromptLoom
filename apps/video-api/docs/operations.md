@@ -309,7 +309,7 @@ VIDEO_API_REMOTION_DIR=           # optionnel, defaut <repo>/apps/video-api/remo
 ```
 
 Leviers vitesse du rendu **Remotion** (VM sans GPU, rendu CPU-bound ; toutes les passes
-en profitent, sans effet sur Manim) :
+en profitent) :
 
 ```text
 VIDEO_API_RENDER_FPS=30           # 30 (defaut) ~= 2x moins de frames qu'en 60
@@ -317,8 +317,65 @@ VIDEO_API_REMOTION_CONCURRENCY=75%  # entier ou %, "75%" ~= 12 tabs/16 coeurs ; 
 VIDEO_API_RENDER_X264_PRESET=faster # encode plus vite, qualite ~identique a crf 18
 ```
 
-`verify.py` controle desormais `VIDEO_API_RENDER_FPS` (et plus 60 en dur) au pass final
-pour le moteur Remotion ; Manim reste verifie a 60 fps (preset `-qh` fixe).
+Levier vitesse du rendu **Manim** (un process par scene, cache par scene entre
+tentatives de reparation) :
+
+```text
+VIDEO_API_MANIM_RENDER_JOBS=auto  # "auto" = moitie des CPU du worker, max 6 ; entier sinon
+VIDEO_API_MANIM_RENDER_FPS=60     # fps du final Manim ; 60 (defaut) = preset qh inchange, 30 = encode 2x plus vite
+VIDEO_API_VOICE_RENDER_OVERLAP=0  # rendu speculatif pendant la voix ; 0 par defaut (non mesure)
+```
+
+`VIDEO_API_MANIM_RENDER_JOBS` est valide au chargement des reglages : une valeur
+non entiere ou negative retombe sur `auto` avec un `config.manim_render_jobs.invalid`
+dans les logs, au lieu de faire echouer le rendu. Les deux fps
+(`VIDEO_API_RENDER_FPS`, `VIDEO_API_MANIM_RENDER_FPS`) suivent la meme regle
+(`config.int.invalid` dans les logs, retour au defaut documente).
+
+Le fps du final Manim est un choix de qualite : `60` (defaut) ne change rien a la
+sortie d'avant le rendu parallele, `30` divise par deux le temps d'encodage comme
+Remotion. Pour mesurer le gain du parallelisme seul, fixer le fps des deux cotes.
+
+`VIDEO_API_VOICE_RENDER_OVERLAP` (rendu speculatif) est **desactive par defaut** :
+la fenetre utile ne s'ouvre que si la voix tourne encore quand le scene coding se
+termine, et le gain n'a pas encore ete mesure sur un job reel. Pour le mesurer,
+mettre `1` et comparer `render.overlap.reused` / `render.overlap.wasted` dans
+`report.json`. C'est une optimisation pure : si elle ne peut pas demarrer, le job
+continue (`render.overlap.skip reason=start_failed` dans les logs).
+
+Chevauchement voix/scene coding (**Remotion et Manim**) :
+
+```text
+VIDEO_API_VOICE_CODEGEN_OVERLAP=1 # voix lancee pendant le scene coding ; 0 = voix apres la validation statique
+```
+
+Le gain est maximal avec un TTS distant ou GPU (`moss-remote`, `openai`) et des
+scenes Custom a coder. Avec un TTS CPU, voix et smoke checks se partagent les
+coeurs. Mesurer avec `voice.seconds` et `voice.wait_seconds` dans `report.json`.
+
+Cout cote reparation : si le scene coding echoue pendant que la voix tourne, le
+worker attend la fin de la voix avant de reparer, pour ne jamais laisser un
+process ecrire dans `video_dir` derriere une nouvelle tentative (les segments
+deja produits restent en cache et sont reutilises). Cette attente est mesuree :
+`job.repair.voice_drain ... seconds=` dans les logs, et
+`repair_voice_drain_seconds` a la fin de `attempt_<n>_error.txt`. Si elle
+s'avere couteuse en pratique, tuer le process devient l'option a etudier.
+
+Le chevauchement voix/rendu est speculatif : la duree d'une scene est calculee
+comme le fait `generate_voice_en.py`, et le rendu final reutilise la scene
+seulement si `durations.json` donne exactement la meme duree ; sinon elle est
+re-rendue. Une erreur TTS tue les rendus en cours et fait echouer le job comme
+avant. Avec un TTS sur CPU (Kokoro, Chatterbox sans GPU), voix et rendu se
+partagent les coeurs : mesurer avec `0` et `1` avant de choisir.
+
+Compter ~0,5 Go de RAM par process Manim. Le detail (scenes rendues, reprises du
+cache, secondes par scene) est ecrit dans `render_stats.json` et sous `render`
+dans `report.json`.
+
+`verify.py` controle le fps du moteur au pass final. Manim rend le final en
+`-qh --fps <VIDEO_API_MANIM_RENDER_FPS>` (1080p60 par defaut, soit le preset
+inchange) et Remotion a `VIDEO_API_RENDER_FPS` ; le profil `draft` garde le preset
+`-ql` (480p15).
 
 `remotion` bascule le rendu vers React/Remotion (palette de composants testes + code
 libre encadre par scene), en gardant TTS Chatterbox, `assemble_en.sh` et `verify.py`.

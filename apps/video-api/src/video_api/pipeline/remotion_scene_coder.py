@@ -14,9 +14,13 @@ component; it is then hard-guarded before it is trusted:
 A scene that fails every attempt is dropped to a deterministic palette
 ``BulletScene`` (``fallback_custom_to_palette``), so the global render always
 succeeds — exactly like the Manim deterministic-template fallback.
+
+Validated code is kept for the job run: a repair attempt that leaves a Custom
+scene's coder input untouched reuses it without an LLM call or a smoke check.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -28,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from video_api import llm_usage
 from video_api.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -150,6 +155,20 @@ class RemotionSceneCoder:
         self.settings = settings
         self._client: Any = None
         self._client_lock = threading.Lock()
+        # scene_key -> (fingerprint of the coder input, validated code).
+        self._code_cache: dict[str, tuple[str, str]] = {}
+
+    def forget(self, scene_keys: set[str] | None = None) -> None:
+        if scene_keys is None:
+            self._code_cache.clear()
+            return
+        for key in scene_keys:
+            self._code_cache.pop(key, None)
+
+    def _fingerprint(self, scene: Any, blueprint: Any) -> str:
+        payload = {"model": self._model(), "messages": self._messages(scene, blueprint)}
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     # ------------------------------------------------------------------ LLM
     def _get_client(self) -> Any:
@@ -188,6 +207,7 @@ class RemotionSceneCoder:
         if extra:
             request["extra_body"] = extra
         response = client.chat.completions.create(**request)
+        llm_usage.record("scene_coder", self._model(), response)
         content = response.choices[0].message.content or ""
         if not content.strip():
             raise ValueError(
@@ -253,12 +273,26 @@ class RemotionSceneCoder:
 
         remotion_dir = self.settings.repo_root / "apps" / "video-api" / "remotion"
         public_dir = video_dir / "remotion_public"
-        scene_codes = self._code_scenes_in_waves(
-            custom,
-            blueprint,
-            remotion_dir,
-            public_dir,
-        )
+        fingerprints = {scene.key: self._fingerprint(scene, blueprint) for scene in custom}
+        scene_codes: dict[str, str] = {}
+        to_code: list[Any] = []
+        for scene in custom:
+            cached = self._code_cache.get(scene.key)
+            if cached is not None and cached[0] == fingerprints[scene.key]:
+                logger.info("remotion_scene_coder.reuse scene=%s", scene.key)
+                scene_codes[scene.key] = cached[1]
+            else:
+                to_code.append(scene)
+        if to_code:
+            generated = self._code_scenes_in_waves(
+                to_code,
+                blueprint,
+                remotion_dir,
+                public_dir,
+            )
+            for key, code in generated.items():
+                self._code_cache[key] = (fingerprints[key], code)
+            scene_codes.update(generated)
         failed = {scene.key for scene in custom} - set(scene_codes)
 
         if scene_codes:
@@ -271,10 +305,12 @@ class RemotionSceneCoder:
                     self.settings.scene_coder_attempts,
                 )
             fallback_custom_to_palette(video_dir, blueprint, failed)
+        reused = len(custom) - len(to_code)
         logger.info(
-            "remotion_scene_coder.done custom=%d generated=%d fallback=%d",
+            "remotion_scene_coder.done custom=%d generated=%d reused=%d fallback=%d",
             len(custom),
-            len(scene_codes),
+            len(scene_codes) - reused,
+            reused,
             len(failed),
         )
 
