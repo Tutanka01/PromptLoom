@@ -10,6 +10,9 @@ import pytest
 
 from video_api.pipeline.manim_render import (
     SpeculativeRenderer,
+    failed_scene_keys,
+    main,
+    reads_other_scene_data,
     render,
     resolve_jobs,
     scene_cache_keys,
@@ -60,9 +63,20 @@ out.write_text(key + open(module).read() + (durations.read_text() if durations.e
 '''
 
 
-def _keys(module: str = MODULE, durations: dict | None = None, quality: str = "qh") -> dict[str, str]:
+def _keys(
+    module: str = MODULE,
+    durations: dict | None = None,
+    quality: str = "qh",
+    style: str = "STYLE",
+    texts: dict | None = None,
+) -> dict[str, str]:
     return scene_cache_keys(
-        module, "STYLE", ["SceneAEN", "SceneBEN"], durations or {"SceneAEN": 10, "SceneBEN": 12}, {}, quality
+        module,
+        style,
+        ["SceneAEN", "SceneBEN"],
+        durations or {"SceneAEN": 10, "SceneBEN": 12},
+        texts or {},
+        quality,
     )
 
 
@@ -78,6 +92,16 @@ def test_cache_key_tracks_only_what_a_scene_depends_on() -> None:
     longer_a = _keys(durations={"SceneAEN": 11, "SceneBEN": 12})
     assert longer_a["SceneAEN"] != base["SceneAEN"]
     assert longer_a["SceneBEN"] == base["SceneBEN"]
+
+    # The style module holds every colour/geometry helper the scenes import, and
+    # the narration text is an input too: losing either entry would keep serving
+    # renders from before the edit, with the module and the durations unchanged.
+    restyled = _keys(style="STYLE2")
+    assert all(restyled[key] != base[key] for key in base)
+
+    reworded = _keys(texts={"SceneAEN": "other words"})
+    assert reworded["SceneAEN"] != base["SceneAEN"]
+    assert reworded["SceneBEN"] == base["SceneBEN"]
 
     assert _keys(quality="ql")["SceneAEN"] != base["SceneAEN"]
     at_30 = scene_cache_keys(MODULE, "STYLE", ["SceneAEN"], {"SceneAEN": 10, "SceneBEN": 12}, {}, "qh", "30")
@@ -162,6 +186,55 @@ def test_render_failure_surfaces_scene_log(tmp_path: Path) -> None:
     assert not (root / "concat_en.txt").exists()
 
 
+BOOMING_MODULE = MODULE + (
+    "\nclass BoomAEN(Base):\n    def construct(self):\n        pass\n"
+    "\nclass BoomBEN(Base):\n    def construct(self):\n        pass\n"
+)
+
+
+def test_render_names_every_failed_scene(tmp_path: Path) -> None:
+    """One process per scene means several can fail at once (missing TeX package,
+    full disk, a shared helper). The worker narrows its repair from the scene
+    names in the log tail, so all of them have to be in the message — otherwise
+    each extra broken scene costs its own repair attempt."""
+    root, command = _workspace(tmp_path, BOOMING_MODULE)
+    with pytest.raises(RuntimeError) as excinfo:
+        render(
+            root,
+            "demo_en.py",
+            ["SceneAEN", "BoomAEN", "BoomBEN"],
+            "qh",
+            2,
+            root / "concat_en.txt",
+            command=command,
+        )
+    assert failed_scene_keys(str(excinfo.value)) == {"BoomAEN", "BoomBEN"}
+
+
+def test_render_sweeps_unpublished_partials(tmp_path: Path) -> None:
+    """A crash between the copy and os.replace leaves a .mp4.part that no render
+    reads and that nothing else would remove: the cache lives in the job dir and
+    materialize keeps it across attempts."""
+    root, command = _workspace(tmp_path)
+    cache = root / "render_cache" / "qh"
+    cache.mkdir(parents=True)
+    (cache / "SceneAEN-deadbeef.mp4.part").write_text("half a copy", encoding="utf-8")
+
+    render(root, "demo_en.py", ["SceneAEN"], "qh", 1, root / "concat_en.txt", command=command)
+
+    assert list(cache.glob("*.mp4.part")) == []
+    assert len(list(cache.glob("SceneAEN-*.mp4"))) == 1
+
+
+def test_reads_other_scene_data() -> None:
+    """A scene may only depend on its own duration and narration: those are the
+    values the cache key covers for it."""
+    assert not reads_other_scene_data("self.wait(duration(self.scene_key, 12))")
+    assert reads_other_scene_data("self.wait(DURATIONS['SceneBEN'])")
+    assert reads_other_scene_data("text = SEGMENT_TEXT.get('SceneBEN')")
+    assert reads_other_scene_data('self.wait(duration("SceneBEN", 12))')
+
+
 def _write_wav(path: Path, seconds: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(path), "wb") as handle:
@@ -241,13 +314,35 @@ def test_speculative_abort_kills_running_renders(tmp_path: Path, monkeypatch) ->
     assert not list((root / "render_cache" / "qh-30fps").glob("*.mp4"))
 
 
-def test_main_repeats_the_failed_scene_on_the_last_line(tmp_path: Path, capsys) -> None:
-    """The worker only keeps the tail of the log, so the scene name has to be the
-    last thing printed for the repair loop to narrow its invalidation."""
-    from video_api.pipeline.manim_render import failed_scene_keys
+def test_speculative_skips_a_scene_that_reads_another_scene_data(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Such a scene would render differently in the shadow (which holds one
+    duration) while producing the same digest, so the cache entry would be wrong.
+    The regular pass renders it instead."""
+    module = MODULE.replace("self.a = 1", 'self.a = duration("SceneBEN", 1)')
+    root, command = _workspace(tmp_path, module)
+    monkeypatch.setenv("CALLS_FILE", str(root / "calls.txt"))
+    spec = _speculative(root, command, ["SceneAEN", "SceneBEN"]).start()
+    _write_wav(root / "audio" / "en" / "SceneAEN.wav", 1.0)
+    _write_wav(root / "audio" / "en" / "SceneBEN.wav", 2.0)
+    _wait_for(lambda: spec.skipped and len(spec.rendered_seconds) == 1)
+    stats = spec.stop()
 
-    long_traceback = "\n".join(f"  frame {i} of a very long manim traceback" for i in range(200))
-    message = f"manim failed for SceneAEN (rc=1), full log: x\n{long_traceback}"
-    assert failed_scene_keys(message) == {"SceneAEN"}
-    assert failed_scene_keys(message[-6000:]) == set()
-    assert failed_scene_keys((message + "\nrender.failed scene=SceneAEN")[-6000:]) == {"SceneAEN"}
+    assert list(stats["skipped"]) == ["SceneAEN"]
+    assert list(stats["rendered_seconds"]) == ["SceneBEN"]
+    assert stats["failed"] == {}
+
+
+def test_main_repeats_every_failed_scene_on_the_last_lines(tmp_path: Path, monkeypatch, capsys) -> None:
+    """The worker only keeps the tail of the log, so the scene names have to be the
+    last thing printed for the repair loop to narrow its invalidation."""
+    root, command = _workspace(tmp_path, BOOMING_MODULE)
+    monkeypatch.chdir(root)
+    monkeypatch.setattr("video_api.pipeline.manim_render._manim_command", lambda: command)
+
+    code = main(["--module", "demo_en.py", "--quality", "qh", "--jobs", "2", "SceneAEN", "BoomAEN", "BoomBEN"])
+
+    assert code == 1
+    stderr_lines = capsys.readouterr().err.strip().splitlines()
+    assert stderr_lines[-2:] == ["render.failed scene=BoomAEN", "render.failed scene=BoomBEN"]

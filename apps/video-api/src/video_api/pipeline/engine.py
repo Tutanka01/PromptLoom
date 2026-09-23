@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 
 class Engine(Protocol):
     name: str
-    # The frame rate the engine actually writes, so verify can assert it. Manim's
-    # quality presets fix this (qh == 60); Remotion honors settings.render_fps.
+    # The frame rate the engine actually writes, so verify can assert it. Manim
+    # honors settings.manim_render_fps (60 = the -qh preset's own rate), Remotion
+    # honors settings.render_fps.
     output_fps: float
 
     def generate_blueprint(
@@ -77,8 +78,9 @@ class ManimEngine:
         from video_api.pipeline.scene_coder import SceneCoder
 
         self.settings = settings
-        # The final render passes --fps render_fps on top of Manim's -qh preset.
-        self.output_fps = float(settings.render_fps)
+        # The final render passes --fps manim_render_fps on top of Manim's -qh preset
+        # (60 by default = the preset's own rate, so the output is unchanged).
+        self.output_fps = float(settings.manim_render_fps)
         self.llm = llm
         self.materializer = Materializer(settings)
         self.scene_coder = SceneCoder(settings)

@@ -57,9 +57,9 @@ def test_manim_engine_reuses_code_for_unchanged_scenes(tmp_path: Path) -> None:
     assert sorted(calls) == sorted(keys)
 
 
-def test_manim_engine_fps_follows_render_fps() -> None:
+def test_manim_engine_fps_follows_its_own_setting() -> None:
     for fps in (30, 60):
-        settings = Settings(repo_root=_REPO_ROOT, render_fps=fps)
+        settings = Settings(repo_root=_REPO_ROOT, manim_render_fps=fps)
         assert ManimEngine(settings, LLMClient(settings)).output_fps == float(fps)
 
 

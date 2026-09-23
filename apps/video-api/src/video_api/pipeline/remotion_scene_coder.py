@@ -305,11 +305,12 @@ class RemotionSceneCoder:
                     self.settings.scene_coder_attempts,
                 )
             fallback_custom_to_palette(video_dir, blueprint, failed)
+        reused = len(custom) - len(to_code)
         logger.info(
             "remotion_scene_coder.done custom=%d generated=%d reused=%d fallback=%d",
             len(custom),
-            len(scene_codes),
-            len(custom) - len(to_code),
+            len(scene_codes) - reused,
+            reused,
             len(failed),
         )
 

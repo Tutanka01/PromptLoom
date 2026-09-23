@@ -1,6 +1,7 @@
 """Remotion TSX reuse across repairs, and the voice running during scene coding."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import time
@@ -17,6 +18,7 @@ from video_api.db import SessionLocal
 from video_api.models import VideoJob
 from video_api.pipeline.engine import RemotionEngine
 from video_api.pipeline.llm import LLMClient
+from video_api.pipeline.production import JobCancelled
 from video_api.pipeline.remotion_blueprint import fake_remotion_blueprint
 from video_api.pipeline.substep import TTSSegmentReporter
 from video_api.schemas import RemotionBlueprint
@@ -155,8 +157,6 @@ class _VoiceRunner:
 
 
 def _overlap_pipeline(tmp_path: Path, monkeypatch, job_id: str, overlap: bool, max_repairs: int = 0):
-    import dataclasses
-
     import video_api.pipeline.production as production
 
     pipeline, _, job_id, _ = _pipeline(
@@ -188,6 +188,7 @@ def test_voice_runs_during_scene_codegen(tmp_path: Path, monkeypatch) -> None:
         assert job.status == "completed"
 
     assert seen_during_codegen == [True]
+    assert runner.calls.count("voice.log") == 1
     assert runner.calls.index("voice.log") < runner.calls.index("render-final.log")
     report = json.loads((workspace / "reports" / "report.json").read_text(encoding="utf-8"))
     assert report["voice"]["overlap"] == "scene_codegen"
@@ -271,6 +272,57 @@ def test_codegen_failure_records_how_long_the_voice_drain_cost(
     assert drained >= 0.0
     # The measurement belongs to the failing attempt only.
     assert not (workspace / "attempt_1_error.txt").exists()
+
+
+def test_cancel_does_not_wait_for_the_background_voice(tmp_path: Path, monkeypatch) -> None:
+    """No repair follows a cancel, so draining would just hold the worker slot for
+    the whole TTS run while the job is already terminal."""
+    pipeline, job_id, workspace = _overlap_pipeline(tmp_path, monkeypatch, "job-voice-cancel", True)
+    runner = _VoiceRunner(voice_delay=30.0)
+
+    def generate_scenes(*_a, **_k):
+        runner.voice_started.wait(timeout=5)
+        raise JobCancelled()
+
+    pipeline.engine.generate_scenes.side_effect = generate_scenes
+
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        started = time.monotonic()
+        with pytest.raises(JobCancelled):
+            pipeline._run_with_repairs(session, job, workspace, runner, workspace / "reports")
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0
+    assert not runner.voice_finished.is_set()
+    assert not (workspace / "attempt_0_error.txt").exists()
+
+
+class _FakeSpeculative:
+    def __init__(self) -> None:
+        self.stopped: list[bool] = []
+
+    def stop(self, abort: bool = False) -> dict:
+        self.stopped.append(abort)
+        return {"rendered_seconds": {}, "already_cached": [], "failed": {}, "skipped": {}}
+
+
+def test_voice_failure_stops_the_speculative_render(tmp_path: Path, monkeypatch) -> None:
+    """A dead voice must not leave Manim processes rendering scenes nobody will
+    use (and the job fails at the voice step, not at the render)."""
+    pipeline, job_id, workspace = _overlap_pipeline(tmp_path, monkeypatch, "job-voice-spec", True)
+    pipeline.settings = dataclasses.replace(pipeline.settings, voice_render_overlap=True)
+    runner = _VoiceRunner(voice_delay=0.2, voice_error=RuntimeError("remote TTS unavailable"))
+    speculative = _FakeSpeculative()
+    monkeypatch.setattr(pipeline, "_start_speculative_render", lambda *a, **k: speculative)
+
+    with SessionLocal() as session:
+        job = session.get(VideoJob, job_id)
+        with pytest.raises(RuntimeError, match="remote TTS unavailable"):
+            pipeline._run_with_repairs(session, job, workspace, runner, workspace / "reports")
+
+    assert speculative.stopped == [True]
+    assert "render-final.log" not in runner.calls
 
 
 def test_voice_failure_does_not_invalidate_any_scene_code(tmp_path: Path, monkeypatch) -> None:

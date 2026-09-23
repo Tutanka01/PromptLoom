@@ -34,6 +34,35 @@ def _render_jobs_env() -> str:
     return "auto" if parsed == 0 else str(parsed)
 
 
+def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
+    """Validate an integer setting once, at settings load. Same rationale as
+    ``_render_jobs_env``: a typo must degrade to the documented default with a
+    warning instead of raising while a job is already running."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        parsed = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "config.int.invalid name=%s value=%r reason=not_an_integer falling_back=%d",
+            name,
+            raw,
+            default,
+        )
+        return default
+    if parsed < minimum:
+        logger.warning(
+            "config.int.invalid name=%s value=%r reason=below_minimum=%d falling_back=%d",
+            name,
+            raw,
+            minimum,
+            default,
+        )
+        return default
+    return parsed
+
+
 def _bool_env(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
     if value is None:
@@ -110,15 +139,14 @@ class Settings:
     render_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower())
     # Render speed knobs (no-GPU VM: the Remotion render is CPU-bound on software GL,
     # so concurrency + frame count + x264 preset are the real levers).
-    # - render_fps: output frame rate (Remotion, and the Manim final render via --fps).
-    #   30 (default) halves the frames to encode vs 60
-    #   for explainer content; raise to 60 for maximum smoothness.
+    # - render_fps: Remotion output frame rate. 30 (default) halves the frames to
+    #   encode vs 60 for explainer content; raise to 60 for maximum smoothness.
     # - remotion_concurrency: passed to `remotion render --concurrency`. Accepts an int
     #   or a percentage ("75%" ~= 12 tabs on 16 cores). Each Chrome tab uses ~0.5-1 GB,
     #   so on 16 GB cap near ~10-12; lower to "50%" if the worker OOMs.
     # - render_x264_preset: x264 preset for the final encode. "faster" trades a little
     #   file size for a big speed win at crf 18 with near-invisible quality loss.
-    render_fps: int = field(default_factory=lambda: int(os.getenv("VIDEO_API_RENDER_FPS", "30")))
+    render_fps: int = field(default_factory=lambda: _int_env("VIDEO_API_RENDER_FPS", 30))
     remotion_concurrency: str = field(
         default_factory=lambda: os.getenv("VIDEO_API_REMOTION_CONCURRENCY", "75%")
     )
@@ -128,6 +156,11 @@ class Settings:
     # Manim engine: scenes rendered in parallel, one process each. "auto" =
     # half the CPUs available to the worker, capped at 6 (~0.5 GB RAM per process).
     manim_render_jobs: str = field(default_factory=_render_jobs_env)
+    # Manim engine: frame rate of the final render, passed as --fps on top of the
+    # -qh preset. 60 (default) is the preset's own rate, so the Manim output is
+    # unchanged; lower it to 30 to halve the encode time at the cost of smoothness
+    # (Remotion's default). Draft renders keep the -ql preset (15 fps).
+    manim_render_fps: int = field(default_factory=lambda: _int_env("VIDEO_API_MANIM_RENDER_FPS", 60))
     # Manim engine: render each scene as soon as its WAV is ready, while the
     # rest of the voice is still being generated. Off by default: the window is
     # narrow (it only opens when the voice outlives the scene coding) and the

@@ -108,6 +108,9 @@ class VideoPipeline:
             "cinematic": "cinematic",
         }[options.mode]
         render_fps = 60 if options.mode == "cinematic" and engine == "remotion" else self.settings.render_fps
+        manim_render_fps = (
+            60 if options.mode == "cinematic" and engine == "manim" else self.settings.manim_render_fps
+        )
         self.settings = dataclasses.replace(
             self.settings,
             render_engine=engine,
@@ -116,6 +119,7 @@ class VideoPipeline:
             transition_profile=transition_profile,
             delivery_promise=options.delivery_promise or "technical_explainer",
             render_fps=render_fps,
+            manim_render_fps=manim_render_fps,
         )
         self.llm = LLMClient(self.settings)
         self.engine = make_engine(self.settings, self.llm)
@@ -663,8 +667,14 @@ class VideoPipeline:
                 try:
                     self._generate_and_validate_scenes(session, job, blueprint, video_dir)
                     self._update(session, job, "voice_generation", 40, "voice_generation")
-                except Exception:
-                    if background_voice is not None:
+                except Exception as exc:
+                    # Only a repair needs a quiet video_dir, and only a repair
+                    # re-materializes it. A cancel or a soft time limit ends the
+                    # job here, so draining would just hold the worker slot for
+                    # the whole TTS run. The reporter is still deferred (its
+                    # activate() is never reached), so the abandoned voice thread
+                    # counts segments without touching the DB session.
+                    if background_voice is not None and not _is_terminal_abort(exc):
                         # Never leave a voice process writing into video_dir
                         # behind a repair attempt: let it finish (its segments
                         # stay cached) and keep the scene error as the cause.
@@ -682,13 +692,20 @@ class VideoPipeline:
                             job.current_step,
                             self._repair_voice_drain_seconds,
                         )
+                    elif background_voice is not None:
+                        logger.info(
+                            "job.voice.abandoned job_id=%s step=%s reason=%s",
+                            job.id,
+                            job.current_step,
+                            type(exc).__name__,
+                        )
                     raise
                 if background_voice is None:
                     self._log_voice_start(job, overlap="off")
                 final_render_quality = render_quality_for_profile(self.quality_profile)
-                # Draft (ql) keeps Manim's 15 fps preset; the final render
-                # follows VIDEO_API_RENDER_FPS like Remotion.
-                manim_fps = str(self.settings.render_fps) if final_render_quality == "qh" else ""
+                # Draft (ql) keeps Manim's 15 fps preset; the final render follows
+                # VIDEO_API_MANIM_RENDER_FPS (60 = the -qh preset's own rate).
+                manim_fps = str(self.settings.manim_render_fps) if final_render_quality == "qh" else ""
                 voice_wait_started = time.monotonic()
                 speculative = None
                 if background_voice is None or not background_voice.done():
@@ -726,10 +743,11 @@ class VideoPipeline:
                 )
                 if speculative_stats is not None:
                     logger.info(
-                        "job.render.overlap job_id=%s rendered=%d failed=%d",
+                        "job.render.overlap job_id=%s rendered=%d failed=%d skipped=%d",
                         job.id,
                         len(speculative_stats["rendered_seconds"]),
                         len(speculative_stats["failed"]),
+                        len(speculative_stats["skipped"]),
                     )
 
                 cued_scenes = 0
@@ -932,7 +950,7 @@ class VideoPipeline:
                 # A Celery soft time limit means the whole job is out of budget:
                 # retrying the full pipeline would just hit the hard kill. A
                 # cancelled job must not be "repaired" either.
-                if isinstance(exc, JobCancelled) or type(exc).__name__ == "SoftTimeLimitExceeded":
+                if _is_terminal_abort(exc):
                     raise
                 last_error = exc
                 attempt_report = workspace / f"attempt_{attempt}_error.txt"
@@ -985,6 +1003,7 @@ def _overlap_summary(speculative: dict, render_stats: dict) -> dict:
         "wasted": sorted(speculated - cached),
         "speculative_seconds": speculative["rendered_seconds"],
         "failed": speculative["failed"],
+        "skipped": speculative.get("skipped", {}),
     }
 
 
@@ -1025,6 +1044,13 @@ class _BackgroundTask:
         self._thread.join()
         if self._error is not None:
             logger.warning("background_task.failed name=%s error=%s", self._thread.name, self._error)
+
+
+def _is_terminal_abort(exc: Exception) -> bool:
+    """True for the failures that end the job without a repair attempt: a user
+    cancel, and Celery's soft time limit — retrying the full pipeline would just
+    hit the hard kill, and a cancelled job must not be "repaired" either."""
+    return isinstance(exc, JobCancelled) or type(exc).__name__ == "SoftTimeLimitExceeded"
 
 
 def _manim_failed_scene_keys(message: str) -> set[str]:

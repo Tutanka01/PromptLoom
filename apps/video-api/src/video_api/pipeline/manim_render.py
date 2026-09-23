@@ -49,6 +49,19 @@ def failed_scene_keys(message: str) -> set[str]:
     }
 
 
+# A scene's pixels may only depend on its own duration and narration: the cache
+# key covers those two values for the scene alone. Code that reaches for the whole
+# durations/segments maps — or for another scene's duration — would render
+# differently in the speculation shadow (which holds one duration) while producing
+# the same digest, so such a scene is never rendered speculatively.
+_OTHER_SCENE_DATA_RE = re.compile(r"\b(?:DURATIONS|SEGMENT_TEXT)\b|\bduration\(\s*[\"'][^\"']+[\"']")
+
+
+def reads_other_scene_data(scene_source: str) -> bool:
+    """True when a scene reads audio data the render cache does not key on."""
+    return bool(_OTHER_SCENE_DATA_RE.search(scene_source))
+
+
 def default_jobs(scene_count: int) -> int:
     try:
         cpus = len(os.sched_getaffinity(0))
@@ -255,12 +268,20 @@ def render(
     started = time.monotonic()
     if pending:
         pool = ThreadPoolExecutor(max_workers=jobs)
-        futures = [pool.submit(_render_one, key) for key in pending]
-        wait(futures, return_when=FIRST_EXCEPTION)
+        futures = {key: pool.submit(_render_one, key) for key in pending}
+        wait(futures.values(), return_when=FIRST_EXCEPTION)
         pool.shutdown(wait=True, cancel_futures=True)
-        for future in futures:
-            if future.done() and not future.cancelled() and future.exception() is not None:
-                raise future.exception()
+        failures = [
+            (key, future.exception())
+            for key, future in futures.items()
+            if future.done() and not future.cancelled() and future.exception() is not None
+        ]
+        if failures:
+            # Name every failed scene, not just the first one: the worker reads
+            # these names out of the log tail and re-codes exactly those scenes,
+            # so dropping the others would cost one repair attempt each. A single
+            # failure keeps its original message.
+            raise RuntimeError("\n".join(str(exc) for _, exc in failures))
 
     concat_path.write_text(
         "".join(f"file '{cached_path[key].relative_to(root)}'\n" for key in scene_keys),
@@ -270,6 +291,12 @@ def render(
     for stale in cache_dir.glob("*.mp4"):
         if stale.name not in keep:
             stale.unlink()
+    # A crash between the copy and os.replace leaves an unpublished .part that no
+    # render ever reads and that nothing else removes (materialize keeps the cache
+    # across attempts). No render is in flight here: the pool is shut down and the
+    # speculative renderer is stopped before the final pass.
+    for orphan in cache_dir.glob("*.mp4.part"):
+        orphan.unlink()
     stats = {
         "jobs": jobs,
         "quality": quality,
@@ -324,6 +351,12 @@ class SpeculativeRenderer:
     durations.json: a scene rendered with the right duration is a cache hit,
     any mismatch simply renders again. Speculation can waste CPU, never
     desynchronise voice and picture.
+
+    This only holds for a scene whose pixels depend on its own duration and
+    narration (what the cache key covers): a scene that reads another scene's
+    audio data is skipped by ``reads_other_scene_data``, and a scene that needs
+    a file the shadow does not hold simply fails to render here and is redone
+    by the regular pass.
     """
 
     def __init__(
@@ -362,6 +395,7 @@ class SpeculativeRenderer:
         self.rendered_seconds: dict[str, float] = {}
         self.already_cached: list[str] = []
         self.failed: dict[str, str] = {}
+        self.skipped: dict[str, str] = {}
 
     def start(self) -> "SpeculativeRenderer":
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -387,6 +421,7 @@ class SpeculativeRenderer:
             "rendered_seconds": dict(self.rendered_seconds),
             "already_cached": list(self.already_cached),
             "failed": dict(self.failed),
+            "skipped": dict(self.skipped),
         }
 
     def _watch(self) -> None:
@@ -395,6 +430,7 @@ class SpeculativeRenderer:
         except Exception as exc:
             self.failed["*"] = f"cannot read sources: {exc}"
             return
+        _, scene_sources = _shared_and_scene_sources(module_source, self.scene_keys)
         pending = list(self.scene_keys)
         while pending and not self._stop.is_set():
             for key in list(pending):
@@ -402,6 +438,10 @@ class SpeculativeRenderer:
                 if not wav_is_complete(wav, self.min_wav_age_seconds):
                     continue
                 pending.remove(key)
+                if reads_other_scene_data(scene_sources.get(key, "")):
+                    # Its pixels would differ here while the digest matched.
+                    self.skipped[key] = "scene reads another scene's audio data"
+                    continue
                 try:
                     duration = round(self.probe(wav) + self.tail_padding, 3)
                 except Exception as exc:
