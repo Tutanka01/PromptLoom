@@ -14,7 +14,7 @@ export const RemotionRoot: React.FC = () => {
       id="Video"
       component={MainComposition}
       schema={videoSchema}
-      defaultProps={{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal", theme: "default" }}
+      defaultProps={{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal", theme: "default", direction: "ltr" }}
       fps={60}
       width={1920}
       height={1080}

@@ -38,6 +38,11 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
     "vi": "Vietnamese",
 }
 
+# Languages written right-to-left. Their on-screen text must be laid out RTL:
+# browsers/React default to LTR, which reverses the word order of a sentence
+# split into several elements (word-by-word reveals, captions, label rows).
+RTL_LANGUAGES: frozenset[str] = frozenset({"ar", "he", "fa"})
+
 LANGUAGE_ALIASES = {
     "english": "en",
     "anglais": "en",
@@ -81,3 +86,17 @@ def normalize_language(value: str | None) -> str:
 def language_name(code: str | None) -> str:
     normalized = normalize_language(code)
     return SUPPORTED_LANGUAGES[normalized]
+
+
+def text_direction(code: str | None) -> str:
+    """CSS `dir` value ("ltr"/"rtl") for a language code.
+
+    Drives the Remotion renderer's root direction so Arabic/Hebrew/Persian text
+    keeps its reading order. Unknown codes degrade to "ltr" instead of raising:
+    direction is a cosmetic hint, never a reason to fail a render.
+    """
+    try:
+        normalized = normalize_language(code)
+    except ValueError:
+        return "ltr"
+    return "rtl" if normalized in RTL_LANGUAGES else "ltr"

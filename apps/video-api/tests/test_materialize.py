@@ -90,3 +90,26 @@ def test_materialized_style_connect_accepts_points(tmp_path) -> None:
 
     assert "def _anchor_point" in style_text
     assert "hasattr(value, \"get_boundary_point\")" in style_text
+
+
+def test_materialized_style_uses_arabic_fallback_for_rtl_jobs(tmp_path) -> None:
+    """RTL jobs must name an Arabic-capable font: Inter has no Arabic glyphs and
+    fontconfig's generic fallback (DejaVu Sans) has only partial coverage."""
+    settings = Settings(repo_root=Path(__file__).resolve().parents[3], voice_language="ar")
+    video_dir = Materializer(settings).materialize(
+        fake_blueprint("Explain Markov chains", "markov-chains", target_duration_seconds=75),
+        tmp_path,
+    )
+    style_text = next(video_dir.glob("*_style.py")).read_text(encoding="utf-8")
+    assert 'FONT = "Inter, Noto Sans Arabic"' in style_text
+
+
+def test_materialized_style_keeps_inter_for_ltr_jobs(tmp_path) -> None:
+    settings = Settings(repo_root=Path(__file__).resolve().parents[3], voice_language="fr")
+    video_dir = Materializer(settings).materialize(
+        fake_blueprint("Explain Markov chains", "markov-chains", target_duration_seconds=75),
+        tmp_path,
+    )
+    style_text = next(video_dir.glob("*_style.py")).read_text(encoding="utf-8")
+    assert 'FONT = "Inter"' in style_text
+    assert "Noto Sans Arabic" not in style_text

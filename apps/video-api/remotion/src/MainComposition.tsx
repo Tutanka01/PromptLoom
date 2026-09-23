@@ -45,6 +45,11 @@ export const videoSchema = z.object({
   // safe fallback: unknown values resolve to the default palette in
   // applyThemeVars, and the allowed set is enforced upstream in the pipeline.
   theme: z.string().default("default"),
+  // Text direction, derived from the job language upstream (pipeline/languages.py).
+  // Arabic/Hebrew/Persian MUST be "rtl": Chromium lays flex rows out left-to-right
+  // by default, which reverses the word order of every sentence split across
+  // elements (word-by-word reveals, captions, label rows).
+  direction: z.enum(["ltr", "rtl"]).default("ltr"),
 });
 
 export type VideoProps = z.infer<typeof videoSchema>;
@@ -148,6 +153,7 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
   subtitles,
   transitionProfile,
   theme,
+  direction,
   registry,
 }) => {
   const components = registry ?? SCENE_COMPONENTS;
@@ -160,7 +166,7 @@ export const MainComposition: React.FC<MainCompositionProps> = ({
   const {fps} = useVideoConfig();
   const overlayFrames = Math.max(12, Math.round(fps * 0.36));
   return (
-    <AbsoluteFill style={{ ...applyThemeVars(theme), backgroundColor: colors.bg }}>
+    <AbsoluteFill dir={direction} style={{ ...applyThemeVars(theme), backgroundColor: colors.bg }}>
       {/* Persistent living background, BEHIND every scene. SceneFrame fades each
           scene's content in/out at its edges; during that dip this continuous
           background shows through, so scene-to-scene boundaries hand off

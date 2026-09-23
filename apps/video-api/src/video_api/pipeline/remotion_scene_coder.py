@@ -34,6 +34,7 @@ from typing import Any
 
 from video_api import llm_usage
 from video_api.config import Settings
+from video_api.languages import text_direction
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,27 @@ Hard rules (a violation makes the scene unusable):
 - Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox, Icon). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
 - Any chart with x/y axes MUST be the catalog <Plot> (multi-curve via `series`, named points via `markers`, auto-fitted axes with numeric ticks). Never hand-roll SVG axes, gridlines or curves.
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
+
+
+def _rtl_note(settings: Settings) -> str:
+    """Extra authoring rules when on-screen labels are in an RTL script.
+
+    Chromium lays out flex rows left-to-right unless told otherwise, so a
+    sentence split into one element per word (or per character) renders with its
+    words reversed — unreadable Arabic. The composition root already carries
+    ``dir="rtl"`` for these languages; hand-rolled layouts must not fight it.
+    """
+    if text_direction(settings.voice_language) != "rtl":
+        return ""
+    return (
+        "\n\nRTL language rules: on-screen text is written in a right-to-left script "
+        "(the composition root already sets dir=\"rtl\"). Never split a sentence into "
+        "one flex item per character, and prefer the catalog TextReveal/BlurReveal "
+        "(RTL-aware) over hand-rolled per-word rows; if you build your own row of "
+        "words, keep the words in logical order and let the inherited RTL direction "
+        "place them. Keep code, file names and formulas in Latin characters and wrap "
+        "them in an element with dir=\"ltr\" so they are not reordered."
+    )
 
 
 _SPECIALIST_GUIDANCE = {
@@ -238,6 +260,7 @@ class RemotionSceneCoder:
             + specialist
             + "\n\n"
             + skill
+            + _rtl_note(self.settings)
         )
         if previous:
             user = (

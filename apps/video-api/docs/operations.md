@@ -686,7 +686,9 @@ L'image Docker actuelle est lourde parce que le worker embarque :
 - TeX minimal ;
 - Chatterbox ;
 - Torch ;
-- dependances audio.
+- dependances audio ;
+- polices (`fonts-inter`, `fonts-jetbrains-mono` et `fonts-noto-core` pour les
+  scripts non latins — arabe, hebreu, devanagari, thai).
 
 Pour accelerer les boucles de tests futures, une evolution utile serait de separer :
 

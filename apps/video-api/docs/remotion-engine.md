@@ -16,7 +16,7 @@ visual_review sont partagés (`pipeline/engine.py` sélectionne le moteur, le re
 video_dir/
   segments_en.json      # {segments:[{key,title,text}]}  -> generate_voice_en.py (Chatterbox)
   generate_voice_en.py  # copié à l'identique -> audio/en/durations.json + voiceover_en.wav PCM16
-  scenes_map.json       # {fps, scenes:[{key, component, custom, props}]} (ordonné)
+  scenes_map.json       # {fps, direction, scenes:[{key, component, custom, props}]} (ordonné)
   build_video_json.py   # durations.json + scenes_map.json -> video.json
   render_en.sh          # build video.json, injecte l'entrée par job, npx remotion render -> final/<slug>-en-silent.mp4
   assemble_en.sh        # partagé avec Manim : mux silent + voiceover -> final/<slug>-en-final.mp4
@@ -80,6 +80,30 @@ aux coupes.
 La chaîne audio interne reste en WAV PCM16 depuis les segments TTS jusqu'au
 mastering/loudnorm. L'assembleur encode ensuite directement l'unique piste AAC
 192 kb/s du MP4 final ; aucun MP3 intermédiaire n'est produit.
+
+### Direction du texte (arabe, hébreu, persan)
+
+`pipeline/languages.py::text_direction` traduit la langue du job en `direction`
+(`ltr`/`rtl`), écrit dans `scenes_map.json` puis recopié dans `video.json` par
+`build_video_json.py`. La racine `MainComposition` pose `dir` sur son
+`AbsoluteFill`, donc toutes les scènes (palette **et** Custom) héritent de la
+bonne direction.
+
+C'est indispensable : Chromium place les enfants d'un flex en LTR par défaut,
+donc une phrase découpée en un élément par mot (révélations mot-à-mot,
+sous-titres, rangées de libellés) s'affiche avec les mots **à l'envers** en
+arabe. `TextReveal`/`BlurReveal`/`TypewriterText` et `SubtitleTrack` posent en
+plus `dir="auto"`, ce qui les rend corrects même quand la direction du job n'est
+pas passée. Le code (`CodeBlock`, `Terminal`) et les formules (`MathFormula`)
+forcent `direction: ltr` : le contenu technique reste lisible tel quel dans une
+vidéo RTL.
+
+Polices : Inter n'a **aucun** glyphe arabe. Le rendu demande donc
+`'Noto Sans Arabic'` en second dans `fonts.sans` (`remotion/src/style/tokens.ts`)
+et l'image worker installe `fonts-noto-core` ; côté Manim, `FONT` devient
+`"Inter, Noto Sans Arabic"` pour les jobs RTL (Pango résout la liste par
+glyphe). Sans cela, fontconfig retombe sur DejaVu Sans, à la couverture arabe
+partielle.
 
 ### Direction artistique (thèmes bornés)
 

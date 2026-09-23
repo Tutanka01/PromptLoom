@@ -32,6 +32,7 @@ import uuid
 from pathlib import Path
 
 from video_api.config import Settings
+from video_api.languages import text_direction
 from video_api.pipeline.materialize import _assemble_script, slugify
 from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import RemotionBlueprint
@@ -54,6 +55,7 @@ def _scenes_map(
     entry_id: str,
     caption_mode: str,
     transition_profile: str,
+    direction: str = "ltr",
 ) -> dict:
     """Ordered scene->component map. Custom scenes are registered under their key."""
     scenes = []
@@ -76,6 +78,7 @@ def _scenes_map(
         "captionMode": caption_mode,
         "transitionProfile": transition_profile,
         "theme": getattr(blueprint, "art_direction", "default"),
+        "direction": direction,
         "scenes": scenes,
     }
 
@@ -135,6 +138,7 @@ video = {
     "subtitles": subtitles,
     "transitionProfile": scene_map.get("transitionProfile", "minimal"),
     "theme": scene_map.get("theme", "default"),
+    "direction": scene_map.get("direction", "ltr"),
     "scenes": scenes,
 }
 (ROOT / "video.json").write_text(json.dumps(video, indent=2) + "\\n", encoding="utf-8")
@@ -164,7 +168,7 @@ const Root: React.FC = () => (
     id="Video"
     component={{JobMain}}
     schema={{videoSchema}}
-    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal", theme: "default" }}}}
+    defaultProps={{{{ scenes: [], embedAudio: false, captionMode: "off", subtitles: [], transitionProfile: "minimal", theme: "default", direction: "ltr" }}}}
     fps={{{fps}}}
     width={{1920}}
     height={{1080}}
@@ -311,6 +315,7 @@ class RemotionMaterializer:
                     entry_id,
                     self.settings.caption_mode,
                     self.settings.transition_profile,
+                    text_direction(self.settings.voice_language),
                 ),
                 indent=2,
             )

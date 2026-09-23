@@ -56,6 +56,7 @@ export const SubtitleTrack: React.FC<{
       }}
     >
       <div
+        dir="auto"
         style={{
           display: "flex",
           flexDirection: "column",

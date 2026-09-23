@@ -69,6 +69,10 @@ export const CodeBlock: React.FC<{
         fontSize,
         lineHeight: 1.55,
         minWidth: 520,
+        // Code is always LTR, even inside an RTL video: an inherited RTL
+        // direction would right-align and reorder every line.
+        direction: "ltr",
+        textAlign: "left",
       }}
     >
       {/* window chrome / optional file title */}

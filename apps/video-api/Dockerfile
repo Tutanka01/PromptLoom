@@ -30,6 +30,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-inter \
     fonts-jetbrains-mono \
+    # RTL + non-Latin scripts (Arabic, Hebrew, Devanagari, Thai, ...). Inter has
+    # no Arabic glyphs: without Noto, Arabic on-screen text falls back to
+    # whatever fontconfig finds (DejaVu Sans, partial coverage) and the Manim
+    # style's "Inter, Noto Sans Arabic" list has nothing to fall back to.
+    fonts-noto-core \
     # Manim MathTex/Tex needs a LaTeX toolchain + dvisvgm (not just latex-base).
     dvisvgm \
     texlive-latex-base \

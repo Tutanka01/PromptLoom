@@ -459,6 +459,34 @@ def test_build_video_json_passes_global_subtitles_and_editorial_profiles(tmp_pat
     assert video["subtitles"][0]["lines"][0][0]["text"] == "Kernel"
 
 
+def test_materialize_carries_rtl_direction_from_language(tmp_path) -> None:
+    """Arabic/Hebrew/Persian jobs render RTL end to end.
+
+    Chromium lays flex rows out left-to-right by default, so a sentence split
+    across elements (word-by-word reveals, captions, label rows) shows its words
+    reversed. The language must therefore reach video.json as `direction`.
+    """
+    settings = Settings(repo_root=REPO_ROOT, fake_llm=True, voice_language="ar")
+    bp = fake_remotion_blueprint("x", "cs", 240)
+    video_dir = RemotionMaterializer(settings).materialize(bp, tmp_path)
+    smap = json.loads((video_dir / "scenes_map.json").read_text())
+    assert smap["direction"] == "rtl"
+    (video_dir / "audio" / "en").mkdir(parents=True, exist_ok=True)
+    (video_dir / "audio" / "en" / "durations.json").write_text(
+        json.dumps({s["key"]: 3.0 for s in smap["scenes"]})
+    )
+    subprocess.run([sys.executable, "build_video_json.py"], cwd=video_dir, check=True, capture_output=True)
+    assert json.loads((video_dir / "video.json").read_text())["direction"] == "rtl"
+
+
+def test_materialize_defaults_to_ltr_direction(tmp_path) -> None:
+    video_dir = RemotionMaterializer(_settings()).materialize(
+        fake_remotion_blueprint("x", "cs", 240), tmp_path
+    )
+    smap = json.loads((video_dir / "scenes_map.json").read_text())
+    assert smap["direction"] == "ltr"
+
+
 # --------------------------------------------------------------------------- #
 # Custom -> palette fallback
 # --------------------------------------------------------------------------- #

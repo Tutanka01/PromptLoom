@@ -8,6 +8,7 @@ from typing import Any
 
 from video_api import llm_usage
 from video_api.config import Settings
+from video_api.languages import text_direction
 from video_api.schemas import SceneSpec, VideoBlueprint
 
 
@@ -34,6 +35,24 @@ Follow the Manim Skill document exactly. Output ONLY the `def construct(self):` 
 no class definition, no imports, no extra prose.
 Start your response with `def construct(self):` and indent the body with 4 spaces.
 Never include import statements. Never call open(), eval(), exec(), or os/subprocess functions."""
+
+
+def _rtl_note(settings: Settings) -> str:
+    """Extra authoring rules when on-screen labels are in an RTL script.
+
+    Pango shapes Arabic/Hebrew/Persian correctly in `Text`/`MarkupText`, but
+    LaTeX (`Tex`/`MathTex`) cannot render those scripts at all, and LLM-authored
+    labels are a common place for reordered or reversed text.
+    """
+    if text_direction(settings.voice_language) != "rtl":
+        return ""
+    return (
+        "\n\nRTL language rules: the on-screen labels are written in a right-to-left "
+        "script. Render them with `Text(...)` or `MarkupText(...)` only — never "
+        "`Tex`/`MathTex`, which cannot render these scripts. Keep labels short "
+        "(at most 4 words), keep their logical word order (never reverse letters or "
+        "words yourself), and keep code, file names and formulas in Latin characters."
+    )
 
 
 def _strip_fences(raw: str) -> str:
@@ -226,6 +245,7 @@ class SceneCoder:
                     f"Scene specification (JSON):\n{json.dumps(scene_ctx, indent=2, ensure_ascii=True)}\n\n"
                     f"Output only the method. Start with `def construct(self):`. "
                     f"Indent body with 4 spaces. No imports. No class header."
+                    f"{_rtl_note(self.settings)}"
                 ),
             },
         ]
@@ -258,6 +278,7 @@ class SceneCoder:
                     f"Error:\n{error}\n\n"
                     f"Output only the corrected `def construct(self):` method. "
                     f"Indent body with 4 spaces. No imports. No class header."
+                    f"{_rtl_note(self.settings)}"
                 ),
             },
         ]

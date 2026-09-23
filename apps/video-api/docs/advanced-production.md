@@ -107,8 +107,11 @@ ou il apporte une information exacte.
   reels), pas la forme normalisee de l'aligneur, et ecrit la liste globale dans
   `subtitles.json` (consommee par Remotion). Le multilingue latin (francais
   inclus) est gere : les diacritiques sont replies cote alignement seulement,
-  l'affichage garde les accents. Sans alignement, les scenes restent rendables
-  (sans sous-titres) ;
+  l'affichage garde les accents. Les scripts non latins (arabe, hebreu, persan,
+  cyrillique) ne sont **pas** alignables par MMS_FA (charset a-z) : la video est
+  rendue normalement mais sans sous-titres incrustes ni sidecar, et le rapport
+  porte `alignment: failed`. Le texte a l'ecran reste, lui, dans la bonne
+  direction (voir remotion-engine.md, *Direction du texte*) ;
 - la meme liste de cues produit un sidecar `final/<slug>-<langue>.srt` + `.vtt`
   (timeline globale), liste dans `report.subtitles` et telechargeable via
   `/v1/videos/{id}/artifacts/<chemin>` — incruste et fichier ne peuvent pas

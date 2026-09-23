@@ -49,6 +49,9 @@ export const MathFormula: React.FC<{
         opacity: p,
         transform: `translateY(${interpolate(p, [0, 1], [16, 0])}px)`,
         textAlign: align,
+        // Math is always LTR: an RTL video must not flip KaTeX's internal flex
+        // rows (fractions, radicals) or the equation reads backwards.
+        direction: "ltr",
         // KaTeX inherits color from currentColor for most glyphs
       }}
       dangerouslySetInnerHTML={{ __html: html }}

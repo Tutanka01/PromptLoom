@@ -89,8 +89,11 @@ export const DIM_OPACITY = 0.32;
 // Web-safe stand-ins for the macOS fonts used in the Manim reference
 // (Helvetica Neue / Menlo are unavailable on Linux render workers; Inter +
 // JetBrains-style mono read cleanly at small sizes — see Dockerfile note).
+// 'Noto Sans Arabic' is named explicitly because Inter has no Arabic glyphs at
+// all: without it, fontconfig's generic fallback picks DejaVu Sans, whose
+// Arabic coverage is partial. Latin text still renders with Inter.
 export const fonts = {
-  sans: "'Inter', system-ui, -apple-system, 'Helvetica Neue', sans-serif",
+  sans: "'Inter', 'Noto Sans Arabic', system-ui, -apple-system, 'Helvetica Neue', sans-serif",
   mono: "'JetBrains Mono', 'SF Mono', Menlo, monospace",
 } as const;
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,10 +10,18 @@ from video_api.config import Settings
 from video_api.pipeline.scene_coder import (
     SceneCoder,
     _extract_construct_body,
+    _rtl_note,
     _validate_body_contract,
     _wrap_in_scaffold,
 )
 from video_api.pipeline.llm import fake_blueprint
+
+
+def test_rtl_note_warns_against_latex_for_arabic_labels() -> None:
+    """LaTeX cannot render Arabic: the coder must be told to use Text instead."""
+    repo_root = Path(__file__).resolve().parents[3]
+    assert _rtl_note(Settings(repo_root=repo_root, voice_language="ar")) != ""
+    assert _rtl_note(Settings(repo_root=repo_root, voice_language="fr")) == ""
 
 
 # ---------- _extract_construct_body ----------

@@ -423,6 +423,8 @@ export const Terminal: React.FC<{
         fontFamily: fonts.mono,
         fontSize: fontSize.code + 4,
         boxSizing: "border-box",
+        // Shell/terminal output stays LTR in RTL videos (see CodeBlock).
+        direction: "ltr",
       }}
     >
       {shown}

@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 from video_api.config import Settings
+from video_api.languages import text_direction
 from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import SceneSpec, VideoBlueprint
 
@@ -680,7 +681,14 @@ class Materializer:
         )
         style_src = self.settings.repo_root / "docs" / "boilerplate" / "video" / "video_style.py"
         style_text = style_src.read_text(encoding="utf-8")
-        style_text = style_text.replace('FONT = "Helvetica Neue"', 'FONT = "Inter"')
+        # Pango resolves a comma-separated family list per glyph, so RTL scripts
+        # (Arabic/Hebrew/Persian) keep Inter for Latin text and fall back to Noto
+        # Sans Arabic instead of whatever fontconfig happens to pick (DejaVu in
+        # the worker image). "Inter" alone has no Arabic glyphs at all.
+        sans_font = "Inter"
+        if text_direction(self.settings.voice_language) == "rtl":
+            sans_font = "Inter, Noto Sans Arabic"
+        style_text = style_text.replace('FONT = "Helvetica Neue"', f'FONT = "{sans_font}"')
         style_text = style_text.replace('MONO = "Menlo"', 'MONO = "DejaVu Sans Mono"')
         (video_dir / f"{slug_module}_style.py").write_text(style_text, encoding="utf-8")
 

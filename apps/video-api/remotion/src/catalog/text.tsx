@@ -32,7 +32,9 @@ export const TextReveal: React.FC<TextProps & { staggerDelay?: number }> = ({
   const frame = useCurrentFrame();
   const words = text.split(" ");
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 16 }}>
+    // dir="auto": a sentence split into one element per word must keep its
+    // reading order — LTR layout would reverse the words of an RTL script.
+    <div dir="auto" style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 16 }}>
       {words.map((word, index) => {
         const wordDelay = delay + index * staggerDelay;
         const progress = interpolate(frame - wordDelay, [0, 15], [0, 1], {
@@ -75,7 +77,7 @@ export const TypewriterText: React.FC<TextProps & { speed?: number; showCursor?:
   const displayText = text.slice(0, charsToShow);
   const cursorVisible = Math.floor(frame / 15) % 2 === 0;
   return (
-    <span style={{ fontSize, fontFamily, color, fontWeight: 500 }}>
+    <span dir="auto" style={{ fontSize, fontFamily, color, fontWeight: 500 }}>
       {displayText}
       {showCursor && <span style={{ opacity: cursorVisible ? 1 : 0 }}>|</span>}
     </span>
@@ -94,7 +96,7 @@ export const BlurReveal: React.FC<TextProps & { blurAmount?: number }> = ({
   const frame = useCurrentFrame();
   const words = text.split(" ");
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
+    <div dir="auto" style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
       {words.map((word, index) => {
         const wordDelay = delay + index * 8;
         const progress = interpolate(frame - wordDelay, [0, 20], [0, 1], {
