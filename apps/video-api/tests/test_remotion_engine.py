@@ -467,6 +467,7 @@ def test_materialize_writes_contract(tmp_path) -> None:
     # speed knobs from Settings are pinned on the render command
     assert '--concurrency="75%"' in render
     assert '--x264-preset="faster"' in render
+    assert '--jpeg-quality="${JPEG_QUALITY}"' in render
     assert 'PUBLIC_DIR="${VIDEO_DIR}/remotion_public"' in render
     assert '--public-dir="${PUBLIC_DIR}"' in render
     assert '${REMOTION_DIR}/public' not in render

@@ -137,8 +137,8 @@ class Settings:
     # (data-driven component palette), reusing the same TTS, assemble and verify
     # steps. This is the only switch needed to change engines.
     render_engine: str = field(default_factory=lambda: os.getenv("VIDEO_API_RENDER_ENGINE", "manim").strip().lower())
-    # Render speed knobs (no-GPU VM: the Remotion render is CPU-bound on software GL,
-    # so concurrency + frame count + x264 preset are the real levers).
+    # Render speed knobs (no-GPU VM: Chrome composites on the CPU, so concurrency +
+    # frame count are the real levers; the x264 encode is not the bottleneck).
     # - render_fps: Remotion output frame rate. 30 (default) halves the frames to
     #   encode vs 60 for explainer content; raise to 60 for maximum smoothness.
     # - remotion_concurrency: passed to `remotion render --concurrency`. Accepts an int

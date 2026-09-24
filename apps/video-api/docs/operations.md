@@ -313,9 +313,14 @@ en profitent) :
 
 ```text
 VIDEO_API_RENDER_FPS=30           # 30 (defaut) ~= 2x moins de frames qu'en 60
-VIDEO_API_REMOTION_CONCURRENCY=75%  # entier ou %, "75%" ~= 12 tabs/16 coeurs ; "50%" si OOM
+VIDEO_API_REMOTION_CONCURRENCY=75%  # entier ou %, "75%" ~= 12 tabs/16 coeurs ; "50%" si OOM ou machine qui chauffe
 VIDEO_API_RENDER_X264_PRESET=faster # encode plus vite, qualite ~identique a crf 18
 ```
+
+Chrome compose sur CPU (aucun renderer GL force dans `remotion.config.ts`) ; forcer
+`swangle` rend le meme film 3x plus lentement. Baisser la concurrence reduit la charge
+instantanee (chaleur, bruit) sans changer le temps CPU total d'un rendu. Details et
+mesures : [Remotion Engine](remotion-engine.md#qualité--verify).
 
 Levier vitesse du rendu **Manim** (un process par scene, cache par scene entre
 tentatives de reparation) :

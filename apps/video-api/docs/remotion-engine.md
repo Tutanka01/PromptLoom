@@ -196,13 +196,26 @@ le runtime et `node_modules` restent partagés en lecture seule.
 
 `verify_mp4` ne vérifie 1920×1080 + `render_fps` (défaut 30) et le gate de freeze qu'au
 **pass final** (`final_quality=True`). Donc `QUALITY=ql` rend en `--scale=0.5` (preview
-rapide) et `QUALITY=qh` en `--scale=1 --crf=18`. GL : `swangle` (logiciel, sûr en headless
-Docker).
+rapide) et `QUALITY=qh` en `--scale=1 --crf=18`. Les frames passent de Chrome à x264
+en JPEG : qualité 92 en `qm`/`qh` (au défaut Remotion de 80, x264 dépense ses bits sur
+les artefacts JPEG autour du texte : PSNR +3 dB et MP4 ~10 % plus petit pour ~8 % de
+temps de rendu), 80 en `ql`.
+
+**GL : aucun renderer forcé** (`remotion.config.ts`). Sans GPU, Chrome compose et
+rastérise alors sur CPU avec Skia et ne garde SwiftShader que pour WebGL
+(`--use-angle=swiftshader-webgl`), ce que la doc Remotion recommande quand il n'y a
+pas de WebGL/Three.js. Ne pas remettre `swangle` : il fait passer toute la composition
+par SwiftShader. Mesuré sur un vrai job (worker Docker, 15 vCPU) : 17,9 → 53 frames/s
+à image identique (SSIM ≥ 0,997), et 4× moins de temps CPU. Avec sous-titres et
+transitions `cinematic` (flou, `backdrop-filter`, `mix-blend-mode`) : 11 → 40 frames/s.
 
 **Leviers vitesse (VM sans GPU, rendu CPU-bound)** — toutes les passes en profitent :
-`--concurrency=$VIDEO_API_REMOTION_CONCURRENCY` (défaut `"75%"` ≈ 12 tabs/16 cœurs ;
-~0,5–1 Go/tab → baisser à `"50%"` si OOM), `--x264-preset=$VIDEO_API_RENDER_X264_PRESET`
-(défaut `faster`), et `VIDEO_API_RENDER_FPS` (défaut 30, ~2× moins de frames que 60).
+`--concurrency=$VIDEO_API_REMOTION_CONCURRENCY` (défaut `"75%"` ; mesuré optimal sur
+15 vCPU : 11 onglets 53 fps, 8 → 46, 4 → 42, 15 → 50 ; le temps CPU total par frame
+ne dépend presque pas de la concurrence, qui règle surtout la vitesse contre la charge
+instantanée), `--x264-preset=$VIDEO_API_RENDER_X264_PRESET` (défaut `faster` ; l'encodage
+n'est pas le goulot : `ultrafast` ne rend pas plus vite), et `VIDEO_API_RENDER_FPS`
+(défaut 30, ~2× moins de frames que 60).
 
 ## Docker
 
