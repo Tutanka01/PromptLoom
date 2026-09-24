@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from video_api import timing
+from video_api.documents import DOCUMENT_ID_PATTERN
 from video_api.languages import normalize_language
 
 # ---------------------------------------------------------------------------
@@ -127,6 +128,8 @@ class ProductionOptions(BaseModel):
     # Requested narration voice id (see GET /v1/voices). None = engine default
     # (which for MOSS means the free-running, non-pinned timbre).
     voice: str | None = Field(default=None, max_length=80)
+    # Uploaded source document (POST /v1/documents) the video explains.
+    document_id: str | None = Field(default=None, pattern=DOCUMENT_ID_PATTERN)
     delivery_promise: Literal[
         "technical_explainer", "editorial_explainer", "motion_led_explainer"
     ] | None = None
@@ -134,12 +137,15 @@ class ProductionOptions(BaseModel):
     @model_validator(mode="after")
     def resolve_defaults(self) -> "ProductionOptions":
         advanced = self.mode in {"editorial", "cinematic"}
-        if self.render_engine is None and advanced:
+        # Document figures only exist as a Remotion component (FigureScene).
+        if self.render_engine is None and (advanced or self.document_id):
             self.render_engine = "remotion"
         if self.mode == "cinematic" and self.render_engine == "manim":
             raise ValueError("cinematic production mode requires render_engine='remotion'")
         if self.research.enabled is None:
-            self.research.enabled = advanced
+            # An uploaded document is the grounding; web research on top of it
+            # stays opt-in (research.enabled=true).
+            self.research.enabled = advanced and not self.document_id
         if self.captions is None:
             self.captions = "off"
         if self.delivery_promise is None:
@@ -187,6 +193,9 @@ class VideoCreateRequest(BaseModel):
     # multi-language batch the same voice narrates every video, so it must
     # cover every requested language (422 otherwise).
     voice: str | None = Field(default=None, max_length=80)
+    # Source document to explain, from POST /v1/documents. Its sections ground
+    # the script (sources doc_NN) and its figures become FigureScene media.
+    document_id: str | None = Field(default=None, pattern=DOCUMENT_ID_PATTERN)
     callback_url: str | None = None
 
     @field_validator("voice")
@@ -243,6 +252,7 @@ class VideoCreateRequest(BaseModel):
             visuals=self.visuals,
             captions=self.captions,
             voice=self.voice,
+            document_id=self.document_id,
         )
 
 
@@ -327,6 +337,42 @@ class VoicesResponse(BaseModel):
     # Effective family per quality profile (the draft profile forces kokoro).
     engine_by_profile: dict[str, str]
     voices: list[VoiceInfo]
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/documents — uploaded source documents (see documents.py).
+# ---------------------------------------------------------------------------
+class DocumentFigureInfo(BaseModel):
+    id: str
+    label: str
+    caption: str
+    page: int
+    width: int
+    height: int
+    # Named parts located by the vision pass, once a job has run it.
+    regions: list[str] = Field(default_factory=list)
+    image_url: str
+
+
+class DocumentSectionInfo(BaseModel):
+    id: str
+    heading: str
+    page: int
+    chars: int
+
+
+class DocumentResponse(BaseModel):
+    document_id: str
+    filename: str
+    title: str
+    page_count: int
+    pages_analyzed: int
+    char_count: int
+    abstract: str
+    sections: list[DocumentSectionInfo]
+    figures: list[DocumentFigureInfo]
+    warnings: list[str]
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -597,6 +643,7 @@ REMOTION_PALETTE = (
     "NetworkMapScene",
     "ImageScene",
     "FootageScene",
+    "FigureScene",
 )
 
 RemotionComponent = Literal[
@@ -620,6 +667,7 @@ RemotionComponent = Literal[
     "NetworkMapScene",
     "ImageScene",
     "FootageScene",
+    "FigureScene",
     "Custom",
 ]
 

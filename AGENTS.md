@@ -40,7 +40,7 @@ au même moment.
 | Architecture, états ou cycle d'un job | `apps/video-api/docs/architecture.md` |
 | Modifier le pipeline worker | `apps/video-api/docs/developer-guide.md`, puis le module concerné |
 | Contrat ou normalisation LLM | `apps/video-api/docs/llm-contract.md`, `schemas.py`, `pipeline/llm.py` |
-| Production éditoriale, recherche ou médias | `apps/video-api/docs/advanced-production.md` |
+| Production éditoriale, recherche, médias ou PDF source | `apps/video-api/docs/advanced-production.md` |
 | Rendu Remotion | `apps/video-api/docs/remotion-engine.md`; ajouter `remotion-catalog.md` ou `remotion-skill.md` seulement si nécessaire |
 | Génération Manim | `apps/video-api/docs/manim-generation-guidelines.md`; `manim-skill.md` seulement pour l'authoring de scènes |
 | Configuration, Docker, logs ou rétention | `apps/video-api/docs/operations.md` |
@@ -57,6 +57,7 @@ apps/video-api/src/video_api/
   tasks.py                tâches Celery et fan-out multilingue
   schemas.py              contrats Pydantic publics et LLM
   config.py               variables d'environnement et profils qualité
+  documents.py            PDF envoyés : extraction (sections, figures), stockage, rétention
   voices.py               catalogue de voix TTS et sélection par requête
   db.py / models.py       persistance, rétention, jobs périmés
   pipeline/
@@ -67,6 +68,7 @@ apps/video-api/src/video_api/
     validate.py           garde-fous des sources générées
     voice.py              sélection du TTS et cache par segment
     research.py / assets.py / editorial.py
+    document_figures.py   analyse vision optionnelle des figures (zones nommées)
     verify.py             ffprobe, freezedetect, snapshots
 
 apps/video-api/remotion/  catalogue et runtime React/Remotion

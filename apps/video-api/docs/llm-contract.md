@@ -101,10 +101,20 @@ Le prompt recoit deux objets controles par le worker :
 - `production_context` : mode, moteur, politique de medias, captions et promesse
   de livraison ;
 - `research_context` : extraits bornes et IDs stables produits par Tavily ou Exa.
+  Quand le job porte un `document_id`, il contient aussi `document` (titre,
+  resume), les sections du PDF comme sources `doc_NN` (budget
+  `VIDEO_API_DOCUMENT_PROMPT_CHARS`) et, pour Remotion seulement, `figures` :
+  `id` (`fig_NN`), legende, page, ratio, et si l'analyse vision a tourne une
+  description et des `regions` (`r1`...). Les regles changent alors : la video
+  explique CE document, fidelement, avec sa terminologie.
 
 Le modele ne doit jamais inventer une URL. Pour `ImageScene` et
 `FootageScene`, il fournit seulement un `asset_query` semantique. Le worker
 resout le media, remplace la prop par un chemin local et ecrit la provenance.
+Pour `FigureScene`, il fournit un `figure_id` de la liste et des `callouts`
+(`label`, `region?`). Le worker copie la figure, calcule les cadres depuis les
+regions connues et ignore toute region inventee ; un `figure_id` inconnu
+retombe sur `BulletScene`.
 
 ## Python Manim genere, mais sous garde-fous
 

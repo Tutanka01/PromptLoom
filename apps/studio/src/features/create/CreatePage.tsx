@@ -8,9 +8,10 @@ import { Field, TextInput, TextArea, Select, Segmented, Toggle, RangeField, type
 import { useToast } from "../../components/Toast";
 import { useCapabilities, useCreateVideo, useVoices } from "../../api/queries";
 import { ApiError } from "../../api/client";
-import type { QualityProfile, RenderEngine } from "../../api/types";
+import type { DocumentResponse, QualityProfile, RenderEngine } from "../../api/types";
 import { allowedLanguages, engineLabel, normalizeCaps, type EffectiveCaps } from "../../lib/capabilities";
 import { LanguagePicker } from "./LanguagePicker";
+import { DocumentPicker } from "./DocumentPicker";
 import {
   formSchema,
   makeDefaults,
@@ -44,6 +45,8 @@ function CreateForm({ caps }: { caps: EffectiveCaps }) {
   const toast = useToast();
   const create = useCreateVideo();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  // Uploaded PDF the video explains (its figures become FigureScene media).
+  const [sourceDoc, setSourceDoc] = useState<DocumentResponse | null>(null);
 
   const {
     control,
@@ -120,15 +123,27 @@ function CreateForm({ caps }: { caps: EffectiveCaps }) {
   // deployment actually provides: advanced modes turn research on only when a
   // provider exists, prefer hybrid visuals + stock only when stock exists, and
   // forbid Manim for cinematic.
+  // A document is itself the grounding: web research stays opt-in on top of it.
   useEffect(() => {
     const advanced = mode === "editorial" || mode === "cinematic";
-    setValue("research_enabled", advanced && caps.research.available);
+    setValue("research_enabled", advanced && caps.research.available && !sourceDoc);
     setValue("visuals_strategy", advanced ? "hybrid" : "diagrams");
     setValue("visuals_allow_stock", advanced && caps.stockAssets.available);
     if (mode === "cinematic" && getValues("render_engine") === "manim") {
       setValue("render_engine", "remotion");
     }
-  }, [mode, caps.research.available, caps.stockAssets.available, setValue, getValues]);
+  }, [mode, caps.research.available, caps.stockAssets.available, sourceDoc, setValue, getValues]);
+
+  function attachDocument(doc: DocumentResponse | null) {
+    setSourceDoc(doc);
+    if (doc && !getValues("prompt").trim()) {
+      setValue(
+        "prompt",
+        `Explique les idées clés de « ${doc.title} » : le problème posé, la méthode et les résultats, en t'appuyant sur ses figures.`.slice(0, 4000),
+        { shouldValidate: true },
+      );
+    }
+  }
 
   const qualityOptions: SegOption<QualityProfile>[] = [
     {
@@ -147,14 +162,17 @@ function CreateForm({ caps }: { caps: EffectiveCaps }) {
   ];
 
   const advancedMode = mode === "editorial" || mode === "cinematic";
-  const autoEngine: RenderEngine = advancedMode ? "remotion" : caps.defaults.renderEngine;
+  // Document figures only render with Remotion, so the server picks it too.
+  const autoEngine: RenderEngine = advancedMode || sourceDoc ? "remotion" : caps.defaults.renderEngine;
   const engineOptions: SegOption<"auto" | RenderEngine>[] = [
     {
       value: "auto",
       label: `Auto (${autoEngine === "remotion" ? "Remotion" : "Manim"})`,
       hint: advancedMode
         ? "Les modes éditorial et cinématique rendent avec Remotion."
-        : "Défaut du serveur pour le mode technique.",
+        : sourceDoc
+          ? "Les figures du document s'affichent avec Remotion."
+          : "Défaut du serveur pour le mode technique.",
     },
     ...caps.renderEngines.map((engine) => ({
       value: engine,
@@ -169,6 +187,7 @@ function CreateForm({ caps }: { caps: EffectiveCaps }) {
   const researchOn = caps.research.available && researchEnabled;
   const selectedVoice = compatibleVoices.find((v) => v.id === voice);
   const recapParts = [
+    ...(sourceDoc ? [`d'après ${sourceDoc.filename}`] : []),
     multilang ? `${languages.length} vidéo${languages.length > 1 ? "s" : ""}` : "1 vidéo",
     selectedLanguages
       .map((code) => caps.languages.find((l) => l.code === code)?.name ?? code)
@@ -182,7 +201,7 @@ function CreateForm({ caps }: { caps: EffectiveCaps }) {
   ];
 
   function onSubmit(values: FormValues) {
-    create.mutate(toRequest(values, caps), {
+    create.mutate(toRequest(values, caps, sourceDoc?.document_id), {
       onSuccess: (res) => {
         if (res.batch_id) {
           toast.success(`Batch de ${res.jobs?.length ?? 0} vidéos lancé.`);
@@ -217,6 +236,12 @@ function CreateForm({ caps }: { caps: EffectiveCaps }) {
 
       <form onSubmit={handleSubmit(onSubmit)} className="grid max-w-3xl gap-4">
         <FormSection label="Sujet" title="Que doit expliquer la vidéo ?">
+          <Field
+            label="Document source"
+            hint="Optionnel — la vidéo explique ce PDF, s'appuie sur son texte et montre ses figures."
+          >
+            <DocumentPicker value={sourceDoc} onChange={attachDocument} onError={(message) => toast.error(message)} />
+          </Field>
           <Field label="Prompt" htmlFor="prompt" error={errors.prompt?.message}>
             <TextArea
               id="prompt"

@@ -246,23 +246,51 @@ class VideoPipeline:
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
     def _prepare_research(self, session: Session, job: VideoJob, workspace: Path) -> Any | None:
-        from video_api.pipeline.research import ResearchDossier, Researcher
+        from video_api.pipeline.research import ResearchDossier, Researcher, attach_document
 
         options = self.production_options.research
-        if not options.enabled:
+        document_id = self.production_options.document_id
+        if not options.enabled and not document_id:
             return None
         master = self._load_master_research(session, job)
         if master is not None:
             dossier = ResearchDossier.model_validate(master)
         else:
-            self._update(session, job, "planning", 3, "researching")
-            dossier = Researcher(self.settings).research(
-                job.prompt,
-                max_sources=options.max_sources,
-                required=options.required,
-            )
+            dossier = None
+            if options.enabled:
+                self._update(session, job, "planning", 3, "researching")
+                dossier = Researcher(self.settings).research(
+                    job.prompt,
+                    max_sources=options.max_sources,
+                    required=options.required,
+                )
+            if document_id:
+                from video_api.documents import DocumentStore
+                from video_api.pipeline.document_figures import analyze_document_figures
+
+                self._update(session, job, "planning", 4, "reading_document")
+                store = DocumentStore(self.settings.documents_root)
+                document = store.load(document_id)
+                store.touch(document_id)
+                if self.engine.name == "remotion":
+                    document = analyze_document_figures(document, store, self.settings)
+                dossier = attach_document(dossier, document, self.settings.document_prompt_chars)
+                logger.info(
+                    "job.document.ready job_id=%s document_id=%s sources=%d figures=%d regions=%d",
+                    job.id,
+                    document_id,
+                    len(dossier.sources),
+                    len(dossier.figures),
+                    sum(len(f.regions) for f in dossier.figures),
+                )
         (workspace / "research.json").write_text(dossier.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return dossier
+
+    def _research_context(self, research: Any | None) -> dict | None:
+        """Figures are only offered to the Remotion engine (FigureScene)."""
+        if research is None:
+            return None
+        return research.prompt_context(include_figures=self.engine.name == "remotion")
 
     def _notify_terminal(self, session: Session, job: VideoJob) -> None:
         """Best-effort terminal webhook; never raises into the pipeline."""
@@ -335,7 +363,7 @@ class VideoPipeline:
                 elif "verify" in current_step:
                     failure_status = "failed_quality"
                 elif current_step in {
-                    "researching", "planning", "asset_acquisition", "motion_preflight",
+                    "researching", "reading_document", "planning", "asset_acquisition", "motion_preflight",
                     "materializing_sources", "static_validation",
                 } or current_step.startswith("repairing"):
                     failure_status = "failed_generation"
@@ -522,7 +550,7 @@ class VideoPipeline:
                             job.target_duration_seconds,
                             job.language,
                             self.production_options.model_dump(),
-                            research.prompt_context() if research is not None else None,
+                            self._research_context(research),
                         )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
@@ -563,7 +591,7 @@ class VideoPipeline:
                             repair_hint,
                             job.language,
                             self.production_options.model_dump(),
-                            research.prompt_context() if research is not None else None,
+                            self._research_context(research),
                             target=job.target_duration_seconds,
                         )
                 # Never allow an LLM to invent provenance identifiers. Fake
@@ -588,6 +616,7 @@ class VideoPipeline:
                         workspace,
                         allow_stock=bool(self.production_options.visuals.allow_stock),
                         max_assets=self.production_options.visuals.max_assets,
+                        dossier=research,
                     )
 
                 self._update(session, job, "planning", 18, "motion_preflight")
@@ -906,6 +935,22 @@ class VideoPipeline:
                     "provider": getattr(research, "provider", None),
                     "source_count": len(getattr(research, "sources", []) or []),
                 }
+                document_brief = getattr(research, "document", None)
+                if document_brief is not None:
+                    final_report["document"] = {
+                        "document_id": document_brief.id,
+                        "title": document_brief.title,
+                        "filename": document_brief.filename,
+                        "figures_available": len(research.figures),
+                        "figures_used": sorted(
+                            {
+                                str(scene.props.get("figure_id"))
+                                for scene in blueprint.scenes
+                                if getattr(scene, "component", None) == "FigureScene"
+                                and scene.props.get("figure_id")
+                            }
+                        ),
+                    }
                 final_report["motion_plan"] = motion_plan
                 final_report["alignment"] = {
                     "enabled": align_enabled,

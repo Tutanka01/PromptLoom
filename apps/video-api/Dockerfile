@@ -8,7 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # --- System layer ---------------------------------------------------------
 # Rarely changes (texlive is heavy). Kept first so it stays cached across
 # almost every rebuild.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's@http://deb.debian.org@https://deb.debian.org@g' /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Retries "3";\n' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \

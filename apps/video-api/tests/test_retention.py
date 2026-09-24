@@ -127,10 +127,12 @@ def test_gc_task_noops_when_retention_disabled(jobs_root: Path, monkeypatch) -> 
 
 def test_gc_task_collects_when_enabled(jobs_root: Path, monkeypatch) -> None:
     old = _make_job(jobs_root, "old-done", status="completed", age_days=30)
-    enabled = dataclasses.replace(get_settings(), job_ttl_days=15, jobs_root=jobs_root)
+    enabled = dataclasses.replace(
+        get_settings(), job_ttl_days=15, jobs_root=jobs_root, documents_root=jobs_root.parent / "documents"
+    )
     monkeypatch.setattr(tasks_module, "settings", enabled)
 
     result = tasks_module.gc_job_artifacts()
 
-    assert result == {"collected": 1}
+    assert result == {"collected": 1, "documents": 0}
     assert not old.exists()

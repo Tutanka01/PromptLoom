@@ -5,6 +5,7 @@ import logging
 from video_api.celery_app import celery_app
 from video_api.config import get_settings
 from video_api.db import SessionLocal, gc_job_workspaces, init_db
+from video_api.documents import gc_documents
 from video_api.logging_setup import configure_logging
 from video_api.models import VideoJob
 from video_api.pipeline.production import VideoPipeline
@@ -118,7 +119,8 @@ def _abort_batch_secondaries(primary_job_id: str, primary_status: str) -> None:
 @celery_app.task(name="video_api.gc_job_artifacts")
 def gc_job_artifacts() -> dict[str, int]:
     """Periodic retention sweep (Celery beat): delete artifact directories of
-    terminal jobs older than VIDEO_API_JOB_TTL_DAYS. No-op when retention is
+    terminal jobs older than VIDEO_API_JOB_TTL_DAYS, and uploaded documents
+    unused for as long. No-op when retention is
     disabled (ttl <= 0). Idempotent and safe to run alongside the API-startup
     sweep — already-removed workspaces are simply skipped."""
     ttl_days = settings.job_ttl_days
@@ -126,5 +128,6 @@ def gc_job_artifacts() -> dict[str, int]:
         return {"collected": 0}
     init_db()
     collected = gc_job_workspaces(settings.jobs_root, ttl_days)
-    logger.info("worker.gc.done ttl_days=%g collected=%d", ttl_days, collected)
-    return {"collected": collected}
+    documents = gc_documents(settings.documents_root, ttl_days)
+    logger.info("worker.gc.done ttl_days=%g collected=%d documents=%d", ttl_days, collected, documents)
+    return {"collected": collected, "documents": documents}

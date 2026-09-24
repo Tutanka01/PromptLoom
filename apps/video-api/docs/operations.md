@@ -410,6 +410,34 @@ cas d'echec, la scene devient un diagramme ; le job ne rend jamais une URL
 distante. Pour un environnement sans provider, utiliser le mode `technical` ou
 envoyer `research: {"enabled": false}` / `visuals: {"allow_stock": false}`.
 
+### Documents sources (PDF)
+
+`POST /v1/documents` extrait un PDF cote API ; le worker le relit au moment du
+job. Les deux services doivent donc partager le dossier (volume
+`video_documents`, deja monte par Compose) :
+
+```text
+VIDEO_API_DOCUMENTS_ROOT=/data/documents   # defaut hors Docker : apps/video-api/data/documents
+VIDEO_API_DOCUMENT_MAX_MB=40               # taille max d'upload (413 au-dela)
+VIDEO_API_DOCUMENT_MAX_PAGES=60            # pages analysees (les suivantes sont ignorees, avec un warning)
+VIDEO_API_DOCUMENT_PROMPT_CHARS=24000      # texte du document confie au LLM, reparti entre les sections
+VIDEO_API_DOCUMENT_FIGURE_ANALYSIS=1       # avec VIDEO_API_VISION_MODEL : zones nommees par figure
+```
+
+L'extraction est locale (PyMuPDF, aucune dependance reseau) et ne fait pas
+d'OCR : un PDF scanne sans couche texte est refuse en `422`. Si
+`VIDEO_API_VISION_MODEL` est defini, le premier job qui utilise un document
+demande au modele vision une description et 2 a 6 zones par figure (12 figures
+max), mises en cache dans `document.json` : c'est ce qui permet aux annotations
+de `FigureScene` de zoomer sur la bonne partie. Sans modele vision, les figures
+s'affichent entieres avec leurs annotations listees a cote. Un echec de
+l'analyse vision n'echoue jamais le job.
+
+Sur disque, un document vit dans `/data/documents/<document_id>/` :
+`source.pdf`, `document.json` et `figures/fig_NN.png`. Dans le job, la figure
+copiee est tracee dans `asset_manifest.json` (`provider: document`) et le
+dossier de sources dans `research.json` (sections `doc_NN`, figures).
+
 Les artefacts de diagnostic sont `research.json`, `asset_manifest.json` et
 `motion_plan_report.json`. Un echec de recherche requise ou de promesse de
 mouvement finit en `failed_generation`. Un echec du delivery gate apres rendu
@@ -515,6 +543,10 @@ Le balayage tourne a deux endroits, de facon idempotente :
   toutes les `VIDEO_API_GC_INTERVAL_HOURS`, defaut 6h), pour qu'un serveur qui
   ne redemarre jamais respecte quand meme la limite.
 
+Les documents PDF (`/data/documents/<document_id>/`) suivent la meme duree,
+comptee depuis leur derniere utilisation par un job (ou leur upload) : les deux
+balayages les purgent aussi.
+
 Mettre `VIDEO_API_JOB_TTL_DAYS=0` desactive completement la retention (les
 artefacts sont gardes indefiniment).
 
@@ -522,9 +554,13 @@ artefacts sont gardes indefiniment).
 
 ```text
 video_jobs
+video_documents
 postgres_data
 model_cache
 ```
+
+`video_documents` contient les PDF envoyes et leur extraction
+(`/data/documents/<document_id>/`), partages entre l'API et le worker.
 
 `video_jobs` contient :
 

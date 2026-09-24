@@ -206,6 +206,25 @@ class Settings:
     asset_max_download_mb: int = field(
         default_factory=lambda: int(os.getenv("VIDEO_API_ASSET_MAX_DOWNLOAD_MB", "80"))
     )
+    # User-uploaded source documents (PDF). Extracted by the API at upload time
+    # and read by the worker, so both must share this directory (a volume in
+    # Compose). Retention follows job_ttl_days, counted from the last use.
+    documents_root: Path = field(
+        default_factory=lambda: Path(os.getenv("VIDEO_API_DOCUMENTS_ROOT", "apps/video-api/data/documents"))
+    )
+    document_max_mb: int = field(default_factory=lambda: int(os.getenv("VIDEO_API_DOCUMENT_MAX_MB", "40")))
+    document_max_pages: int = field(default_factory=lambda: int(os.getenv("VIDEO_API_DOCUMENT_MAX_PAGES", "60")))
+    # Characters of document text handed to the blueprint LLM (the sections are
+    # budgeted to fit; ~4 characters per token).
+    document_prompt_chars: int = field(
+        default_factory=lambda: int(os.getenv("VIDEO_API_DOCUMENT_PROMPT_CHARS", "24000"))
+    )
+    # When a vision model is configured (VIDEO_API_VISION_MODEL), describe each
+    # document figure and locate its parts once, so FigureScene callouts can
+    # zoom onto the region the narration talks about. Cached per document.
+    document_figure_analysis: bool = field(
+        default_factory=lambda: _bool_env("VIDEO_API_DOCUMENT_FIGURE_ANALYSIS", True)
+    )
     # Word-level forced alignment of the TTS audio (Remotion engine only). Drives
     # narration-synced visual cues (props.cues): each item reveals when its words
     # are actually spoken instead of on an even grid. torchaudio MMS_FA; CPU is

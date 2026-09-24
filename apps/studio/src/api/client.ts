@@ -5,6 +5,7 @@ import { getSettings } from "../lib/settings";
 import type {
   BatchStatusResponse,
   CapabilitiesResponse,
+  DocumentResponse,
   HealthResponse,
   VideoCreateRequest,
   VideoCreateResponse,
@@ -112,6 +113,16 @@ export const api = {
 
   getCapabilities(): Promise<CapabilitiesResponse> {
     return request("/v1/capabilities");
+  },
+
+  async uploadDocument(file: File): Promise<DocumentResponse> {
+    // Multipart: let the browser set the Content-Type boundary (request()
+    // would force application/json).
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/v1/documents", { method: "POST", body: form, headers: authHeaders() });
+    if (!res.ok) throw await toError(res);
+    return (await res.json()) as DocumentResponse;
   },
 
   // Native <video>/<a> can't carry the X-API-Key header, so pull bytes with the

@@ -157,6 +157,11 @@ _COMPONENT_ALIASES = {
     "video": "FootageScene",
     "broll": "FootageScene",
     "b_roll": "FootageScene",
+    "figure": "FigureScene",
+    "figurescene": "FigureScene",
+    "fig": "FigureScene",
+    "paper_figure": "FigureScene",
+    "document_figure": "FigureScene",
     "custom": "Custom",
     "freeform": "Custom",
     "free": "Custom",
@@ -196,6 +201,9 @@ _PALETTE_LINE = (
     "- NetworkMapScene: { nodes: [ {id: str, label: str, group?: str}, ...(2-10) ], links: [ {a: id, b: id, label?: str} ] }  — an animated node-link graph for a complex system. Do NOT provide x/y; positions are auto-computed. Beats: one anchor per node.\n"
     "- ImageScene:   { title: str, asset_query: str, caption?: str, motion?: \"ken-burns|pan-left|pan-right|push-in\" } — a sourced still image; NEVER provide a URL\n"
     "- FootageScene: { title: str, asset_query: str, caption?: str, motion?: \"push-in|static\" } — sourced real B-roll; NEVER provide a URL\n"
+    "- FigureScene:  { title: str, figure_id: \"fig_NN from research_context.figures\", callouts: [ {label: str(2-6 words), region?: \"rN from that figure's regions\"}, ...(1-5) ], caption?: str }\n"
+    "      — a REAL figure from the user's uploaded document, shown whole; each callout is revealed (and, with a region,\n"
+    "        zoomed onto) when its beat anchor is spoken. ONLY when research_context.figures exists. Beats: one anchor per callout.\n"
     "- Custom:       { } — use ONLY when no palette component fits; describe the visual fully in `visual_intent`.\n"
     "      A separate expert step writes bespoke React/Remotion code for it. Prefer palette components."
 )
@@ -260,6 +268,9 @@ Rules:
   scenes with precise asset_query values. The narration of a media scene must explicitly discuss what
   the image proves or grounds. Do not add decorative media just to satisfy a quota.
 - When research_context is present, attach only its valid IDs as scene.source_ids. Never invent IDs.
+- When research_context.figures is present, the video explains the user's document: show its 2-4 most
+  explanatory figures with FigureScene (existing figure ids only, each figure at most once) and make the
+  narration walk through what each figure shows. Never use FigureScene without research_context.figures.
 - ART DIRECTION: set "art_direction" to the palette that best fits the subject/tone — default
   (neutral dark academic), blueprint (engineering/technical blue), forest (biology/nature/green),
   synthwave (retro, high-energy neon), carbon (high-contrast neutral), plum (warm humanities/design).
@@ -795,6 +806,29 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
                     link["label"] = str(lk["label"])[:32]
                 links.append(link)
         return {"nodes": nodes, "links": links}
+    elif component == "FigureScene":
+        figure_id = str(props.get("figure_id") or props.get("figure") or props.get("id") or "").strip()[:16]
+        callouts: list[dict[str, Any]] = []
+        raw_callouts = props.get("callouts") if isinstance(props.get("callouts"), list) else []
+        for item in raw_callouts[:5]:
+            if isinstance(item, str):
+                item = {"label": item}
+            if not isinstance(item, dict):
+                continue
+            label = " ".join(str(item.get("label") or item.get("text") or "").split())[:60]
+            if not label:
+                continue
+            callout: dict[str, Any] = {"label": label}
+            region = str(item.get("region") or "").strip()[:8]
+            if region:
+                callout["region"] = region
+            callouts.append(callout)
+        # src, aspect, boxes and credit are set by the worker from the stored
+        # figure (assets.py); never trust them from the model.
+        out = {"title": title, "figure_id": figure_id, "callouts": callouts}
+        if props.get("caption"):
+            out["caption"] = str(props["caption"])[:120]
+        return out
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]
         if not query:
@@ -920,6 +954,7 @@ Return ONLY one JSON object (no prose, no fences):
        "component": "<ComponentName>", "duration_seconds": <int>,
        "goal": "the ONE idea this scene must make click (1-2 sentences)",
        "visual_idea": "concrete, topic-specific visual plan (1-2 sentences)",
+       "figure_id": "fig_NN (FigureScene only)",
        "source_ids": ["src_01"] }}
   ]
 }}
@@ -938,6 +973,9 @@ Rules:
   command->TerminalScene, memory->MemoryScene, relationships->DiagramScene.
 - Each scene teaches exactly ONE idea; goals must build on each other in order.
 - If research_context is supplied, add `source_ids` to each outline scene using only IDs present there.
+- If research_context.figures is supplied, the video explains that document: plan 2-4 FigureScene scenes
+  (one figure each, `figure_id` from the list) on the figures that carry the core idea, placed where the
+  explanation reaches them; use the palette to build intuition around them. Omit FigureScene otherwise.
 - Respect production_context: use ImageScene/FootageScene only when stock media is allowed and semantically exact.
 - When production_context.mode is "cinematic", keep BulletScene for the final recap only whenever a
   structural visual is possible. Use a varied motion-led mix. If stock media is allowed and an
@@ -977,6 +1015,10 @@ Rules:
   {", ".join(sorted(ICON_NAMES))}
 - For ImageScene/FootageScene provide a precise `asset_query`, never `src` or a URL. The worker resolves
   and licenses the media before rendering.
+- For FigureScene keep the given `figure_id`. Read that figure's caption/description/regions in
+  research_context.figures; write 2-4 callouts naming the parts the narration explains, in the order it
+  explains them, each with the matching `region` id when regions exist. The narration describes what the
+  viewer is looking at ("on the left, the encoder stack...") and why it matters; one beat anchor per callout.
 
 Example output (component=FlowScene, goal="trace the path of one read() call"):
 {{
@@ -1028,6 +1070,9 @@ def _items_count(component: str, props: dict[str, Any]) -> int | None:
             elif isinstance(value, (list, tuple)):
                 total += len(value[:5])
         return total
+    if component == "FigureScene":
+        value = props.get("callouts")
+        return len(value) if isinstance(value, (list, tuple)) else 0
     if component in {"ImageScene", "FootageScene"}:
         return None
     return None
@@ -1051,6 +1096,12 @@ def validate_scene_payload(scene: dict[str, Any]) -> list[str]:
         errors.append("narration is too short — write full spoken sentences")
     if component in {"ImageScene", "FootageScene"} and not str(props.get("asset_query") or "").strip():
         errors.append(f"{component} requires a concrete props.asset_query")
+    if component == "FigureScene":
+        if not str(props.get("figure_id") or "").strip():
+            errors.append("FigureScene requires props.figure_id from research_context.figures")
+        callouts = props.get("callouts")
+        if not isinstance(callouts, (list, tuple)) or not [c for c in callouts if c]:
+            errors.append("FigureScene needs 1-5 props.callouts naming the parts of the figure the narration explains")
 
     # Density: more items than the component can show kills comprehension (and
     # the renderer would silently slice them off anyway).
@@ -1224,12 +1275,15 @@ def fake_remotion_blueprint(
     theme: str | None = None,
     target_duration_seconds: int | None = None,
     production_context: dict[str, Any] | None = None,
+    research_context: dict[str, Any] | None = None,
 ) -> RemotionBlueprint:
     """Build a deterministic, gate-passing Remotion blueprint.
 
     Reuses the curated academic narration from the Manim ``fake_blueprint`` (so
     the narration always clears the shared duration gate) and assigns each scene
-    a palette component based on its layout.
+    a palette component based on its layout. When the context lists document
+    figures, the second scene shows the first one, so the FigureScene path is
+    exercised end to end.
     """
     from video_api.pipeline.llm import fake_blueprint  # deferred: avoid import cycle
 
@@ -1273,6 +1327,22 @@ def fake_remotion_blueprint(
                 "visual_intent": scene.visual_intent,
             }
         )
+    figures = (research_context or {}).get("figures") or []
+    if figures and len(scenes) > 2:
+        figure = figures[0]
+        target = scenes[1]
+        regions = figure.get("regions") or []
+        labels = [anchor["anchor"] for anchor in target["beats"]][:3] or ["The figure"]
+        target["component"] = "FigureScene"
+        target["props"] = {
+            "title": target["title"],
+            "figure_id": figure["id"],
+            "callouts": [
+                {"label": " ".join(label.split()[:4]), **({"region": regions[i]["id"]} if i < len(regions) else {})}
+                for i, label in enumerate(labels)
+            ],
+        }
+        target["beats"] = [{"anchor": label} for label in labels]
     return RemotionBlueprint(
         title=base.title,
         theme=base.theme,

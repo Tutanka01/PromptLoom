@@ -12,6 +12,9 @@ services:
       VIDEO_API_DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_api
       VIDEO_API_REDIS_URL: redis://redis:6379/0
       VIDEO_API_JOBS_ROOT: /data/jobs
+      # Uploaded PDFs (POST /v1/documents): extracted by the API, read by the
+      # worker, so both mount the same volume.
+      VIDEO_API_DOCUMENTS_ROOT: /data/documents
       VIDEO_API_REPO_ROOT: /workspace
       # Artifact retention (job workspaces under /data/jobs). The API sweeps at
       # startup; the worker sweeps periodically (Celery beat). 0 = keep forever.
@@ -24,6 +27,7 @@ services:
       - "${VIDEO_API_HOST_PORT:-8080}:8080"
     volumes:
       - video_jobs:/data/jobs
+      - video_documents:/data/documents
       # Drop <voice-id>.wav (+ optional <voice-id>.json) here to expose MOSS
       # voices; see apps/video-api/voice-bank/README.md.
       - ./voice-bank:/data/voices:ro
@@ -52,6 +56,9 @@ services:
       VIDEO_API_DATABASE_URL: postgresql+psycopg://video:video@postgres:5432/video_api
       VIDEO_API_REDIS_URL: redis://redis:6379/0
       VIDEO_API_JOBS_ROOT: /data/jobs
+      # Uploaded PDFs (POST /v1/documents): extracted by the API, read by the
+      # worker, so both mount the same volume.
+      VIDEO_API_DOCUMENTS_ROOT: /data/documents
       VIDEO_API_REPO_ROOT: /workspace
       VIDEO_API_VOICE_ENGINE: ${VIDEO_API_VOICE_ENGINE:-chatterbox}
       VIDEO_API_VOICE_COMMAND: ${VIDEO_API_VOICE_COMMAND:-python generate_voice_en.py --engine chatterbox --exaggeration 0.45 --cfg-weight 0.55 --temperature 0.55 --tail-padding 0.45}
@@ -118,6 +125,7 @@ services:
     restart: unless-stopped
     volumes:
       - video_jobs:/data/jobs
+      - video_documents:/data/documents
       - model_cache:/data/model-cache
       - ./voice-bank:/data/voices:ro
     depends_on:
@@ -134,6 +142,7 @@ services:
       VIDEO_API_DATABASE_URL: "sqlite+pysqlite:///:memory:"
       VIDEO_API_REDIS_URL: redis://redis:6379/0
       VIDEO_API_JOBS_ROOT: /tmp/video-api-jobs
+      VIDEO_API_DOCUMENTS_ROOT: /tmp/video-api-documents
       VIDEO_API_REPO_ROOT: /workspace
       VIDEO_API_FAKE_LLM: "1"
       MANIM_USE_UV: "0"
@@ -172,6 +181,7 @@ services:
 
 volumes:
   video_jobs:
+  video_documents:
   postgres_data:
   # HF + torch model caches (MOSS-TTS ~17 GB, alignment models...). Survives
   # container rebuilds; drop it explicitly with `docker volume rm` to reclaim.

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy import text
 
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from video_api.config import get_settings
 from video_api.db import SessionLocal, gc_job_workspaces, get_session, init_db, reap_stale_jobs
+from video_api.documents import Document, DocumentError, DocumentNotFound, DocumentStore, gc_documents
 from video_api.logging_setup import configure_logging
 from video_api.models import VideoJob
 from video_api.capabilities import capabilities_payload
@@ -21,6 +22,9 @@ from video_api.schemas import (
     BatchJobRef,
     BatchStatusResponse,
     CapabilitiesResponse,
+    DocumentFigureInfo,
+    DocumentResponse,
+    DocumentSectionInfo,
     SubstepProgress,
     VideoCreateRequest,
     VideoCreateResponse,
@@ -49,6 +53,7 @@ async def lifespan(_: FastAPI):
     logger.info("api.startup app=%s jobs_root=%s", settings.app_name, settings.jobs_root)
     init_db(max_attempts=30, delay_seconds=2.0)
     settings.jobs_root.mkdir(parents=True, exist_ok=True)
+    settings.documents_root.mkdir(parents=True, exist_ok=True)
     reaped = reap_stale_jobs(settings.stale_job_hours)
     if reaped:
         logger.warning("api.startup.reaped_stale_jobs count=%d", reaped)
@@ -56,6 +61,9 @@ async def lifespan(_: FastAPI):
         collected = gc_job_workspaces(settings.jobs_root, settings.job_ttl_days)
         if collected:
             logger.info("api.startup.gc_job_workspaces count=%d", collected)
+        removed = gc_documents(settings.documents_root, settings.job_ttl_days)
+        if removed:
+            logger.info("api.startup.gc_documents count=%d", removed)
     logger.info("api.ready")
     yield
     logger.info("api.shutdown")
@@ -188,6 +196,11 @@ def list_available_voices() -> VoicesResponse:
 )
 def create_video(request: VideoCreateRequest, session: Session = Depends(get_session)) -> VideoCreateResponse:
     languages = request.resolved_languages()
+    if request.document_id and not DocumentStore(settings.documents_root).exists(request.document_id):
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown document_id {request.document_id}: upload the PDF with POST /v1/documents first",
+        )
     if request.voice:
         try:
             resolve_voice(settings, request.quality_profile, request.voice, languages)
@@ -229,6 +242,89 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
     session.commit()
     logger.info("api.job.enqueued job_id=%s task_id=%s status_url=/v1/videos/%s", job_id, result.id, job_id)
     return VideoCreateResponse(job_id=job_id, status_url=f"/v1/videos/{job_id}")
+
+
+def _document_response(document: Document) -> DocumentResponse:
+    return DocumentResponse(
+        document_id=document.id,
+        filename=document.filename,
+        title=document.title,
+        page_count=document.page_count,
+        pages_analyzed=document.pages_analyzed,
+        char_count=document.char_count,
+        abstract=document.abstract[:1500],
+        sections=[
+            DocumentSectionInfo(id=s.id, heading=s.heading, page=s.page, chars=len(s.text))
+            for s in document.sections
+        ],
+        figures=[
+            DocumentFigureInfo(
+                id=f.id,
+                label=f.label,
+                caption=f.caption,
+                page=f.page,
+                width=f.width,
+                height=f.height,
+                regions=[r.label for r in f.regions],
+                image_url=f"/v1/documents/{document.id}/figures/{f.id}",
+            )
+            for f in document.figures
+        ],
+        warnings=document.warnings,
+        created_at=document.created_at,
+    )
+
+
+@app.post(
+    "/v1/documents",
+    response_model=DocumentResponse,
+    status_code=201,
+    dependencies=[Depends(require_api_key)],
+)
+def upload_document(file: UploadFile = File(...)) -> DocumentResponse:
+    """Upload a PDF to explain. Extraction (text sections + figures) runs
+    now, so the response already lists what a video can use. Idempotent: the
+    same bytes always map to the same document_id."""
+    limit = settings.document_max_mb * 1024 * 1024
+    data = file.file.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPException(status_code=413, detail=f"document exceeds {settings.document_max_mb} MB")
+    if b"%PDF-" not in data[:1024]:
+        raise HTTPException(status_code=415, detail="only PDF documents are supported")
+    try:
+        document = DocumentStore(settings.documents_root).ingest(
+            data, file.filename or "document.pdf", max_pages=settings.document_max_pages
+        )
+    except DocumentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logger.info(
+        "api.document.ingested document_id=%s pages=%d sections=%d figures=%d chars=%d",
+        document.id,
+        document.page_count,
+        len(document.sections),
+        len(document.figures),
+        document.char_count,
+    )
+    return _document_response(document)
+
+
+@app.get("/v1/documents/{document_id}", response_model=DocumentResponse, dependencies=[Depends(require_api_key)])
+def get_document(document_id: str) -> DocumentResponse:
+    try:
+        return _document_response(DocumentStore(settings.documents_root).load(document_id))
+    except DocumentNotFound as exc:
+        raise HTTPException(status_code=404, detail="document not found") from exc
+
+
+@app.get("/v1/documents/{document_id}/figures/{figure_id}", dependencies=[Depends(require_api_key)])
+def get_document_figure(document_id: str, figure_id: str) -> FileResponse:
+    try:
+        path = DocumentStore(settings.documents_root).figure_file(document_id, figure_id)
+    except DocumentNotFound as exc:
+        raise HTTPException(status_code=404, detail="figure not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="figure not found")
+    return FileResponse(path, media_type="image/png")
 
 
 def _create_batch(

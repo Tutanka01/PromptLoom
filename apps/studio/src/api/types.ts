@@ -62,7 +62,42 @@ export interface VideoCreateRequest {
   captions?: CaptionMode | null;
   // Narration voice id from GET /v1/voices. Omit for the engine default.
   voice?: string | null;
+  // Uploaded source document (POST /v1/documents) the video explains.
+  document_id?: string | null;
   callback_url?: string | null;
+}
+
+// POST /v1/documents — an uploaded PDF, extracted server-side.
+export interface DocumentFigureInfo {
+  id: string;
+  label: string;
+  caption: string;
+  page: number;
+  width: number;
+  height: number;
+  regions: string[];
+  image_url: string;
+}
+
+export interface DocumentSectionInfo {
+  id: string;
+  heading: string;
+  page: number;
+  chars: number;
+}
+
+export interface DocumentResponse {
+  document_id: string;
+  filename: string;
+  title: string;
+  page_count: number;
+  pages_analyzed: number;
+  char_count: number;
+  abstract: string;
+  sections: DocumentSectionInfo[];
+  figures: DocumentFigureInfo[];
+  warnings: string[];
+  created_at: string;
 }
 
 // Engine families exposed by GET /v1/voices (moss covers moss + moss-remote).

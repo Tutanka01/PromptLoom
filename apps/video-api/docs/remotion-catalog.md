@@ -5,6 +5,13 @@ description: The proposable component palette for Remotion STEM scene generation
 
 # Remotion component catalog (STEM-general)
 
+`FigureScene` montre une vraie figure du PDF envoye par l'utilisateur
+(`document_id`) : le blueprint donne `figure_id` et des `callouts`, le worker
+injecte le PNG local, son ratio et le cadre de chaque zone connue. La figure est
+toujours entiere sur une carte blanche ; chaque annotation apparait sur son cue
+et, si elle a un cadre, la camera zoome dessus. A proposer seulement quand
+`research_context.figures` existe.
+
 `ImageScene` et `FootageScene` sont les deux composants editoriaux de media.
 Le blueprint fournit `asset_query`, jamais une URL. Le worker resout Pexels,
 injecte un `src` local avec credit/provenance, puis applique Ken Burns,
@@ -53,6 +60,7 @@ The blueprint composes these by `{component, props}`. Signatures: see
 | `SplitFocusScene` | two live panels side by side (cause/effect, code + its result) — bounded kinds: code\|plot\|formula\|bullets\|terminal |
 | `ZoomNarrativeScene` | a cinematic camera zoom/pan revealing items across a canvas |
 | `NetworkMapScene` | an animated node-link graph for a complex system (positions auto-computed) |
+| `FigureScene` | a real figure of the user's uploaded document, walked through with numbered callouts |
 
 ## Pick a building block by subject
 

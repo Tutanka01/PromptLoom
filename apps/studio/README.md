@@ -72,3 +72,10 @@ src/
   est visible ; le reste vit dans « Avancé », réglé automatiquement, avec un
   récapitulatif de ce qui sera réellement produit au-dessus du bouton de
   lancement. Une API sans cet endpoint retombe sur un contrat intégré permissif.
+- **Document source** : la section « Sujet » accepte un PDF (glisser-déposer).
+  Il part tout de suite sur `POST /v1/documents` ; la carte affiche le titre,
+  les sections et les vignettes des figures détectées (via `AuthImage`), puis
+  la requête de création porte son `document_id`. Un document attaché préremplit
+  le prompt s'il est vide, laisse la recherche web désactivée par défaut et fait
+  passer le moteur « Auto » sur Remotion. Le proxy nginx accepte déjà des corps
+  de 64 Mo.

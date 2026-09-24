@@ -986,6 +986,7 @@ class LLMClient:
                 theme,
                 effective_target,
                 production_context=production_context,
+                research_context=research_context,
             )
         if not self.settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required unless VIDEO_API_FAKE_LLM=1")
@@ -1238,6 +1239,7 @@ class LLMClient:
                     "goal": sc.get("goal") or "",
                     "visual_idea": sc.get("visual_idea") or "",
                     "duration_seconds": duration,
+                    **({"figure_id": str(sc["figure_id"])} if sc["component"] == "FigureScene" and sc.get("figure_id") else {}),
                 },
                 "previous_scene": compact[index - 1] if index > 0 else None,
                 "next_scene": compact[index + 1] if index + 1 < len(compact) else None,
@@ -1297,6 +1299,9 @@ class LLMClient:
                     "visual_intent": str(sc.get("visual_idea") or "")[:600],
                     "source_ids": list(sc.get("source_ids") or [])[:12],
                 }
+                if sc["component"] == "FigureScene" and sc.get("figure_id"):
+                    # The outline chose the figure; the scene call only writes around it.
+                    scene_dict["props"].setdefault("figure_id", str(sc["figure_id"]))
                 errors = rb.validate_scene_payload(scene_dict)
                 words = len(scene_dict["narration"].split())
                 if words < round(min_words * 0.7):
@@ -1357,6 +1362,7 @@ class LLMClient:
                 "duration_seconds": scene.duration_seconds,
                 "goal": scene.visual_intent or scene.title,
                 "visual_idea": scene.visual_intent,
+                "figure_id": (scene.props or {}).get("figure_id"),
             }
             for scene in blueprint.scenes
         ]

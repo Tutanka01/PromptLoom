@@ -101,7 +101,7 @@ export function makeDefaults(caps: EffectiveCaps): FormValues {
 // not provide are forced off (a request must never ask for what the server
 // said it cannot do), and `required` follows `enabled`: an explicitly
 // requested research that lost its provider must fail loudly, never silently.
-export function toRequest(v: FormValues, caps: EffectiveCaps): VideoCreateRequest {
+export function toRequest(v: FormValues, caps: EffectiveCaps, documentId?: string): VideoCreateRequest {
   const researchOn = caps.research.available && v.research_enabled;
   const allowStock = caps.stockAssets.available && v.visuals_allow_stock;
   const body: VideoCreateRequest = {
@@ -125,6 +125,7 @@ export function toRequest(v: FormValues, caps: EffectiveCaps): VideoCreateReques
   if (v.render_engine !== "auto") body.render_engine = v.render_engine;
   if (v.voice && v.voice !== "auto") body.voice = v.voice;
   if (v.callback_url?.trim()) body.callback_url = v.callback_url.trim();
+  if (documentId) body.document_id = documentId;
 
   if (v.multilang) {
     body.languages = v.languages;

@@ -91,6 +91,7 @@ const STEP_LABELS: Record<string, string> = {
   queued: "En file",
   waiting_for_master: "En attente du master",
   researching: "Recherche des sources",
+  reading_document: "Lecture du document",
   planning: "Planification",
   scene_codegen: "Génération des scènes",
   generating_sources: "Génération des sources",

@@ -16,6 +16,7 @@ import { api } from "./client";
 import type {
   BatchStatusResponse,
   CapabilitiesResponse,
+  DocumentResponse,
   HealthResponse,
   VideoCreateRequest,
   VideoCreateResponse,
@@ -200,5 +201,11 @@ export function useRelaunchVideo() {
       // A fresh job showed up — let the dashboard notice.
       void qc.invalidateQueries({ queryKey: ["videos"] });
     },
+  });
+}
+
+export function useUploadDocument() {
+  return useMutation<DocumentResponse, Error, File>({
+    mutationFn: (file) => api.uploadDocument(file),
   });
 }

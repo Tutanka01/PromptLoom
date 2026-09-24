@@ -61,6 +61,7 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 | `NetworkMapScene`    | `nodes[{id,label,group?}], links[{a,b,label?}]` (positions auto-calculées en Python) |
 | `ImageScene`         | `title, asset_query` puis `src` local, `motion?, credit?` |
 | `FootageScene`       | `title, asset_query` puis `src` local, `mediaDurationSeconds, credit?` |
+| `FigureScene`        | `title, figure_id, callouts[{label, region?}][1-5], caption?` puis `src` local, `aspect`, `credit`, `callouts[].box` (figure d'un PDF envoye, jamais rognee ; zoom + projecteur sur la zone de chaque annotation) |
 
 Transitions inter-scènes : le fond `AmbientBackground` reste persistant et des
 overlays de coupe (`minimal`, `editorial`, `cinematic`) sont poses a la frontiere

@@ -234,6 +234,12 @@ Champs :
   toutes les langues demandees. Voix inconnue ou incompatible = `422` avec le
   detail. Si le WAV de reference d'une voix MOSS disparait entre la creation et
   l'execution, le job echoue clairement (pas de fallback de voix silencieux).
+- `document_id` optionnel : id d'un PDF envoye par `POST /v1/documents` (voir
+  *Documents sources* ci-dessous). La video explique ce document : ses sections
+  deviennent les sources citees (`doc_01`, `doc_02`...) et ses figures peuvent
+  apparaitre a l'ecran via `FigureScene`. Sans `render_engine`, le moteur devient
+  Remotion (les figures n'existent que la) ; la recherche web reste desactivee
+  sauf `research.enabled=true` explicite. Id inconnu = `422`.
 - `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
   (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
   dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
@@ -263,6 +269,89 @@ curl -X POST http://localhost:8080/v1/videos \
 ```
 
 HTTP `202 Accepted` signifie que le job est accepte et execute en asynchrone.
+
+## Documents sources (PDF)
+
+Pour faire une video *sur un document* (article scientifique, cours, rapport),
+envoyer d'abord le PDF, puis creer la video avec son `document_id`.
+
+### `POST /v1/documents`
+
+Upload `multipart/form-data`, champ `file`. L'extraction se fait pendant la
+requete (quelques secondes pour un article) : la reponse liste deja ce qu'une
+video pourra utiliser.
+
+```bash
+curl -X POST http://localhost:8080/v1/documents \
+  -H 'X-API-Key: <cle>' \
+  -F 'file=@attention.pdf'
+```
+
+```json
+{
+  "document_id": "doc_3f9c0e5b7a1d4c2e8f6a0b9d",
+  "filename": "attention.pdf",
+  "title": "Attention Is All You Need",
+  "page_count": 15,
+  "pages_analyzed": 15,
+  "char_count": 28706,
+  "abstract": "The dominant sequence transduction models are based on...",
+  "sections": [{"id": "doc_01", "heading": "Abstract", "page": 1, "chars": 2218}],
+  "figures": [
+    {
+      "id": "fig_01",
+      "label": "Figure 1",
+      "caption": "Figure 1: The Transformer - model architecture.",
+      "page": 3,
+      "width": 1136,
+      "height": 1653,
+      "regions": [],
+      "image_url": "/v1/documents/doc_3f9c0e5b7a1d4c2e8f6a0b9d/figures/fig_01"
+    }
+  ],
+  "warnings": [],
+  "created_at": "2026-09-24T12:00:00+00:00"
+}
+```
+
+- L'id est le hash du contenu : renvoyer le meme fichier renvoie le meme
+  document, sans nouvelle extraction.
+- Le texte est decoupe par titres de section ; la bibliographie est exclue.
+- Une figure est detectee par sa legende (`Figure N`, `Fig. N`...) et decoupee
+  depuis la page en haute resolution. Une figure sans legende reconnaissable est
+  ignoree plutot que devinee.
+- `regions` se remplit apres le premier job qui utilise le document, si un
+  modele vision est configure (`VIDEO_API_VISION_MODEL`).
+- Erreurs : `413` au-dela de `VIDEO_API_DOCUMENT_MAX_MB`, `415` si ce n'est pas
+  un PDF, `422` si le PDF est protege, illisible ou sans texte (scan : l'OCR
+  n'est pas pris en charge).
+
+### `GET /v1/documents/{document_id}`
+
+Meme reponse que l'upload. `404` si le document n'existe pas (ou a ete purge
+par la retention, voir `VIDEO_API_JOB_TTL_DAYS`).
+
+### `GET /v1/documents/{document_id}/figures/{figure_id}`
+
+PNG de la figure (apercu dans Studio, verification avant de lancer une video).
+
+### Creer la video
+
+```bash
+curl -X POST http://localhost:8080/v1/videos \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "prompt": "Explique ce papier a des etudiants de licence : le probleme, l idee cle, les resultats",
+    "document_id": "doc_3f9c0e5b7a1d4c2e8f6a0b9d",
+    "language": "fr",
+    "production_mode": "editorial",
+    "quality_profile": "high"
+  }'
+```
+
+Le prompt donne l'angle (public, niveau, ce qu'il faut retenir) ; le contenu
+vient du document. `report.json` contient un bloc `document` (id, titre, figures
+disponibles et figures effectivement montrees).
 
 ## Videos multilingues (batch)
 
@@ -488,7 +577,8 @@ done
 
 ## Statuts d'erreur
 
-- `failed_generation`: erreur de blueprint, validation ou generation des sources.
+- `failed_generation`: erreur de blueprint, validation ou generation des sources
+  (y compris un `document_id` purge entre la creation et l'execution du job).
 - `failed_render`: erreur pendant voix, rendu Manim ou assemblage.
 - `failed_quality`: la video a ete produite mais les controles finaux ont echoue.
 

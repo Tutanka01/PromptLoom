@@ -9,3 +9,4 @@ import os
 os.environ.setdefault("VIDEO_API_DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("VIDEO_API_FAKE_LLM", "1")
 os.environ.setdefault("VIDEO_API_JOBS_ROOT", "/tmp/video-api-test-jobs")
+os.environ.setdefault("VIDEO_API_DOCUMENTS_ROOT", "/tmp/video-api-test-documents")

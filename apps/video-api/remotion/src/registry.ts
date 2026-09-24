@@ -6,6 +6,7 @@ import {
   ComparisonScene,
   CounterScene,
   DiagramScene,
+  FigureScene,
   FlowScene,
   FormulaScene,
   FootageScene,
@@ -49,4 +50,5 @@ export const SCENE_COMPONENTS: Record<string, React.FC<Record<string, unknown>>>
   NetworkMapScene: NetworkMapScene as React.FC<Record<string, unknown>>,
   ImageScene: ImageScene as React.FC<Record<string, unknown>>,
   FootageScene: FootageScene as React.FC<Record<string, unknown>>,
+  FigureScene: FigureScene as React.FC<Record<string, unknown>>,
 };

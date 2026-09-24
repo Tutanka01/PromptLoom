@@ -26,6 +26,8 @@ _MOTION_WEIGHTS = {
     "CounterScene": 0.72,
     "ImageScene": 0.72,
     "FootageScene": 1.0,
+    # A real document figure with narration-synced callouts and zooms.
+    "FigureScene": 0.86,
     "Custom": 0.88,
 }
 _TEXT_DOMINANT = {"TitleScene", "BulletScene", "FormulaScene", "CounterScene"}
@@ -63,7 +65,7 @@ def evaluate_motion_plan(blueprint: Any, options: ProductionOptions) -> dict[str
     text_ratio = sum(component in _TEXT_DOMINANT for component in components) / count
     beat_coverage = sum(bool(getattr(scene, "beats", None)) for scene in scenes) / count
     source_coverage = sum(bool(getattr(scene, "source_ids", None)) for scene in scenes) / count
-    media_ratio = sum(component in {"ImageScene", "FootageScene"} for component in components) / count
+    media_ratio = sum(component in {"ImageScene", "FootageScene", "FigureScene"} for component in components) / count
 
     score = 100.0 * (
         motion_coverage * 0.45

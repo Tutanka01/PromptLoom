@@ -599,6 +599,246 @@ export const FootageScene: React.FC<MediaBase & {mediaDurationSeconds?: number}>
   );
 };
 
+// --- FigureScene: a real figure from the user's document ------------------- //
+
+type FigureCallout = { label: string; region?: string; box?: [number, number, number, number] };
+type Cam = { s: number; x: number; y: number };
+
+const clampN = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/**
+ * A figure cropped from the uploaded document, always shown whole (contain,
+ * never cover) on a paper-white card, with numbered callouts revealed on their
+ * narration cues. A callout carrying a `box` (normalised [x, y, w, h], set by
+ * the worker from the vision pass) zooms the camera onto that region and
+ * spotlights it; the camera returns to the whole figure after the last one.
+ * Callouts without a box are only listed beside the figure.
+ */
+export const FigureScene: React.FC<
+  Base & { src: string; aspect?: number; callouts?: FigureCallout[]; credit?: string }
+> = ({ dur, accent, title, caption, cues, src, aspect = 1.4, callouts = [], credit }) => {
+  const { p } = useP(dur);
+  const ac = accent ?? colors.user;
+  const items = callouts.filter((c) => c && c.label).slice(0, 5);
+  const n = items.length;
+  const starts = items.map((_, i) => cueOr(cues, i, 0.16 + (0.62 * i) / Math.max(1, n)));
+  const wide = aspect >= 1.9;
+
+  // Stage: below the title bar, above the caption line. The figure and its
+  // callout list are laid out as one group centred in the stage: list on the
+  // right for upright figures, a row of chips below for wide ones.
+  const top = 150;
+  const bottom = caption ? 890 : 975;
+  const left = 90;
+  const right = WIDTH - 90;
+  const creditH = credit ? 38 : 0;
+  const pad = 22;
+  const gap = 64;
+  const listW = 560;
+  const rowH = 84;
+  const layout = n === 0 ? "alone" : wide ? "stacked" : "side";
+  const availW = (layout === "side" ? right - left - listW - gap : right - left) - 2 * pad;
+  const availH = bottom - top - 2 * pad - creditH - (layout === "stacked" ? rowH + 24 : 0);
+  let imgW = availW;
+  let imgH = availW / aspect;
+  if (imgH > availH) {
+    imgH = availH;
+    imgW = availH * aspect;
+  }
+  const cardW = imgW + 2 * pad;
+  const cardH = imgH + 2 * pad;
+  const groupW = layout === "side" ? cardW + gap + listW : cardW;
+  const groupH = cardH + creditH + (layout === "stacked" ? 24 + rowH : 0);
+  const cardX = (WIDTH - groupW) / 2;
+  const cardY = top + (bottom - top - groupH) / 2;
+
+  // Camera: keyframes at each callout cue, eased over ~0.8 s.
+  const overview: Cam = { s: 1, x: 0, y: 0 };
+  const focusOn = ([bx, by, bw, bh]: [number, number, number, number]): Cam => {
+    const s = clampN(Math.min(0.78 / Math.max(bw, 0.01), 0.78 / Math.max(bh, 0.01)), 1, 2.4);
+    const cx = (bx + bw / 2) * imgW;
+    const cy = (by + bh / 2) * imgH;
+    return {
+      s,
+      x: clampN(imgW / 2 - cx * s, imgW - imgW * s, 0),
+      y: clampN(imgH / 2 - cy * s, imgH - imgH * s, 0),
+    };
+  };
+  const half = clampN(12 / dur, 0.015, 0.05);
+  const anyBox = items.some((c) => c.box);
+  const returnAt = anyBox ? Math.min(0.94, Math.max((starts[n - 1] ?? 0) + 0.16, 0.84)) : 2;
+  const keys = items.map((c, i) => ({ at: starts[i], cam: c.box ? focusOn(c.box) : overview }));
+  if (anyBox) keys.push({ at: returnAt, cam: overview });
+  let cam = overview;
+  for (const k of keys) {
+    const a = beat(p, k.at - half, k.at + half);
+    cam = { s: lerpN(cam.s, k.cam.s, a), x: lerpN(cam.x, k.cam.x, a), y: lerpN(cam.y, k.cam.y, a) };
+  }
+  const activeWeight = (i: number): number => {
+    const end = i + 1 < n ? starts[i + 1] : returnAt;
+    return beat(p, starts[i] - half, starts[i] + half) * (1 - beat(p, end - half, end + half));
+  };
+  const summary = anyBox ? beat(p, returnAt, returnAt + 2 * half) : 0;
+
+  const enter = appear(p, 0, 0.06);
+  // A slow push-in keeps the frame alive between callouts (no frozen stretch).
+  const drift = 1 + 0.018 * p;
+
+  const badge = (i: number, size: number, opacity: number): React.ReactNode => (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        background: ac,
+        color: "#FFFFFF",
+        fontFamily: fonts.sans,
+        fontWeight: 800,
+        fontSize: size * 0.55,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: "0 4px 14px rgba(0,0,0,.35)",
+        opacity,
+        flexShrink: 0,
+      }}
+    >
+      {i + 1}
+    </div>
+  );
+
+  return (
+    <Shell dur={dur} accent={ac} title={title} caption={caption}>
+      <div
+        style={{
+          position: "absolute",
+          left: cardX,
+          top: cardY,
+          width: cardW,
+          height: cardH,
+          padding: pad,
+          boxSizing: "border-box",
+          background: "#FFFFFF",
+          borderRadius: 16,
+          boxShadow: "0 28px 70px rgba(0,0,0,.5)",
+          opacity: enter,
+          transform: `translateY(${(1 - enter) * 24}px) scale(${drift})`,
+        }}
+      >
+        <div style={{ position: "relative", width: imgW, height: imgH, overflow: "hidden", borderRadius: 4 }}>
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 0,
+              width: imgW,
+              height: imgH,
+              transformOrigin: "0 0",
+              transform: `translate(${cam.x}px, ${cam.y}px) scale(${cam.s})`,
+            }}
+          >
+            <Img src={staticFile(src)} style={{ width: imgW, height: imgH, objectFit: "contain", display: "block" }} />
+            {items.map((c, i) => {
+              if (!c.box) return null;
+              const [bx, by, bw, bh] = c.box;
+              const w = activeWeight(i);
+              const shown = Math.max(w, summary * 0.9);
+              if (shown <= 0.001) return null;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    position: "absolute",
+                    left: bx * imgW,
+                    top: by * imgH,
+                    width: bw * imgW,
+                    height: bh * imgH,
+                    border: `${4 / cam.s}px ${w > summary ? "solid" : "dashed"} ${ac}`,
+                    borderRadius: 8 / cam.s,
+                    // Spotlight: dim everything outside the active region.
+                    boxShadow: w > 0.001 ? `0 0 0 4000px rgba(8,11,17,${0.42 * w})` : undefined,
+                    opacity: shown,
+                  }}
+                >
+                  {/* Badge on the region's corner, kept inside the figure. */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: Math.max(-22 / cam.s, -bx * imgW),
+                      top: Math.max(-22 / cam.s, -by * imgH),
+                    }}
+                  >
+                    {badge(i, 44 / cam.s, 1)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      {credit ? (
+        <div
+          style={{
+            position: "absolute",
+            left: cardX,
+            top: cardY + cardH + 12,
+            width: cardW,
+            textAlign: "right",
+            color: colors.muted,
+            fontFamily: fonts.sans,
+            fontSize: 20,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            opacity: enter,
+          }}
+        >
+          {credit}
+        </div>
+      ) : null}
+      {n > 0 ? (
+        <div
+          style={{
+            position: "absolute",
+            ...(layout === "stacked"
+              ? { left, top: cardY + cardH + creditH + 24, width: right - left, flexDirection: "row" as const, flexWrap: "wrap" as const, justifyContent: "center", gap: 18 }
+              : { left: cardX + cardW + gap, top, width: listW, height: bottom - top, flexDirection: "column" as const, justifyContent: "center", gap: 26 }),
+            display: "flex",
+          }}
+        >
+          {items.map((c, i) => {
+            const shown = appear(p, starts[i] - half, starts[i] + half);
+            const active = activeWeight(i);
+            const current = anyBox ? Math.max(active, summary) : i === n - 1 || p < (starts[i + 1] ?? 2) ? 1 : 0;
+            return (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 18,
+                  padding: wide ? "10px 20px" : "14px 20px",
+                  borderRadius: 14,
+                  background: alpha(colors.panel, 0.85),
+                  border: `2px solid ${active > 0.5 ? ac : colors.edge}`,
+                  opacity: shown * (0.5 + 0.5 * current),
+                  transform: `translateX(${(1 - shown) * 28}px)`,
+                }}
+              >
+                {badge(i, 44, 1)}
+                <div style={{ color: colors.text, fontFamily: fonts.sans, fontSize: wide ? 28 : 32, fontWeight: 600, lineHeight: 1.2 }}>
+                  {c.label}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </Shell>
+  );
+};
+
 /** A full-screen headline quotation revealed word-by-word, optional attribution. */
 export const QuoteScene: React.FC<Base & { quote: string; author?: string }> = ({
   dur,

@@ -91,6 +91,36 @@ URL distante cachee. Pour les sujets kernel, `visuals.strategy: "hybrid"`
 garde les diagrammes comme langage principal et reserve le B-roll aux moments
 ou il apporte une information exacte.
 
+### Video a partir d'un document (PDF)
+
+Pour expliquer un article scientifique, un cours ou un rapport, le PDF est
+envoye une fois (`POST /v1/documents`) puis reference par `document_id` dans
+`POST /v1/videos`. Voir api-reference.md pour les requetes, operations.md pour
+la configuration.
+
+- **Texte** : l'extraction decoupe le PDF par titres de section (bibliographie
+  exclue). Chaque section devient une source citee `doc_NN`, budgetee pour tenir
+  dans `VIDEO_API_DOCUMENT_PROMPT_CHARS`. Le blueprint explique ce document, pas
+  le sujet en general ; la recherche web reste possible en plus
+  (`research.enabled=true`), ses sources gardent les ids `src_NN`.
+- **Figures** : chaque figure legendee (`Figure N`) est decoupee depuis la page
+  en haute resolution (images et dessins vectoriels, labels compris), marges
+  blanches rognees. Le LLM en choisit 2 a 4 pour des `FigureScene`.
+- **FigureScene** : la figure est montree entiere sur une carte blanche, jamais
+  recadree. Ses annotations numerotees apparaissent sur leurs cues de narration ;
+  quand une annotation porte une zone (analyse vision, `VIDEO_API_VISION_MODEL`),
+  la camera zoome sur cette zone et assombrit le reste, puis revient a la vue
+  d'ensemble avec toutes les zones numerotees. Sans modele vision, les
+  annotations sont listees a cote de la figure.
+- **Garde-fous** : le LLM ne manipule que des ids (`fig_NN`, `rN`). Le worker
+  copie le PNG depuis le stockage des documents, ignore les regions inconnues et
+  remplace une figure inconnue par un diagramme. Les figures ne consomment pas
+  le budget `visuals.max_assets` et ne dependent pas de `allow_stock`.
+- **Limites** : pas d'OCR (PDF scanne refuse) ; une figure sans legende
+  reconnaissable n'est pas extraite ; les tableaux ne sont pas decoupes (leur
+  texte reste dans les sections). Reutiliser les figures d'un article dans une
+  video publiee suppose d'en avoir le droit (licence du PDF).
+
 ### Motion design, captions et son
 
 - `ImageScene` anime les photos par Ken Burns, panoramique ou push-in.

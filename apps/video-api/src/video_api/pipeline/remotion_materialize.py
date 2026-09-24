@@ -33,6 +33,7 @@ from pathlib import Path
 
 from video_api.config import Settings
 from video_api.languages import text_direction
+from video_api.pipeline.assets import LOCAL_MEDIA_COMPONENTS
 from video_api.pipeline.materialize import _assemble_script, slugify
 from video_api.pipeline.voice import prune_stale_audio, voice_signature
 from video_api.schemas import RemotionBlueprint
@@ -62,7 +63,7 @@ def _scenes_map(
     for scene in blueprint.scenes:
         component = scene.key if scene.is_custom else scene.component
         props = dict(scene.props or {})
-        if scene.component in {"ImageScene", "FootageScene"} and str(props.get("src") or "").startswith("assets/"):
+        if scene.component in LOCAL_MEDIA_COMPONENTS and str(props.get("src") or "").startswith("assets/"):
             props["src"] = f"job-assets/{entry_id}/{Path(str(props['src'])).name}"
         scenes.append(
             {
@@ -446,7 +447,7 @@ def validate_remotion_video_source(video_dir: Path) -> None:
     if seg_keys != map_keys:
         raise RuntimeError(f"segments/scenes_map key mismatch: {seg_keys ^ map_keys}")
     for scene in scene_map["scenes"]:
-        if scene.get("component") not in {"ImageScene", "FootageScene"}:
+        if scene.get("component") not in LOCAL_MEDIA_COMPONENTS:
             continue
         src = str((scene.get("props") or {}).get("src") or "")
         if not src.startswith("job-assets/") or ".." in Path(src).parts:

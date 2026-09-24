@@ -1,9 +1,13 @@
-"""Deterministic stock-media acquisition and provenance manifest.
+"""Deterministic media acquisition and provenance manifest.
 
 Blueprints request an asset by semantic query; they never provide a URL. The
 worker resolves that query through an allow-listed provider, downloads the file
 before rendering and rewrites the scene props to a job-local path. A failed
 asset request degrades to a tested BulletScene rather than a broken/blank frame.
+
+FigureScene is the local counterpart: it names a figure of the user's uploaded
+document (``figure_id``), which is copied from the document store. It needs no
+network, no stock permission and does not consume the stock asset budget.
 """
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import shutil
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urlparse
@@ -23,6 +28,8 @@ from video_api.config import Settings
 
 logger = logging.getLogger(__name__)
 MEDIA_COMPONENTS = {"ImageScene": "image", "FootageScene": "video"}
+# Components whose props.src must point at a job-local file under assets/.
+LOCAL_MEDIA_COMPONENTS = frozenset({*MEDIA_COMPONENTS, "FigureScene"})
 
 
 class AssetRecord(BaseModel):
@@ -106,13 +113,26 @@ class AssetResolver:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def resolve(self, blueprint: Any, workspace: Path, *, allow_stock: bool, max_assets: int) -> AssetManifest:
+    def resolve(
+        self,
+        blueprint: Any,
+        workspace: Path,
+        *,
+        allow_stock: bool,
+        max_assets: int,
+        dossier: Any | None = None,
+    ) -> AssetManifest:
         provider = (self.settings.asset_provider or "none").strip().lower()
         output_dir = workspace / "assets"
         output_dir.mkdir(parents=True, exist_ok=True)
         records: list[AssetRecord] = []
         used = 0
+        figures = {figure.id: figure for figure in (getattr(dossier, "figures", None) or [])}
+        document = getattr(dossier, "document", None)
         for scene in blueprint.scenes:
+            if scene.component == "FigureScene":
+                records.append(self._resolve_figure(scene, figures, document, output_dir))
+                continue
             kind = MEDIA_COMPONENTS.get(scene.component)
             if not kind:
                 continue
@@ -143,8 +163,63 @@ class AssetResolver:
                 records.append(AssetRecord(scene_key=scene.key, kind=kind, query=query, status="fallback", provider=provider, warning=warning))
         manifest = AssetManifest(provider=provider, assets=records)
         (workspace / "asset_manifest.json").write_text(manifest.model_dump_json(indent=2) + "\n", encoding="utf-8")
-        logger.info("asset.resolve.done requested=%d acquired=%d fallback=%d", len(records), used, len(records) - used)
+        acquired = sum(record.status == "acquired" for record in records)
+        logger.info(
+            "asset.resolve.done requested=%d acquired=%d fallback=%d", len(records), acquired, len(records) - acquired
+        )
         return manifest
+
+    def _resolve_figure(self, scene: Any, figures: dict[str, Any], document: Any | None, output_dir: Path) -> AssetRecord:
+        from video_api.documents import DocumentStore
+
+        figure_id = str(scene.props.get("figure_id") or "")
+        figure = figures.get(figure_id)
+        source = None
+        if document is None:
+            warning = "FigureScene without an uploaded document"
+        elif figure is None:
+            warning = f"unknown figure_id {figure_id!r}"
+        else:
+            source = DocumentStore(self.settings.documents_root).path(document.id) / figure.path
+            warning = "" if source.is_file() else f"figure file missing: {figure.path}"
+        if warning or figure is None or source is None:
+            logger.warning("asset.figure.fallback scene=%s warning=%s", scene.key, warning)
+            _fallback_scene(scene, warning)
+            return AssetRecord(
+                scene_key=scene.key, kind="figure", query=figure_id, status="fallback",
+                provider="document", warning=warning,
+            )
+        filename = f"{scene.key}-{figure.id}.png"
+        destination = output_dir / filename
+        shutil.copyfile(source, destination)
+        digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+        boxes = {region.id: list(region.box) for region in figure.regions}
+        callouts = []
+        for callout in scene.props.get("callouts") or []:
+            if not isinstance(callout, dict) or not callout.get("label"):
+                continue
+            item: dict[str, Any] = {"label": str(callout["label"])}
+            region = str(callout.get("region") or "")
+            if region in boxes:
+                item["region"] = region
+                item["box"] = boxes[region]
+            callouts.append(item)
+        scene.props["callouts"] = callouts
+        scene.props["src"] = f"assets/{filename}"
+        scene.props["aspect"] = round(figure.width / max(1, figure.height), 4)
+        scene.props["figureLabel"] = figure.label
+        scene.props["credit"] = f"{figure.label} · {document.title}"[:140]
+        return AssetRecord(
+            scene_key=scene.key,
+            kind="figure",
+            query=figure_id,
+            status="acquired",
+            local_path=str(destination),
+            source_page=f"document://{document.id}#page={figure.page}",
+            license="user-supplied document",
+            provider="document",
+            sha256=digest,
+        )
 
     def _resolve_pexels(self, scene: Any, query: str, kind: str, output_dir: Path) -> AssetRecord:
         endpoint = "videos/search" if kind == "video" else "v1/search"
