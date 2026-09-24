@@ -264,6 +264,28 @@ class VideoPipeline:
         (workspace / "research.json").write_text(dossier.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return dossier
 
+    def _prepare_source(
+        self, session: Session, job: VideoJob, workspace: Path
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+        """Request source_material/outline -> (prompt context, outline, report).
+        A secondary batch language translates the master, so it only needs the
+        outline (to keep the section mapping), never the material."""
+        from video_api.pipeline.source_material import build_source_context, parse_outline
+
+        outline = parse_outline(getattr(job, "outline", None))
+        material = getattr(job, "source_material", None)
+        if job.batch_id and not job.is_primary:
+            material = None
+        if not material and not outline:
+            return {}, outline, {}
+        if material and len(material) > self.settings.source_context_max_chars:
+            self._update(session, job, "planning", 4, "digesting_source")
+        context, report = build_source_context(material, outline, self.settings, self.llm)
+        (workspace / "source_context.json").write_text(
+            json.dumps(context, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        return context, outline, report
+
     def _notify_terminal(self, session: Session, job: VideoJob) -> None:
         """Best-effort terminal webhook; never raises into the pipeline."""
         try:
@@ -321,7 +343,10 @@ class VideoPipeline:
 
             try:
                 research = self._prepare_research(session, job, workspace)
-                self._run_with_repairs(session, job, workspace, runner, reports_dir, research)
+                source = self._prepare_source(session, job, workspace)
+                self._run_with_repairs(
+                    session, job, workspace, runner, reports_dir, research, source
+                )
                 self._notify_terminal(session, job)
                 return job.status
             except JobCancelled:
@@ -335,7 +360,7 @@ class VideoPipeline:
                 elif "verify" in current_step:
                     failure_status = "failed_quality"
                 elif current_step in {
-                    "researching", "planning", "asset_acquisition", "motion_preflight",
+                    "researching", "digesting_source", "planning", "asset_acquisition", "motion_preflight",
                     "materializing_sources", "static_validation",
                 } or current_step.startswith("repairing"):
                     failure_status = "failed_generation"
@@ -484,13 +509,27 @@ class VideoPipeline:
         runner: CommandRunner,
         reports_dir: Path,
         research: Any | None = None,
+        source: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> None:
+        from video_api.pipeline.source_material import (
+            assign_section_ids,
+            copy_section_ids,
+            merge_contexts,
+        )
+        from video_api.pipeline.timeline import write_timeline
+
+        source_context, outline, source_report = source or ({}, [], {})
+        grounding = merge_contexts(
+            research.prompt_context() if research is not None else None, source_context
+        )
+        section_report: dict[str, Any] = {}
         last_error: Exception | None = None
         blueprint_data: dict | None = None
         # Set when a failing attempt had to drain a background voice run; read
         # and cleared by the repair handler below.
         self._repair_voice_drain_seconds: float | None = None
         max_attempts = self.settings.max_repair_attempts + 1
+        master: dict | None = None
         for attempt in range(max_attempts):
             try:
                 logger.info(
@@ -522,7 +561,7 @@ class VideoPipeline:
                             job.target_duration_seconds,
                             job.language,
                             self.production_options.model_dump(),
-                            research.prompt_context() if research is not None else None,
+                            grounding,
                         )
                 else:
                     self._update(session, job, "repairing", 45, f"repairing_attempt_{attempt}")
@@ -563,7 +602,7 @@ class VideoPipeline:
                             repair_hint,
                             job.language,
                             self.production_options.model_dump(),
-                            research.prompt_context() if research is not None else None,
+                            grounding,
                             target=job.target_duration_seconds,
                         )
                 # Never allow an LLM to invent provenance identifiers. Fake
@@ -577,6 +616,11 @@ class VideoPipeline:
                         filtered = [sorted(valid_source_ids)[0]]
                     if hasattr(scene, "source_ids"):
                         scene.source_ids = filtered
+                if outline:
+                    if master is not None and copy_section_ids(blueprint, master):
+                        section_report = {"method": "master", "uncovered_sections": []}
+                    else:
+                        section_report = assign_section_ids(blueprint, outline)
 
                 asset_manifest = None
                 if self.engine.name == "remotion":
@@ -929,6 +973,11 @@ class VideoPipeline:
                         + json.dumps(final_report["delivery"], sort_keys=True)
                     )
                 final_report["subtitles"] = subtitle_files
+                final_report["timeline"] = write_timeline(
+                    workspace, video_dir, blueprint, final_report.get("duration"), job.language
+                )
+                if source_report or section_report:
+                    final_report["source"] = {**source_report, "section_mapping": section_report}
                 final_report["timings"] = _timings_from_marks(self._step_marks)
                 final_report["llm_usage"] = llm_usage.snapshot()
                 final_report["voice"] = voice_report

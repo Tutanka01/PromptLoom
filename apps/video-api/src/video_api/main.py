@@ -199,12 +199,15 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
     job_id = str(uuid4())
     artifact_dir = str(job_root(settings.jobs_root, job_id))
     logger.info(
-        "api.job.create_requested job_id=%s language=%s theme=%s profile=%s prompt_chars=%d artifact_dir=%s",
+        "api.job.create_requested job_id=%s language=%s theme=%s profile=%s prompt_chars=%d "
+        "source_chars=%d outline_sections=%d artifact_dir=%s",
         job_id,
         languages[0],
         request.theme,
         request.quality_profile,
         len(request.prompt),
+        len(request.source_material or ""),
+        len(request.outline or []),
         artifact_dir,
     )
     production_config = request.production_options().model_dump()
@@ -217,6 +220,8 @@ def create_video(request: VideoCreateRequest, session: Session = Depends(get_ses
         quality_profile=request.quality_profile,
         production_config=json.dumps(production_config),
         callback_url=request.callback_url,
+        source_material=request.source_material,
+        outline=request.outline_json(),
         status="queued",
         progress=0,
         current_step="queued",
@@ -266,6 +271,8 @@ def _create_batch(
             quality_profile=request.quality_profile,
             production_config=json.dumps(production_config),
             callback_url=request.callback_url,
+            source_material=request.source_material,
+            outline=request.outline_json(),
             status="queued",
             progress=0,
             current_step="queued" if is_primary else "waiting_for_master",
@@ -600,6 +607,8 @@ def relaunch_video(job_id: str, session: Session = Depends(get_session)) -> Vide
         quality_profile=original.quality_profile,
         production_config=original.production_config,
         callback_url=original.callback_url,
+        source_material=original.source_material,
+        outline=original.outline,
         status="queued",
         progress=0,
         current_step="queued",

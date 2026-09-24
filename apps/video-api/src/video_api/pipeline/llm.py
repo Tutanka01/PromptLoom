@@ -707,6 +707,43 @@ class LLMClient:
             )
         return content
 
+    def digest_source_chunk(
+        self,
+        chunk: str,
+        budget_chars: int,
+        *,
+        part: int,
+        parts: int,
+        outline_titles: list[str] | None = None,
+    ) -> str:
+        """Map step of the source-material map-reduce: condense one chunk of the
+        caller's course content to about *budget_chars*, keeping its facts,
+        definitions, formulas, examples and headings in the original language."""
+        if self.settings.fake_llm:
+            return chunk[:budget_chars]
+        if not self.settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is required unless VIDEO_API_FAKE_LLM=1")
+        client = self._build_client()
+        request = {
+            "task": (
+                f"Condense part {part}/{parts} of a course into at most {budget_chars} characters "
+                "of dense notes. Keep every definition, formula, figure, date, named example and "
+                "step of every procedure; drop repetition, page furniture and exercises' answers. "
+                "Keep the section headings as short lines. Write in the language of the course. "
+                "Return plain text only, no preamble."
+            ),
+            "outline_titles": outline_titles or [],
+            "course_part": chunk,
+        }
+        content = self._complete(
+            client,
+            [{"role": "user", "content": json.dumps(request, ensure_ascii=False)}],
+            temperature=0.1,
+            json_mode=False,
+            stage="source_digest",
+        )
+        return content.strip()[: budget_chars + budget_chars // 5]
+
     def _duration_policy(self, target: int) -> dict[str, Any]:
         """Concrete, numeric narration budget so the model writes enough spoken
         text to clear the final duration gate (verify_mp4) instead of a vague
@@ -797,6 +834,7 @@ class LLMClient:
                         "text": f"{target_language_name} narration for this scene",
                         "visual_intent": "concrete visual plan",
                         "source_ids": ["IDs copied from research_context.sources"],
+                        "section_id": "id copied from research_context.outline, or null without outline",
                         "beats": [
                             {
                                 "key": "short_identifier",
@@ -835,7 +873,9 @@ class LLMClient:
             return VideoBlueprint.model_validate(data)
         except ValidationError as exc:
             logger.warning("llm.blueprint.invalid errors=%s", exc)
-            repaired = self.repair_blueprint(prompt, data, str(exc), language)
+            repaired = self.repair_blueprint(
+                prompt, data, str(exc), language, research_context=research_context
+            )
             return repaired
 
     # ----------------------------------------------------------- translation
@@ -1238,6 +1278,7 @@ class LLMClient:
                     "goal": sc.get("goal") or "",
                     "visual_idea": sc.get("visual_idea") or "",
                     "duration_seconds": duration,
+                    "section_id": sc.get("section_id"),
                 },
                 "previous_scene": compact[index - 1] if index > 0 else None,
                 "next_scene": compact[index + 1] if index + 1 < len(compact) else None,
@@ -1296,6 +1337,7 @@ class LLMClient:
                     "beats": payload.get("beats") or [],
                     "visual_intent": str(sc.get("visual_idea") or "")[:600],
                     "source_ids": list(sc.get("source_ids") or [])[:12],
+                    "section_id": sc.get("section_id"),
                 }
                 errors = rb.validate_scene_payload(scene_dict)
                 words = len(scene_dict["narration"].split())
@@ -1328,6 +1370,7 @@ class LLMClient:
                 "beats": [],
                 "visual_intent": str(sc.get("visual_idea") or "")[:600],
                 "source_ids": list(sc.get("source_ids") or [])[:12],
+                "section_id": sc.get("section_id"),
             }
 
         targets = [
@@ -1357,6 +1400,7 @@ class LLMClient:
                 "duration_seconds": scene.duration_seconds,
                 "goal": scene.visual_intent or scene.title,
                 "visual_idea": scene.visual_intent,
+                "section_id": scene.section_id,
             }
             for scene in blueprint.scenes
         ]
@@ -1488,6 +1532,7 @@ class LLMClient:
         error_report: str,
         language: str = "en",
         target_duration_seconds: int | None = None,
+        research_context: dict[str, Any] | None = None,
     ) -> VideoBlueprint:
         if self.settings.fake_llm:
             logger.info("llm.fake_repair.start prompt_chars=%d", len(prompt))
@@ -1522,6 +1567,7 @@ class LLMClient:
                             "original_prompt": prompt,
                             "previous": previous,
                             "errors": error_report,
+                            "research_context": research_context or {},
                             "output_language": normalize_language(language),
                             "output_language_name": language_name(language),
                             "language_rules": (

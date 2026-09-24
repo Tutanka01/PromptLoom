@@ -34,6 +34,10 @@ class VideoJob(Base):
     # per-job render engine, research, asset, caption and delivery policy.
     production_config: Mapped[str | None] = mapped_column(Text, nullable=True)
     callback_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Caller-supplied course content and imposed outline (JSON list of
+    # OutlineSection). NULL for ordinary prompt-only jobs.
+    source_material: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outline: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

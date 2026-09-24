@@ -54,10 +54,15 @@ Reponse (extrait) :
   "features": {
     "research": {"available": true, "provider": "tavily"},
     "stock_assets": {"available": false, "provider": null},
-    "visual_review": {"available": false, "provider": null}
+    "visual_review": {"available": false, "provider": null},
+    "source_material": {"available": true, "provider": null},
+    "outline": {"available": true, "provider": null},
+    "timeline": {"available": true, "provider": null}
   },
   "limits": {
     "prompt_max_chars": 4000,
+    "source_material_max_chars": 60000,
+    "outline_max_sections": 12,
     "theme_max_chars": 80,
     "max_batch_languages": 8,
     "target_duration_seconds": {"min": 20, "max": 900, "default": 240},
@@ -86,8 +91,13 @@ Reponse (extrait) :
 - `features.visual_review` : `true` si un modele vision est configure
   (`VIDEO_API_VISION_MODEL`) ; sans lui, le profil `high` est equivalent a
   `standard`.
+- `features.source_material` / `features.outline` / `features.timeline` :
+  toujours `true` sur cette version ; un client peut s'en servir pour detecter
+  un serveur plus ancien qui rejetterait ces champs.
 - `limits` : bornes du contrat `POST /v1/videos` (elles ne peuvent pas deriver,
-  ce sont les memes constantes cote serveur) ; `defaults` : valeurs choisies
+  ce sont les memes constantes cote serveur) ; `prompt_max_chars` et
+  `source_material_max_chars` suivent `VIDEO_API_PROMPT_MAX_CHARS` et
+  `VIDEO_API_SOURCE_MATERIAL_MAX_CHARS`. `defaults` : valeurs choisies
   par le serveur quand la requete omet le champ.
 
 ## `GET /v1/voices`
@@ -166,13 +176,16 @@ curl -X POST http://localhost:8080/v1/videos \
   "research": {"enabled": true, "required": true, "max_sources": 10},
   "visuals": {"strategy": "hybrid", "allow_stock": true, "max_assets": 4},
   "captions": "full",
-  "callback_url": null
+  "callback_url": null,
+  "source_material": null,
+  "outline": null
 }
 ```
 
 Champs :
 
-- `prompt` obligatoire, entre 10 et 4000 caracteres. Il peut etre ecrit dans
+- `prompt` obligatoire, entre 10 et `limits.prompt_max_chars` caracteres (4000
+  par defaut, `VIDEO_API_PROMPT_MAX_CHARS`). Il peut etre ecrit dans
   n'importe quelle langue. Ce n'est pas lui qui choisit la langue finale de la
   video ; c'est le champ `language`.
 - `theme` optionnel, aide a classer le job et a nommer les artefacts. Exemples :
@@ -237,6 +250,41 @@ Champs :
 - `callback_url` : si fourni, l'API POSTe un webhook JSON a la fin du job
   (completed / failed_* / cancelled), avec 3 tentatives et signature HMAC-SHA256
   dans `X-Video-API-Signature` quand `VIDEO_API_WEBHOOK_SECRET` est defini.
+- `source_material` optionnel (max `limits.source_material_max_chars`, 60 000
+  par defaut) : le contenu du cours fourni par l'appelant (texte extrait d'un
+  PDF, d'un diaporama...). Il devient la **source prioritaire** du blueprint :
+  le LLM enseigne ce qu'il dit, dans son ordre et avec ses notations. Quand il
+  est present, `research.enabled` vaut `false` par defaut (le forcer a `true`
+  ajoute la recherche web en complement). Au-dela de
+  `VIDEO_API_SOURCE_CONTEXT_MAX_CHARS`, le worker le condense d'abord
+  (map-reduce : un resume par morceau, etape `digesting_source`) ; le detail
+  figure dans `report.source.source_material`.
+- `outline` optionnel (1 a 12 sections) : structure imposee, liste ordonnee de
+  `{"id", "title", "key_points": [...], "target_seconds": int|null}`. Les `id`
+  (lettres, chiffres, `_ . -`) sont uniques. Chaque section est traitee par une
+  ou plusieurs scenes consecutives, dans l'ordre, et chaque scene de
+  `blueprint.json` porte le `section_id` de sa section. Si le LLM n'a pas
+  respecte le plan, le worker corrige l'attribution (ordre force, ou repartition
+  au prorata des durees) : `report.source.section_mapping.method` vaut `llm`,
+  `repaired`, `proportional` ou `master` (langue secondaire d'un batch), et
+  `uncovered_sections` liste les sections sans scene. Si toutes les sections ont
+  un `target_seconds` et que `target_duration_seconds` est absent, la cible
+  devient leur somme (bornee a 20-900 s).
+
+Exemple de requete « cours fourni » :
+
+```json
+{
+  "prompt": "Video d'introduction pour des etudiants de L1. Ton pose, exemples concrets.",
+  "language": "fr",
+  "source_material": "# Les appels systeme\n\nUn appel systeme permet ...",
+  "outline": [
+    {"id": "s1", "title": "Pourquoi un noyau ?", "key_points": ["protection", "abstraction"], "target_seconds": 60},
+    {"id": "s2", "title": "Le passage en mode noyau", "key_points": ["trap", "numero d'appel"], "target_seconds": 120}
+  ],
+  "captions": "full"
+}
+```
 
 Exemple conseille pour une video italienne avec un prompt francais :
 
@@ -392,7 +440,9 @@ Sert n'importe quel fichier du workspace du job (protection path-traversal) :
 
 C'est aussi par cet endpoint qu'on telecharge les **sous-titres sidecar** quand
 `captions != off` : les chemins exacts (relatifs au workspace) sont publies dans
-`report.subtitles` (`{"srt": "...", "vtt": "..."}`).
+`report.subtitles` (`{"srt": "...", "vtt": "..."}`). De meme, la **timeline
+reelle des scenes** est publiee dans `report.timeline` (chemin workspace de
+`final/timeline.json`).
 
 ```bash
 curl http://localhost:8080/v1/videos/<job_id>/artifacts/blueprint.json
@@ -435,6 +485,12 @@ Le rapport peut contenir :
   gate final `delivery` ;
 - `subtitles` : chemins workspace des sidecars `.srt`/`.vtt` (vide si
   `captions: "off"` ou si l'alignement n'a rien produit).
+- `timeline` : chemin workspace de `timeline.json` (voir ci-dessous), ou `null`
+  si son ecriture a echoue (jamais bloquant) ;
+- `source` (jobs avec `source_material` / `outline`) : `source_material`
+  (`method` `verbatim` ou `digest`, `input_chars`, `output_chars`, `chunks`,
+  `truncated_chunks` = morceaux dont le resume a echoue et qui ont ete tronques)
+  et `section_mapping` (`method`, `uncovered_sections`).
 - `timings` : duree en secondes de chaque etape (`steps_seconds`, cumulee sur
   les tentatives de reparation) et `total_seconds` ;
 - `llm_usage` : appels et tokens (`prompt_tokens`, `completion_tokens`) du job,
@@ -442,7 +498,8 @@ Le rapport peut contenir :
   `.prompt_tokens`, `.completion_tokens`, `.models`. Chaque appel est facture a son
   etape reelle : `blueprint` (generation), `blueprint_outline` (passe 1 Remotion),
   `blueprint_scenes` (passe 2 Remotion), `blueprint_scenes_repair` (reecriture des
-  scenes signalees par la revue), `blueprint_repair` (reparation du JSON),
+  scenes signalees par la revue), `blueprint_repair` (reparation du JSON), `source_digest` (condensation du
+  `source_material`),
   `translate` (jobs secondaires d'un batch multilingue), `scene_coder` et
   `visual_review`. Aussi present dans `error.json` d'un job en echec ;
 - `voice` : `overlap` (`scene_codegen` si la voix a tourne pendant le scene
@@ -454,7 +511,36 @@ Le rapport peut contenir :
   `skipped` si la scene depend d'une autre scene et n'est jamais speculee,
   `speculative_seconds` par scene).
 
-Les artefacts avances inspectables incluent `research.json`, `proposal.json`,
+### `timeline.json`
+
+Position reelle de chaque scene dans le MP4 livre. Le `duration_seconds` du
+blueprint n'est qu'une cible ; ici les bornes viennent de la voix off (une piste
+continue calee a t=0, longueurs par scene de `audio/en/durations.json`), et la
+fin de la derniere scene est etiree jusqu'a la duree verifiee du fichier (marge
+de fin incluse).
+
+```json
+{
+  "version": 1,
+  "language": "fr",
+  "duration_seconds": 262.4,
+  "timing_source": "voiceover",
+  "scenes": [
+    {"scene_key": "Scene1_HookEN", "section_id": "s1", "start": 0.0, "end": 31.2, "title": "...", "narration": "..."},
+    {"scene_key": "Scene2_TrapEN", "section_id": "s1", "start": 31.2, "end": 58.9, "title": "...", "narration": "..."}
+  ],
+  "sections": [
+    {"section_id": "s1", "start": 0.0, "end": 58.9, "scene_keys": ["Scene1_HookEN", "Scene2_TrapEN"]}
+  ]
+}
+```
+
+`timing_source` vaut `planned` si une scene n'avait pas de duree mesuree (repli
+sur la duree du blueprint). `section_id` est `null` et `sections` est vide sans
+`outline`.
+
+Les artefacts avances inspectables incluent `source_context.json` (contexte
+source/plan reellement envoye au LLM), `research.json`, `proposal.json`,
 `scene_plan.json`, `asset_manifest.json` et `motion_plan_report.json`.
 
 ## Polling recommande cote client

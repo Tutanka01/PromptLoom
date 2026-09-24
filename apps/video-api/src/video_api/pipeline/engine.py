@@ -128,7 +128,12 @@ class ManimEngine:
         target: int | None = None,
     ) -> Any:
         return self.llm.repair_blueprint(
-            prompt, previous, hint, language, target_duration_seconds=target
+            prompt,
+            previous,
+            hint,
+            language,
+            target_duration_seconds=target,
+            research_context=research_context,
         )
 
     def translate_blueprint(self, master: dict, language: str) -> Any:

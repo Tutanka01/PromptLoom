@@ -260,6 +260,8 @@ Rules:
   scenes with precise asset_query values. The narration of a media scene must explicitly discuss what
   the image proves or grounds. Do not add decorative media just to satisfy a quota.
 - When research_context is present, attach only its valid IDs as scene.source_ids. Never invent IDs.
+- When research_context.outline is present, follow its sections in order and set scene.section_id
+  to the id of the section each scene teaches (see research_context.outline_rules).
 - ART DIRECTION: set "art_direction" to the palette that best fits the subject/tone — default
   (neutral dark academic), blueprint (engineering/technical blue), forest (biology/nature/green),
   synthwave (retro, high-energy neon), carbon (high-contrast neutral), plum (warm humanities/design).
@@ -938,6 +940,8 @@ Rules:
   command->TerminalScene, memory->MemoryScene, relationships->DiagramScene.
 - Each scene teaches exactly ONE idea; goals must build on each other in order.
 - If research_context is supplied, add `source_ids` to each outline scene using only IDs present there.
+- If research_context.outline is supplied, follow its sections in order (1..N scenes per section,
+  every section covered) and add `section_id` to each outline scene; see research_context.outline_rules.
 - Respect production_context: use ImageScene/FootageScene only when stock media is allowed and semantically exact.
 - When production_context.mode is "cinematic", keep BulletScene for the final recap only whenever a
   structural visual is possible. Use a varied motion-led mix. If stock media is allowed and an

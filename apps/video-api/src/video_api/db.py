@@ -95,6 +95,8 @@ def _ensure_compat_columns() -> None:
         "quality_profile": "ALTER TABLE video_jobs ADD COLUMN quality_profile VARCHAR(16)",
         "production_config": "ALTER TABLE video_jobs ADD COLUMN production_config TEXT",
         "callback_url": "ALTER TABLE video_jobs ADD COLUMN callback_url TEXT",
+        "source_material": "ALTER TABLE video_jobs ADD COLUMN source_material TEXT",
+        "outline": "ALTER TABLE video_jobs ADD COLUMN outline TEXT",
         "celery_task_id": "ALTER TABLE video_jobs ADD COLUMN celery_task_id VARCHAR(64)",
         "batch_id": "ALTER TABLE video_jobs ADD COLUMN batch_id VARCHAR(36)",
         "is_primary": "ALTER TABLE video_jobs ADD COLUMN is_primary BOOLEAN NOT NULL DEFAULT TRUE",

@@ -93,6 +93,10 @@ Regles principales :
 - le dernier beat utile doit etre au moins vers `0.75`.
 - `source_ids` ne peut contenir que des identifiants du `research_context` ; le
   worker supprime toute reference inventee.
+- `section_id` (optionnel, requetes avec `outline`) : id de la section du plan
+  traitee par la scene. Le worker le valide apres coup : ids inconnus ignores,
+  ordre du plan force, repartition au prorata des durees si le modele a ignore
+  le plan. Il n'est donc jamais bloquant.
 
 ## Contexte de production et de recherche
 
@@ -101,6 +105,15 @@ Le prompt recoit deux objets controles par le worker :
 - `production_context` : mode, moteur, politique de medias, captions et promesse
   de livraison ;
 - `research_context` : extraits bornes et IDs stables produits par Tavily ou Exa.
+  Quand la requete fournit `source_material` et/ou `outline`, le meme objet
+  porte aussi :
+  - `source_rules` + `source_material` : le cours de l'appelant, source
+    prioritaire (condense par map-reduce au-dela de
+    `VIDEO_API_SOURCE_CONTEXT_MAX_CHARS` ; etape d'usage `source_digest`) ;
+  - `outline_rules` + `outline` : les sections a suivre dans l'ordre, chaque
+    scene portant le `section_id` de sa section. En Remotion deux passes, la
+    passe 1 place `section_id` sur les scenes de l'outline et la passe 2 le
+    conserve.
 
 Le modele ne doit jamais inventer une URL. Pour `ImageScene` et
 `FootageScene`, il fournit seulement un `asset_query` semantique. Le worker

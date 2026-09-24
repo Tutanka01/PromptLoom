@@ -18,10 +18,12 @@ from video_api.schemas import (
     DURATION_MAX_SECONDS,
     DURATION_MIN_SECONDS,
     MAX_BATCH_LANGUAGES,
+    OUTLINE_MAX_SECTIONS,
     PROMPT_MAX_CHARS,
     RESEARCH_SOURCES_DEFAULT,
     RESEARCH_SOURCES_MAX,
     RESEARCH_SOURCES_MIN,
+    SOURCE_MATERIAL_MAX_CHARS,
     THEME_MAX_CHARS,
     VISUAL_ASSETS_DEFAULT,
     VISUAL_ASSETS_MAX,
@@ -89,9 +91,16 @@ def capabilities_payload(settings: Settings) -> dict:
                 "available": bool(settings.visual_review_model.strip()),
                 "provider": None,
             },
+            # Request contract features: always on for this server version, so
+            # clients can detect an older PromptLoom that would reject them.
+            "source_material": {"available": True, "provider": None},
+            "outline": {"available": True, "provider": None},
+            "timeline": {"available": True, "provider": None},
         },
         "limits": {
             "prompt_max_chars": PROMPT_MAX_CHARS,
+            "source_material_max_chars": SOURCE_MATERIAL_MAX_CHARS,
+            "outline_max_sections": OUTLINE_MAX_SECTIONS,
             "theme_max_chars": THEME_MAX_CHARS,
             "max_batch_languages": MAX_BATCH_LANGUAGES,
             "target_duration_seconds": {

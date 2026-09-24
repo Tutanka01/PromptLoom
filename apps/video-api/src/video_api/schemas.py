@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from video_api import timing
+from video_api.config import _int_env
 from video_api.languages import normalize_language
 
 # ---------------------------------------------------------------------------
@@ -71,7 +73,14 @@ MAX_BATCH_LANGUAGES = 8
 # Bounds of the create request, shared with GET /v1/capabilities so the
 # advertised limits can never drift from the enforced ones.
 PROMPT_MIN_CHARS = 10
-PROMPT_MAX_CHARS = 4000
+# Both ceilings are deployment settings (read once at import, like the rest of
+# the configuration) so a caller that ships a whole course can be allowed more.
+PROMPT_MAX_CHARS = _int_env("VIDEO_API_PROMPT_MAX_CHARS", 4000, minimum=PROMPT_MIN_CHARS)
+SOURCE_MATERIAL_MAX_CHARS = _int_env("VIDEO_API_SOURCE_MATERIAL_MAX_CHARS", 60000)
+# An outline section maps to one or more scenes, and a blueprint carries at most
+# 12 scenes for the common 3-5 minute window: more sections could not be covered.
+OUTLINE_MAX_SECTIONS = 12
+OUTLINE_KEY_POINTS_MAX = 8
 THEME_MAX_CHARS = 80
 DURATION_MIN_SECONDS = 20
 DURATION_MAX_SECONDS = 900
@@ -155,6 +164,25 @@ class ProductionOptions(BaseModel):
         return self
 
 
+class OutlineSection(BaseModel):
+    """One section of a caller-imposed structure. Every scene of the blueprint
+    is attached to exactly one section (``section_id``), in outline order, and
+    ``timeline.json`` reports where each section starts and ends."""
+
+    id: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9_.-]+$")
+    title: str = Field(min_length=1, max_length=120)
+    key_points: list[str] = Field(default_factory=list, max_length=OUTLINE_KEY_POINTS_MAX)
+    target_seconds: int | None = Field(default=None, ge=5, le=DURATION_MAX_SECONDS)
+
+    @field_validator("key_points")
+    @classmethod
+    def clean_key_points(cls, value: list[str]) -> list[str]:
+        cleaned = [" ".join(item.split()) for item in value if item and item.strip()]
+        if any(len(item) > 300 for item in cleaned):
+            raise ValueError("outline key_points entries must stay under 300 characters")
+        return cleaned
+
+
 class VideoCreateRequest(BaseModel):
     prompt: str = Field(min_length=PROMPT_MIN_CHARS, max_length=PROMPT_MAX_CHARS)
     theme: str | None = Field(default=None, max_length=THEME_MAX_CHARS)
@@ -188,6 +216,30 @@ class VideoCreateRequest(BaseModel):
     # cover every requested language (422 otherwise).
     voice: str | None = Field(default=None, max_length=80)
     callback_url: str | None = None
+    # Caller-supplied course content (e.g. an extracted PDF). When present it is
+    # the primary source of the blueprint, and web research defaults to off.
+    source_material: str | None = Field(default=None, max_length=SOURCE_MATERIAL_MAX_CHARS)
+    # Caller-imposed structure: sections in order, each covered by 1..N scenes.
+    outline: list[OutlineSection] | None = Field(
+        default=None, min_length=1, max_length=OUTLINE_MAX_SECTIONS
+    )
+
+    @field_validator("source_material")
+    @classmethod
+    def normalize_source_material(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @field_validator("outline")
+    @classmethod
+    def validate_outline(cls, value: list[OutlineSection] | None) -> list[OutlineSection] | None:
+        if value is None:
+            return None
+        ids = [section.id for section in value]
+        if len(set(ids)) != len(ids):
+            raise ValueError("outline section ids must be unique")
+        return value
 
     @field_validator("voice")
     @classmethod
@@ -221,6 +273,14 @@ class VideoCreateRequest(BaseModel):
         # this in production_options() alone would turn an invalid combination
         # such as cinematic+Manim into an endpoint 500 instead of a clean 422.
         self.production_options()
+        # A fully timed outline decides the length when the caller did not.
+        if self.target_duration_seconds is None and self.outline:
+            timed = [section.target_seconds for section in self.outline]
+            if all(seconds is not None for seconds in timed):
+                total = sum(timed)  # type: ignore[arg-type]
+                self.target_duration_seconds = min(
+                    max(total, DURATION_MIN_SECONDS), DURATION_MAX_SECONDS
+                )
         return self
 
     def resolved_languages(self) -> list[str]:
@@ -235,11 +295,21 @@ class VideoCreateRequest(BaseModel):
             langs.insert(0, self.language)
         return langs
 
+    def outline_json(self) -> str | None:
+        if not self.outline:
+            return None
+        return json.dumps([section.model_dump() for section in self.outline], ensure_ascii=False)
+
     def production_options(self) -> ProductionOptions:
+        research = self.research
+        # Caller-supplied material replaces the web as the grounding source,
+        # unless the caller explicitly asked for research on top of it.
+        if self.source_material and research.enabled is None:
+            research = research.model_copy(update={"enabled": False})
         return ProductionOptions(
             mode=self.production_mode,
             render_engine=self.render_engine,
-            research=self.research,
+            research=research,
             visuals=self.visuals,
             captions=self.captions,
             voice=self.voice,
@@ -351,6 +421,10 @@ class CapabilityFeatures(BaseModel):
     research: CapabilityFeature
     stock_assets: CapabilityFeature
     visual_review: CapabilityFeature
+    # Request fields understood by this server version (always available).
+    source_material: CapabilityFeature
+    outline: CapabilityFeature
+    timeline: CapabilityFeature
 
 
 class CapabilityRange(BaseModel):
@@ -361,6 +435,8 @@ class CapabilityRange(BaseModel):
 
 class CapabilityLimits(BaseModel):
     prompt_max_chars: int
+    source_material_max_chars: int
+    outline_max_sections: int
     theme_max_chars: int
     max_batch_languages: int
     target_duration_seconds: CapabilityRange
@@ -453,6 +529,8 @@ class SceneSpec(BaseModel):
     visual_intent: str = Field(min_length=10, max_length=500)
     beats: list[BeatSpec] = Field(min_length=3, max_length=8)
     source_ids: list[str] = Field(default_factory=list, max_length=12)
+    # Outline section this scene belongs to (request `outline`); None otherwise.
+    section_id: str | None = Field(default=None, max_length=40)
 
     @field_validator("key")
     @classmethod
@@ -683,6 +761,8 @@ class RemotionScene(BaseModel):
     # Stable IDs from research.json. They are provenance metadata, not visible
     # URLs, and survive translation/repair unchanged.
     source_ids: list[str] = Field(default_factory=list, max_length=12)
+    # Outline section this scene belongs to (request `outline`); None otherwise.
+    section_id: str | None = Field(default=None, max_length=40)
 
     @property
     def text(self) -> str:

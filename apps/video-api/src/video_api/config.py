@@ -310,6 +310,15 @@ class Settings:
     blueprint_scene_attempts: int = field(
         default_factory=lambda: max(1, int(os.getenv("VIDEO_API_BLUEPRINT_SCENE_ATTEMPTS", "2")))
     )
+    # Request `source_material` budget inside blueprint prompts. Longer material
+    # is condensed first (map-reduce: one digest call per chunk of
+    # source_digest_chunk_chars) so a small-context model still sees all of it.
+    source_context_max_chars: int = field(
+        default_factory=lambda: _int_env("VIDEO_API_SOURCE_CONTEXT_MAX_CHARS", 24000, minimum=2000)
+    )
+    source_digest_chunk_chars: int = field(
+        default_factory=lambda: _int_env("VIDEO_API_SOURCE_DIGEST_CHUNK_CHARS", 12000, minimum=2000)
+    )
 
     # v2 default: the LLM authors real, free-form Manim per scene (scene_coder) so videos
     # are visually varied and can use LaTeX, plotted axes and code blocks instead of one

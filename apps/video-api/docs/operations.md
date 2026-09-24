@@ -452,6 +452,21 @@ VIDEO_API_BLUEPRINT_SCENE_ATTEMPTS=2  # retries cibles par scene invalide
 VIDEO_API_LLM_PARALLEL=3          # appels LLM concurrents (scene coders + pass 2)
 ```
 
+### Cours fourni (`source_material` / `outline`)
+
+```text
+VIDEO_API_PROMPT_MAX_CHARS=4000            # borne du champ prompt
+VIDEO_API_SOURCE_MATERIAL_MAX_CHARS=60000  # borne du champ source_material
+VIDEO_API_SOURCE_CONTEXT_MAX_CHARS=24000   # au-dela : map-reduce avant le blueprint
+VIDEO_API_SOURCE_DIGEST_CHUNK_CHARS=12000  # taille d'un morceau resume par appel
+```
+
+Les deux premieres sont lues au demarrage de l'API (redemarrer apres
+modification) et publiees dans `GET /v1/capabilities`. Regler
+`VIDEO_API_SOURCE_CONTEXT_MAX_CHARS` selon la fenetre de contexte du modele : le
+contexte source est envoye a chaque appel de blueprint (y compris a chaque scene
+de la passe 2 Remotion).
+
 ### Mastering voix et loudness (bande-son 100 % voix)
 
 La bande-son est volontairement voix seule : pas de musique, pas d'effets
