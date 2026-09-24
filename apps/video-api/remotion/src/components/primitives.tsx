@@ -1,5 +1,6 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
+import { fitText } from "../style/fit";
 import { alpha, colors, fonts, fontSize, mu, mx, my, WIDTH, HEIGHT } from "../style/tokens";
 
 /**
@@ -9,6 +10,60 @@ import { alpha, colors, fonts, fontSize, mu, mx, my, WIDTH, HEIGHT } from "../st
  */
 
 const shadow = "0 6px 18px rgba(0,0,0,0.34)";
+
+/**
+ * A label sized to its box: the largest font size in [min, max] at which the
+ * text wraps into `maxLines` lines of `width` px (and fits `height`, if given).
+ * Use it for every LLM-written label that sits in a fixed box — a fixed font
+ * size eventually overflows the box or collides with a neighbour.
+ */
+export const FitText: React.FC<{
+  text: string;
+  width: number;
+  height?: number;
+  maxLines?: number;
+  max: number;
+  min?: number;
+  weight?: number;
+  family?: string;
+  color?: string;
+  align?: "left" | "center" | "right";
+  lineHeight?: number;
+  style?: React.CSSProperties;
+}> = ({
+  text,
+  width,
+  height,
+  maxLines = 2,
+  max,
+  min,
+  weight = 600,
+  family = fonts.sans,
+  color = colors.text,
+  align = "center",
+  lineHeight = 1.18,
+  style,
+}) => {
+  const fit = fitText(text, { width, height, maxLines, max, min, weight, family, lineHeight });
+  return (
+    <div
+      style={{
+        width,
+        color,
+        fontFamily: family,
+        fontSize: fit.fontSize,
+        fontWeight: weight,
+        lineHeight,
+        textAlign: align,
+        textWrap: maxLines > 1 ? "balance" : "nowrap",
+        overflowWrap: "anywhere",
+        ...style,
+      }}
+    >
+      {text}
+    </div>
+  );
+};
 
 export const Background: React.FC = () => {
   // base + subtle top gradient + faint dot grid, matching make_background().
@@ -41,6 +96,8 @@ export const Background: React.FC = () => {
   );
 };
 
+/** Scene title, always on ONE line: a long title shrinks instead of wrapping
+ * into the content below it. */
 export const TitleBar: React.FC<{ label: string; opacity?: number }> = ({
   label,
   opacity = 1,
@@ -51,8 +108,9 @@ export const TitleBar: React.FC<{ label: string; opacity?: number }> = ({
         textAlign: "center",
         color: colors.text,
         fontFamily: fonts.sans,
-        fontSize: fontSize.h2 + 4,
+        fontSize: fitText(label, { width: mu(12.5), maxLines: 1, max: fontSize.h2 + 4, min: 30, weight: 700 }).fontSize,
         fontWeight: 700,
+        whiteSpace: "nowrap",
       }}
     >
       {label}
@@ -85,7 +143,8 @@ type BoxProps = {
   fontPx?: number;
 };
 
-/** Rounded card with a bottom accent line + drop shadow (shadowed_card). */
+/** Rounded card with a bottom accent line + drop shadow (shadowed_card). A
+ * plain-string child is fitted to the card (shrinks/wraps, never overflows). */
 export const Card: React.FC<BoxProps> = ({
   x,
   y,
@@ -130,7 +189,20 @@ export const Card: React.FC<BoxProps> = ({
       boxSizing: "border-box",
     }}
   >
-    {children}
+    {typeof children === "string" ? (
+      <FitText
+        text={children}
+        width={mu(w) - 28}
+        height={mu(h) - 18}
+        maxLines={3}
+        max={fontPx}
+        min={Math.min(fontPx, 14)}
+        family={mono ? fonts.mono : fonts.sans}
+        lineHeight={1.15}
+      />
+    ) : (
+      children
+    )}
     <div
       style={{
         position: "absolute",
@@ -477,6 +549,7 @@ export const Caption: React.FC<{
   opacity?: number;
   width?: number;
 }> = ({ x, y, label, color, size = fontSize.caption, bold = true, opacity = 1, width = 6 }) => (
+  // At most two balanced lines: a long caption shrinks a little first.
   <div
     style={{
       position: "absolute",
@@ -486,8 +559,10 @@ export const Caption: React.FC<{
       textAlign: "center",
       color,
       fontFamily: fonts.sans,
-      fontSize: size,
+      fontSize: fitText(label, { width: mu(width), maxLines: 2, max: size, min: Math.round(size * 0.78), weight: bold ? 700 : 400 }).fontSize,
       fontWeight: bold ? 700 : 400,
+      lineHeight: 1.2,
+      textWrap: "balance",
       opacity,
     }}
   >

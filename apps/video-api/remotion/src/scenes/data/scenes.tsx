@@ -7,11 +7,12 @@ import { Plot } from "../../catalog/Plot";
 import { TextReveal, BlurReveal } from "../../catalog/text";
 import { MemoryGrid, type MemoryCell } from "../../catalog/MemoryGrid";
 import { FlowToken } from "../../catalog/FlowToken";
-import { BarChart, type Bar } from "../../catalog/BarChart";
+import { BarChart, type Bar, type BarSeries } from "../../catalog/BarChart";
 import { Counter } from "../../catalog/Counter";
 import { Icon } from "../../catalog/Icon";
-import { Arrow, Caption, Card, Terminal, TitleBar, Zone } from "../../components/primitives";
-import { alpha, colors, fonts, mu, mx, my, WIDTH } from "../../style/tokens";
+import { Arrow, Caption, Card, FitText, Terminal, TitleBar, Zone } from "../../components/primitives";
+import { fitText, fitTogether } from "../../style/fit";
+import { alpha, colors, fonts, HEIGHT, mu, mx, my, PX_PER_UNIT, WIDTH } from "../../style/tokens";
 import { appear, beat, cueOr, dimAt, lastCue } from "../../style/anim";
 
 /**
@@ -36,6 +37,12 @@ const useP = (dur: number) => {
   const frame = useCurrentFrame();
   return { frame, p: frame / dur };
 };
+
+// The vertical band free for a scene's content, in px: below the title bar and
+// above the caption line (or the bottom margin when the scene has no caption).
+// Content laid out inside it can never collide with either.
+const STAGE_TOP = 175;
+const stageBottom = (caption?: string): number => (caption ? 900 : 990);
 // The scene-to-scene envelope (fade/slide/wipe in and out) is owned by the
 // composition's SceneFrame — scenes only animate their own content.
 
@@ -84,29 +91,40 @@ export const TitleScene: React.FC<Base & { subtitle?: string }> = ({ dur, accent
 export const BulletScene: React.FC<Base & { bullets: string[]; icons?: (string | null)[] }> = ({ dur, accent, title, caption, cues, bullets, icons }) => {
   const { p } = useP(dur);
   const ac = accent ?? colors.user;
+  const items = bullets.slice(0, 6);
+  // One size for the whole list: the largest at which every bullet fits on
+  // two lines. The block is centred in the stage (text stays left-aligned).
+  const textW = 1440;
+  const size = fitTogether(items, { width: textW, maxLines: 2, max: 38, min: 28, weight: 500 }).fontSize;
+  const lineH = size * 1.25;
+  const bottom = stageBottom(caption);
   return (
     <Shell dur={dur} accent={ac} title={title} caption={caption}>
-      <div style={{ position: "absolute", left: mx(-5.2), top: my(1.6), display: "flex", flexDirection: "column", gap: 34, width: mx(5.2) - mx(-5.2) }}>
-        {bullets.slice(0, 6).map((b, i, arr) => {
-          const start = cueOr(cues, i, 0.12 + i * 0.12);
-          const enter = appear(p, start, start + 0.1);
-          // Focus the bullet currently being spoken: once the NEXT bullet
-          // appears, gently dim this one so attention follows the narration
-          // while the whole list stays readable. The last bullet stays bright.
-          const isLast = i === arr.length - 1;
-          const focus = isLast ? 1 : dimAt(p, cueOr(cues, i + 1, start + 0.12), 0.6);
-          const icon = icons?.[i];
-          return (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 22, opacity: enter * focus, transform: `translateX(${interpolate(enter, [0, 1], [-30, 0])}px)` }}>
-              {icon ? (
-                <Icon name={icon} size={34} color={ac} />
-              ) : (
-                <div style={{ width: 16, height: 16, borderRadius: 4, background: ac, flexShrink: 0, transform: "rotate(45deg)" }} />
-              )}
-              <span style={{ color: colors.text, fontFamily: "Inter, sans-serif", fontSize: 38, fontWeight: 500 }}>{b}</span>
-            </div>
-          );
-        })}
+      <div style={{ position: "absolute", left: 0, width: WIDTH, top: STAGE_TOP, height: bottom - STAGE_TOP, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 34, maxWidth: textW + 60 }}>
+          {items.map((b, i, arr) => {
+            const start = cueOr(cues, i, 0.12 + i * 0.12);
+            const enter = appear(p, start, start + 0.1);
+            // Focus the bullet currently being spoken: once the NEXT bullet
+            // appears, gently dim this one so attention follows the narration
+            // while the whole list stays readable. The last bullet stays bright.
+            const isLast = i === arr.length - 1;
+            const focus = isLast ? 1 : dimAt(p, cueOr(cues, i + 1, start + 0.12), 0.6);
+            const icon = icons?.[i];
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 22, opacity: enter * focus, transform: `translateX(${interpolate(enter, [0, 1], [-30, 0])}px)` }}>
+                {icon ? (
+                  <div style={{ marginTop: (lineH - 34) / 2, flexShrink: 0, display: "flex" }}>
+                    <Icon name={icon} size={34} color={ac} />
+                  </div>
+                ) : (
+                  <div style={{ width: 16, height: 16, marginTop: (lineH - 16) / 2, borderRadius: 4, background: ac, flexShrink: 0, transform: "rotate(45deg)" }} />
+                )}
+                <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: size, lineHeight: 1.25, fontWeight: 500, textWrap: "pretty" }}>{b}</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </Shell>
   );
@@ -230,6 +248,17 @@ export const PlotScene: React.FC<
   );
 };
 
+type NodeBox = { x: number; y: number; w: number; h: number; fontSize: number; start: number };
+
+/** Where the segment from `box`'s centre along (dx, dy) leaves the box (plus a
+ * small margin), so an arrow starts/ends on the card border, not under it. */
+const exitPoint = (box: NodeBox, dx: number, dy: number): [number, number] => {
+  const hw = box.w / 2 + 0.08;
+  const hh = box.h / 2 + 0.08;
+  const t = Math.min(dx ? hw / Math.abs(dx) : Infinity, dy ? hh / Math.abs(dy) : Infinity);
+  return [box.x + dx * t, box.y + dy * t];
+};
+
 /** General node-edge diagram (systems, processes, relationships). x,y in Manim units. */
 export const DiagramScene: React.FC<
   Base & {
@@ -238,40 +267,94 @@ export const DiagramScene: React.FC<
   }
 > = ({ dur, accent, title, caption, cues, nodes, edges }) => {
   const { p } = useP(dur);
-  const pos: Record<string, { x: number; y: number }> = {};
-  const nodeStart: Record<string, number> = {};
-  nodes.forEach((n, i) => {
-    pos[n.id] = { x: n.x, y: n.y };
-    nodeStart[n.id] = cueOr(cues, i, 0.12 + i * 0.08);
-  });
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  // Each card is sized to its label, never wider than the gap to its nearest
+  // neighbour on the same row, and kept between the title bar and the caption.
+  const yTop = (HEIGHT / 2 - STAGE_TOP) / PX_PER_UNIT;
+  const yBottom = (HEIGHT / 2 - stageBottom(caption)) / PX_PER_UNIT;
+  const boxes: Record<string, NodeBox> = {};
+  nodes.forEach((n, i) => {
+    let room = 3.4;
+    for (const o of nodes) {
+      if (o !== n && Math.abs(o.y - n.y) < 1.3) room = Math.min(room, Math.abs(o.x - n.x) - 0.3);
+    }
+    const maxW = Math.max(1.5, room);
+    const fit = fitText(n.label, { width: mu(maxW) - 34, maxLines: 3, max: 26, min: 17, lineHeight: 1.15 });
+    const w = Math.min(maxW, Math.max(1.8, (fit.width + 44) / PX_PER_UNIT));
+    const h = Math.max(1.0, ((n.icon ? 34 : 0) + fit.lines * fit.fontSize * 1.15 + 32) / PX_PER_UNIT);
+    boxes[n.id] = {
+      x: Math.max(-6.9 + w / 2, Math.min(6.9 - w / 2, n.x)),
+      y: Math.max(yBottom + h / 2, Math.min(yTop - h / 2, n.y)),
+      w,
+      h,
+      fontSize: fit.fontSize,
+      start: cueOr(cues, i, 0.12 + i * 0.08),
+    };
+  });
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
       {edges.map((e, i) => {
-        const a = pos[e.from];
-        const b = pos[e.to];
+        const a = boxes[e.from];
+        const b = boxes[e.to];
         if (!a || !b) return null;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const from = exitPoint(a, dx, dy);
+        const to = exitPoint(b, -dx, -dy);
+        // Overlapping cards: no room for an arrow between them.
+        if ((to[0] - from[0]) * dx + (to[1] - from[1]) * dy <= 0) return null;
         // An edge never draws toward a node that hasn't appeared yet (cues can
         // reorder node reveals relative to the default grid).
-        const start = Math.max(0.3 + i * 0.06, (nodeStart[e.to] ?? 0) + 0.04);
+        const start = Math.max(0.3 + i * 0.06, b.start + 0.04);
         const prog = interpolate(p, [start, start + 0.1], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-        return <Arrow key={i} from={[a.x, a.y]} to={[b.x, b.y]} color={e.color ?? colors.muted} width={3} progress={prog} />;
+        const color = e.color ?? colors.muted;
+        const label = (e.label ?? "").trim();
+        const lengthPx = mu(Math.hypot(to[0] - from[0], to[1] - from[1]));
+        const labelFit = label ? fitText(label, { width: Math.max(150, Math.min(320, lengthPx * 0.9)), maxLines: 2, max: 21, min: 15 }) : null;
+        return (
+          <React.Fragment key={i}>
+            <Arrow from={from} to={to} color={color} width={3} progress={prog} />
+            {label && labelFit ? (
+              <div
+                style={{
+                  position: "absolute",
+                  left: mx((from[0] + to[0]) / 2),
+                  top: my((from[1] + to[1]) / 2),
+                  transform: "translate(-50%, -50%)",
+                  width: labelFit.width + 4,
+                  padding: "4px 12px",
+                  boxSizing: "content-box",
+                  borderRadius: 10,
+                  background: colors.bg,
+                  border: `1px solid ${colors.edge}`,
+                  color: colors.text,
+                  fontFamily: fonts.sans,
+                  fontSize: labelFit.fontSize,
+                  fontWeight: 600,
+                  lineHeight: 1.15,
+                  textAlign: "center",
+                  textWrap: "balance",
+                  opacity: appear(p, start + 0.06, start + 0.12),
+                }}
+              >
+                {label}
+              </div>
+            ) : null}
+          </React.Fragment>
+        );
       })}
       {nodes.map((n) => {
-        const start = nodeStart[n.id];
-        const s = spring({ frame: frame - Math.round(start * dur), fps, config: { damping: 14, stiffness: 120 } });
+        const box = boxes[n.id];
+        const s = spring({ frame: frame - Math.round(box.start * dur), fps, config: { damping: 14, stiffness: 120 } });
+        const color = n.color ?? colors.user;
         return (
-          <div key={n.id} style={{ transform: `scale(${s})`, transformOrigin: `${mx(n.x)}px ${my(n.y)}px` }}>
-            <Card x={n.x} y={n.y} w={2.2} h={1.0} accent={n.color ?? colors.user} opacity={interpolate(p, [start, start + 0.08], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} fontPx={26}>
-              {n.icon ? (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-                  <Icon name={n.icon} size={26} color={n.color ?? colors.user} />
-                  {n.label}
-                </span>
-              ) : (
-                n.label
-              )}
+          <div key={n.id} style={{ transform: `scale(${s})`, transformOrigin: `${mx(box.x)}px ${my(box.y)}px` }}>
+            <Card x={box.x} y={box.y} w={box.w} h={box.h} accent={color} opacity={interpolate(p, [box.start, box.start + 0.08], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })} fontPx={box.fontSize}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                {n.icon ? <Icon name={n.icon} size={28} color={color} /> : null}
+                <div style={{ width: mu(box.w) - 34, fontSize: box.fontSize, lineHeight: 1.15, textWrap: "balance", overflowWrap: "anywhere" }}>{n.label}</div>
+              </div>
             </Card>
           </div>
         );
@@ -290,26 +373,47 @@ export const ComparisonScene: React.FC<
   }
 > = ({ dur, accent, title, caption, cues, left, right }) => {
   const { p } = useP(dur);
+  const colW = 770;
+  const leftItems = (left.items ?? []).slice(0, 5);
+  const rightItems = (right.items ?? []).slice(0, 5);
+  // Both columns share one item size and one header size, so they read as a pair.
+  const itemSize = fitTogether([...leftItems, ...rightItems], { width: colW - 110, maxLines: 3, max: 31, min: 24, weight: 500 }).fontSize;
+  const headSize = fitTogether([left.label, right.label], { width: colW, maxLines: 1, max: 32, min: 24, weight: 700 }).fontSize;
+  const bottom = stageBottom(caption);
   // Cue order matches the blueprint contract: all left items, then all right
   // items. Each column's zone/header leads its first cued item slightly.
-  const column = (side: { label: string; items: string[] }, cx: number, color: string, base: number, offset: number) => {
+  const column = (side: { label: string }, items: string[], color: string, base: number, offset: number, col: 1 | 2) => {
     const firstCue = cues?.[offset];
     const zoneStart = firstCue != null ? Math.max(0.03, firstCue - 0.08) : base;
+    const zone = appear(p, zoneStart, zoneStart + 0.1);
     return (
       <>
-        <Zone x={cx} y={-0.45} w={5.7} h={4.1} color={color} fill={alpha(color, 0.07)} opacity={appear(p, zoneStart, zoneStart + 0.1)} />
-        {/* Header centered over THIS column (not the full screen). */}
-        <div style={{ position: "absolute", left: mx(cx) - mu(2.85), top: my(2.05), width: mu(5.7), textAlign: "center", opacity: appear(p, zoneStart, zoneStart + 0.1) }}>
-          <span style={{ color, fontFamily: fonts.sans, fontSize: 31, fontWeight: 700 }}>{side.label}</span>
+        <div style={{ gridColumn: col, gridRow: 1, textAlign: "center", opacity: zone, color, fontFamily: fonts.sans, fontSize: headSize, fontWeight: 700, whiteSpace: "nowrap" }}>
+          {side.label}
         </div>
-        <div style={{ position: "absolute", left: mx(cx) - mu(2.4), top: my(1.15), width: mu(4.8), display: "flex", flexDirection: "column", gap: 24 }}>
-          {(side.items ?? []).slice(0, 5).map((it, i) => {
+        {/* Sized to its content (rows stretch both zones to the same height). */}
+        <div
+          style={{
+            gridColumn: col,
+            gridRow: 2,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            gap: 26,
+            padding: "40px 44px",
+            borderRadius: mu(0.16),
+            border: `2px solid ${color}`,
+            background: alpha(color, 0.07),
+            opacity: zone,
+          }}
+        >
+          {items.map((it, i) => {
             const start = cueOr(cues, offset + i, base + 0.14 + i * 0.1);
             const op = appear(p, start, start + 0.1);
             return (
-              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 14, opacity: op }}>
-                <div style={{ width: 12, height: 12, marginTop: 9, borderRadius: 3, background: color, flexShrink: 0, transform: "rotate(45deg)" }} />
-                <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 29, fontWeight: 500, lineHeight: 1.25 }}>{it}</span>
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 16, opacity: op, transform: `translateY(${(1 - op) * 10}px)` }}>
+                <div style={{ width: 12, height: 12, marginTop: (itemSize * 1.25 - 12) / 2, borderRadius: 3, background: color, flexShrink: 0, transform: "rotate(45deg)" }} />
+                <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: itemSize, fontWeight: 500, lineHeight: 1.25, textWrap: "pretty" }}>{it}</span>
               </div>
             );
           })}
@@ -319,8 +423,24 @@ export const ComparisonScene: React.FC<
   };
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
-      {column(left, -3.35, accent ?? colors.user, 0.1, 0)}
-      {column(right, 3.35, colors.kernel, 0.22, (left.items ?? []).slice(0, 5).length)}
+      <div
+        style={{
+          position: "absolute",
+          left: (WIDTH - 2 * colW - 70) / 2,
+          width: 2 * colW + 70,
+          top: STAGE_TOP,
+          height: bottom - STAGE_TOP,
+          display: "grid",
+          gridTemplateColumns: `${colW}px ${colW}px`,
+          gridTemplateRows: "auto auto",
+          columnGap: 70,
+          rowGap: 22,
+          alignContent: "center",
+        }}
+      >
+        {column(left, leftItems, accent ?? colors.user, 0.1, 0, 1)}
+        {column(right, rightItems, colors.kernel, 0.22, leftItems.length, 2)}
+      </div>
     </Shell>
   );
 };
@@ -336,6 +456,7 @@ export const LayeredSystemScene: React.FC<
   const bottom = -2.5;
   const gap = 0.32;
   const bandH = (top - bottom - gap * (n - 1)) / n;
+  const textW = mu(9.2) - 70;
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
       {items.map((layer, i) => {
@@ -343,12 +464,41 @@ export const LayeredSystemScene: React.FC<
         const start = cueOr(cues, i, 0.12 + i * 0.12);
         const op = appear(p, start, start + 0.12);
         const color = layer.color ?? LAYER_COLORS[i % LAYER_COLORS.length];
+        // Label and sub share one line when they fit; otherwise the sub goes
+        // under the label (bands are tall enough), both fitted to the band.
+        const oneLine = layer.sub ? `${layer.label}   ${layer.sub}` : layer.label;
+        const inline = fitText(oneLine, { width: textW, maxLines: 1, max: 34, min: 26, weight: 700 }).fits;
         return (
           <React.Fragment key={i}>
             <Zone x={0} y={cy} w={9.2} h={bandH} color={color} fill={alpha(color, 0.09)} opacity={op} />
-            <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(cy) - 24, textAlign: "center", opacity: op }}>
-              <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 34, fontWeight: 700 }}>{layer.label}</span>
-              {layer.sub ? <span style={{ color: colors.muted, fontFamily: fonts.sans, fontSize: 24, marginLeft: 16 }}>{layer.sub}</span> : null}
+            <div
+              style={{
+                position: "absolute",
+                left: mx(-4.6),
+                width: mu(9.2),
+                top: my(cy + bandH / 2),
+                height: mu(bandH),
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 2,
+                opacity: op,
+              }}
+            >
+              {inline ? (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 16, whiteSpace: "nowrap" }}>
+                  <span style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 34, fontWeight: 700 }}>{layer.label}</span>
+                  {layer.sub ? <span style={{ color: colors.muted, fontFamily: fonts.sans, fontSize: 24 }}>{layer.sub}</span> : null}
+                </div>
+              ) : (
+                <>
+                  <FitText text={layer.label} width={textW} maxLines={1} max={32} min={22} weight={700} />
+                  {layer.sub ? (
+                    <FitText text={layer.sub} width={textW} maxLines={1} max={23} min={17} weight={400} color={colors.muted} />
+                  ) : null}
+                </>
+              )}
             </div>
             {i < items.length - 1 ? (
               <Arrow from={[0, cy - bandH / 2]} to={[0, cy - bandH / 2 - gap]} color={colors.muted} width={3} progress={appear(p, start + 0.08, start + 0.16)} />
@@ -371,6 +521,9 @@ export const TimelineScene: React.FC<
   const x0 = -5;
   const x1 = 5;
   const span = n > 1 ? (x1 - x0) / (n - 1) : 0;
+  // A label never spills into its neighbour's slot.
+  const labelW = mu(Math.min(3.0, n > 1 ? span - 0.2 : 6));
+  const labelSize = fitTogether(items.map((st) => st.label), { width: labelW, maxLines: 3, max: 26, min: 18 }).fontSize;
   return (
     <Shell dur={dur} accent={ac} title={title} caption={caption}>
       <Arrow from={[x0 - 0.5, 0]} to={[x1 + 0.5, 0]} color={colors.edge} width={3} progress={appear(p, 0.1, 0.3)} />
@@ -381,12 +534,14 @@ export const TimelineScene: React.FC<
         const focus = i === items.length - 1 ? 1 : dimAt(p, cueOr(cues, i + 1, start + 0.14), 0.55);
         return (
           <React.Fragment key={i}>
-            <div style={{ opacity: op * focus }}>
+            {/* Dim with brightness, not opacity: a translucent card would let
+                the baseline arrow show through it. */}
+            <div style={{ opacity: op, filter: focus < 1 ? `brightness(${focus})` : undefined }}>
               <Card x={cx} y={0} w={1.5} h={1.0} accent={ac} fontPx={30}>{`${i + 1}`}</Card>
             </div>
-            <div style={{ position: "absolute", left: mx(cx) - mu(1.5), top: my(-0.9), width: mu(3.0), textAlign: "center", opacity: op }}>
-              <div style={{ color: colors.text, fontFamily: fonts.sans, fontSize: 26, fontWeight: 600, lineHeight: 1.2 }}>{step.label}</div>
-              {step.sub ? <div style={{ color: colors.muted, fontFamily: fonts.sans, fontSize: 20 }}>{step.sub}</div> : null}
+            <div style={{ position: "absolute", left: mx(cx) - labelW / 2, top: my(-0.9), width: labelW, textAlign: "center", opacity: op }}>
+              <div style={{ color: colors.text, fontFamily: fonts.sans, fontSize: labelSize, fontWeight: 600, lineHeight: 1.2, textWrap: "balance", overflowWrap: "anywhere" }}>{step.label}</div>
+              {step.sub ? <FitText text={step.sub} width={labelW} maxLines={2} max={20} min={15} weight={400} color={colors.muted} style={{ marginTop: 6 }} /> : null}
             </div>
           </React.Fragment>
         );
@@ -469,45 +624,71 @@ export const FlowScene: React.FC<Base & { stages: { label: string; sub?: string;
   const seg = Math.max(0, Math.min(n - 2, Math.floor(segF)));
   const segP = n > 1 ? segF - seg : 0;
   const active = Math.min(n - 1, Math.round(travel * (n - 1)));
+  // Cards and their sub-captions stay inside their own slot; one label size
+  // for every stage, fitted to the card (icon above the label).
+  const cardW = n > 1 ? Math.min(2.2, span - 0.4) : 2.4;
+  const labelW = mu(cardW) - 26;
+  const hasIcon = items.some((st) => st.icon);
+  const labelFit = fitTogether(items.map((st) => st.label), { width: labelW, maxLines: hasIcon ? 2 : 3, max: 24, min: 16, lineHeight: 1.15 });
+  const labelSize = labelFit.fontSize;
+  const cardH = Math.max(1.0, ((hasIcon ? 32 : 0) + labelFit.lines * labelSize * 1.15 + 30) / PX_PER_UNIT);
+  const subW = n > 1 ? Math.min(2.6, span - 0.15) : 3;
   return (
     <Shell dur={dur} accent={ac} title={title} caption={caption}>
       {items.slice(0, -1).map((_, i) => (
-        <Arrow key={i} from={[xs[i], y]} to={[xs[i + 1], y]} color={colors.edge} width={3} progress={appear(p, 0.1, 0.25)} />
+        <Arrow key={i} from={[xs[i] + cardW / 2 + 0.05, y]} to={[xs[i + 1] - cardW / 2 - 0.05, y]} color={colors.edge} width={3} progress={appear(p, 0.1, 0.25)} />
       ))}
       {items.map((st, i) => {
         const op = appear(p, 0.12 + i * 0.06, 0.22 + i * 0.06);
         return (
           <React.Fragment key={i}>
             <div style={{ opacity: op }}>
-              <Card x={xs[i]} y={y} w={2.0} h={1.0} accent={ac} glow={i === active ? 0.85 : 0} fontPx={24}>
-                {st.icon ? (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    <Icon name={st.icon} size={24} color={ac} />
-                    {st.label}
-                  </span>
-                ) : (
-                  st.label
-                )}
+              <Card x={xs[i]} y={y} w={cardW} h={cardH} accent={ac} glow={i === active ? 0.85 : 0} fontPx={labelSize}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                  {st.icon ? <Icon name={st.icon} size={26} color={ac} /> : null}
+                  <div style={{ width: labelW, fontSize: labelSize, lineHeight: 1.15, textWrap: "balance", overflowWrap: "anywhere" }}>{st.label}</div>
+                </div>
               </Card>
             </div>
-            {st.sub ? <Caption x={xs[i]} y={y - 0.95} label={st.sub} color={colors.muted} size={20} width={2.6} opacity={op} /> : null}
+            {st.sub ? <Caption x={xs[i]} y={y - cardH / 2 - 0.45} label={st.sub} color={colors.muted} size={20} width={subW} opacity={op} /> : null}
           </React.Fragment>
         );
       })}
-      {n > 1 ? <FlowToken from={[xs[seg], y + 0.85]} to={[xs[seg + 1], y + 0.85]} progress={segP} color={ac} opacity={appear(p, 0.2, 0.3)} /> : null}
+      {n > 1 ? <FlowToken from={[xs[seg], y + cardH / 2 + 0.35]} to={[xs[seg + 1], y + cardH / 2 + 0.35]} progress={segP} color={ac} opacity={appear(p, 0.2, 0.3)} /> : null}
     </Shell>
   );
 };
 
-/** Animated bar chart for quantities / benchmarks / comparisons. */
-export const BarChartScene: React.FC<Base & { bars: Bar[] }> = ({ dur, accent, title, caption, cues, bars }) => {
+/** Animated bar chart for quantities / benchmarks / comparisons. Simple
+ * (`bars`) or grouped (`groups` x `series`, with a legend). Each category
+ * grows on its own narration cue. */
+export const BarChartScene: React.FC<Base & { bars?: Bar[]; groups?: string[]; series?: BarSeries[]; unit?: string }> = ({
+  dur,
+  accent,
+  title,
+  caption,
+  cues,
+  bars,
+  groups,
+  series,
+  unit,
+}) => {
   const { p } = useP(dur);
-  const c0 = cueOr(cues, 0, 0.15);
-  const cEnd = Math.max(c0 + 0.2, lastCue(cues, 0.6));
+  const grouped = Boolean(groups && groups.length && series && series.length);
+  const n = Math.max(1, grouped ? groups!.length : (bars ?? []).length);
+  let prev = -1;
+  const reveal = Array.from({ length: n }, (_, i) => {
+    // Cues keep their spoken order; a missing cue falls back to an even stagger.
+    const start = Math.max(prev + 0.03, cueOr(cues, i, 0.15 + (i * 0.45) / Math.max(1, n - 1)));
+    prev = start;
+    return appear(p, start, start + 0.1);
+  });
+  const width = 1480;
+  const bottom = stageBottom(caption);
   return (
     <Shell dur={dur} accent={accent ?? colors.user} title={title} caption={caption}>
-      <div style={{ position: "absolute", left: 0, width: WIDTH, top: my(1.9), display: "flex", justifyContent: "center" }}>
-        <BarChart bars={bars} grow={appear(p, c0, cEnd)} />
+      <div style={{ position: "absolute", left: (WIDTH - width) / 2, top: STAGE_TOP + 20, width, height: bottom - STAGE_TOP - 20 }}>
+        <BarChart bars={bars} groups={groups} series={series} unit={unit} reveal={reveal} width={width} height={bottom - STAGE_TOP - 20} />
       </div>
     </Shell>
   );
@@ -607,6 +788,16 @@ type Cam = { s: number; x: number; y: number };
 const clampN = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+/** Drop a leading "Fig. 2 —" from the caption: the credit line under the
+ * figure already reads "Figure 2 · <document>". */
+const stripFigureLabel = (caption: string, label?: string): string => {
+  const num = (label ?? "").replace(/^\D+/, "").trim();
+  if (!num) return caption;
+  const escaped = num.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const out = caption.replace(new RegExp(`^\\s*(fig(ure)?\\.?|figura|abbildung)\\s*${escaped}(?![0-9a-z])\\s*[.:·—–-]*\\s*`, "i"), "");
+  return out.trim() ? out.charAt(0).toUpperCase() + out.slice(1) : caption;
+};
+
 /**
  * A figure cropped from the uploaded document, always shown whole (contain,
  * never cover) on a paper-white card, with numbered callouts revealed on their
@@ -616,10 +807,11 @@ const lerpN = (a: number, b: number, t: number): number => a + (b - a) * t;
  * Callouts without a box are only listed beside the figure.
  */
 export const FigureScene: React.FC<
-  Base & { src: string; aspect?: number; callouts?: FigureCallout[]; credit?: string }
-> = ({ dur, accent, title, caption, cues, src, aspect = 1.4, callouts = [], credit }) => {
+  Base & { src: string; aspect?: number; callouts?: FigureCallout[]; credit?: string; figureLabel?: string }
+> = ({ dur, accent, title, caption: rawCaption, cues, src, aspect = 1.4, callouts = [], credit, figureLabel }) => {
   const { p } = useP(dur);
   const ac = accent ?? colors.user;
+  const caption = rawCaption ? stripFigureLabel(rawCaption, figureLabel) : rawCaption;
   const items = callouts.filter((c) => c && c.label).slice(0, 5);
   const n = items.length;
   const starts = items.map((_, i) => cueOr(cues, i, 0.16 + (0.62 * i) / Math.max(1, n)));
@@ -629,15 +821,24 @@ export const FigureScene: React.FC<
   // callout list are laid out as one group centred in the stage: list on the
   // right for upright figures, a row of chips below for wide ones.
   const top = 150;
-  const bottom = caption ? 890 : 975;
+  const bottom = stageBottom(caption);
   const left = 90;
   const right = WIDTH - 90;
   const creditH = credit ? 38 : 0;
   const pad = 22;
   const gap = 64;
   const listW = 560;
-  const rowH = 84;
   const layout = n === 0 ? "alone" : wide ? "stacked" : "side";
+  const labels = items.map((c) => c.label);
+  // Stacked: ONE row of equal chips (never wraps onto the caption), every
+  // label fitted to its chip on <= 2 lines; the row's height is reserved.
+  const chipGap = 16;
+  const chipW = Math.min(440, (right - left - (n - 1) * chipGap) / Math.max(1, n));
+  const chipBadge = 38;
+  const chipFit = fitTogether(labels, { width: chipW - 32 - chipBadge - 12, maxLines: 2, max: 28, min: 19 });
+  const rowH = Math.max(chipBadge, chipFit.lines * chipFit.fontSize * 1.18) + 24;
+  // Side: a column of callouts beside the figure, labels on <= 2 lines.
+  const listFit = fitTogether(labels, { width: listW - 40 - 44 - 18, maxLines: 2, max: 32, min: 24 });
   const availW = (layout === "side" ? right - left - listW - gap : right - left) - 2 * pad;
   const availH = bottom - top - 2 * pad - creditH - (layout === "stacked" ? rowH + 24 : 0);
   let imgW = availW;
@@ -802,8 +1003,8 @@ export const FigureScene: React.FC<
           style={{
             position: "absolute",
             ...(layout === "stacked"
-              ? { left, top: cardY + cardH + creditH + 24, width: right - left, flexDirection: "row" as const, flexWrap: "wrap" as const, justifyContent: "center", gap: 18 }
-              : { left: cardX + cardW + gap, top, width: listW, height: bottom - top, flexDirection: "column" as const, justifyContent: "center", gap: 26 }),
+              ? { left, top: cardY + cardH + creditH + 24, width: right - left, height: rowH, flexDirection: "row" as const, justifyContent: "center", gap: chipGap }
+              : { left: cardX + cardW + gap, top, width: listW, height: bottom - top, flexDirection: "column" as const, justifyContent: "center", gap: 22 }),
             display: "flex",
           }}
         >
@@ -817,17 +1018,29 @@ export const FigureScene: React.FC<
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 18,
-                  padding: wide ? "10px 20px" : "14px 20px",
+                  gap: layout === "stacked" ? 12 : 18,
+                  ...(layout === "stacked" ? { width: chipW, height: rowH, padding: "0 16px" } : { padding: "14px 20px" }),
+                  boxSizing: "border-box",
                   borderRadius: 14,
                   background: alpha(colors.panel, 0.85),
                   border: `2px solid ${active > 0.5 ? ac : colors.edge}`,
                   opacity: shown * (0.5 + 0.5 * current),
-                  transform: `translateX(${(1 - shown) * 28}px)`,
+                  transform: layout === "stacked" ? `translateY(${(1 - shown) * 18}px)` : `translateX(${(1 - shown) * 28}px)`,
                 }}
               >
-                {badge(i, 44, 1)}
-                <div style={{ color: colors.text, fontFamily: fonts.sans, fontSize: wide ? 28 : 32, fontWeight: 600, lineHeight: 1.2 }}>
+                {badge(i, layout === "stacked" ? chipBadge : 44, 1)}
+                <div
+                  style={{
+                    minWidth: 0,
+                    color: colors.text,
+                    fontFamily: fonts.sans,
+                    fontSize: layout === "stacked" ? chipFit.fontSize : listFit.fontSize,
+                    fontWeight: 600,
+                    lineHeight: 1.18,
+                    textWrap: "balance",
+                    overflowWrap: "anywhere",
+                  }}
+                >
                   {c.label}
                 </div>
               </div>
@@ -1078,10 +1291,14 @@ export const ZoomNarrativeScene: React.FC<Base & { canvas: CanvasItem[]; path: s
           return (
             <div key={item.id} style={{ opacity: 0.32 + 0.68 * reveal }}>
               <Card x={item.x} y={item.y} w={2.4} h={1.2} accent={ac} glow={reveal} fontPx={28}>
-                <div style={{ textAlign: "center" }}>
-                  {item.label}
-                  {item.sub ? <div style={{ fontSize: 18, color: colors.muted, fontWeight: 400 }}>{item.sub}</div> : null}
-                </div>
+                {item.sub ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                    <FitText text={item.label} width={mu(2.4) - 28} maxLines={2} max={26} min={16} lineHeight={1.12} />
+                    <FitText text={item.sub} width={mu(2.4) - 28} maxLines={1} max={18} min={13} weight={400} color={colors.muted} />
+                  </div>
+                ) : (
+                  item.label
+                )}
               </Card>
               {item.detail ? (
                 <Caption x={item.x} y={item.y - 0.95} label={item.detail} color={colors.muted} size={18} opacity={reveal} width={3} />

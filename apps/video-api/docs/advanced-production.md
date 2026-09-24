@@ -105,7 +105,12 @@ la configuration.
   (`research.enabled=true`), ses sources gardent les ids `src_NN`.
 - **Figures** : chaque figure legendee (`Figure N`) est decoupee depuis la page
   en haute resolution (images et dessins vectoriels, labels compris), marges
-  blanches rognees. Le LLM en choisit 2 a 4 pour des `FigureScene`.
+  blanches rognees. Aucune ligne de texte courant (colonne voisine, paragraphe)
+  n'est coupee dans la decoupe ; un fond blanc invisible qui chevauche la
+  legende ne masque plus la figure. Le LLM en choisit 2 a 4 pour des
+  `FigureScene`. Une amelioration de l'extraction incremente
+  `EXTRACTOR_VERSION` (`documents.py`) : re-envoyer un PDF extrait par une
+  version anterieure le re-extrait (et relance l'analyse vision).
 - **FigureScene** : la figure est montree entiere sur une carte blanche, jamais
   recadree. Ses annotations numerotees apparaissent sur leurs cues de narration ;
   quand une annotation porte une zone (analyse vision, `VIDEO_API_VISION_MODEL`),

@@ -40,7 +40,7 @@ _PROMISED_LIB_EXPORTS = [
     "AmbientBackground", "MathFormula", "CodeBlock", "Plot",
     "TitleBar", "Card", "Arrow", "Caption", "TextReveal", "BlurReveal",
     "MemoryGrid", "FlowToken", "BarChart", "Counter", "Zone", "Terminal",
-    "KernelBadge", "HardwareBox", "Icon",
+    "KernelBadge", "HardwareBox", "Icon", "FitText", "fitText",
 ]
 
 
@@ -170,6 +170,84 @@ def test_normalise_memory_flow_bar_counter() -> None:
     cnt = normalize_remotion_blueprint(_wrap_scene("metric", {"value": "1000000", "suffix": "/s", "label": "syscalls"}), 240)["scenes"][0]
     assert cnt["component"] == "CounterScene"
     assert cnt["props"]["value"] == 1000000.0 and cnt["props"]["suffix"] == "/s"
+
+
+def test_labels_are_clipped_at_a_word_never_mid_word() -> None:
+    long_label = "Llama-3.3-70B · dérive seule, sans top-attention ni correction RoPE"
+    bar = normalize_remotion_blueprint(
+        _wrap_scene("bars", {"bars": [{"label": "Qwen3-32B · dérive seule", "value": 81}, {"label": long_label, "value": 87}]}), 240
+    )["scenes"][0]
+    labels = [b["label"] for b in bar["props"]["bars"]]
+    # A normal label is kept whole (the renderer fits it); a pathological one
+    # ends on a whole word + ellipsis, never "Qwen3-32B · déri".
+    assert labels[0] == "Qwen3-32B · dérive seule"
+    assert labels[1].endswith("…") and len(labels[1]) <= 40
+    assert long_label.startswith(labels[1][:-1])
+    assert labels[1][:-1].split()[-1] in long_label.split()
+    fig = normalize_remotion_blueprint(
+        _wrap_scene("figure", {"figure_id": "fig_01", "callouts": ["A"], "caption": "mot " * 60}), 240
+    )["scenes"][0]
+    assert len(fig["props"]["caption"]) <= 160 and fig["props"]["caption"].endswith("mot…")
+
+
+def test_grouped_bar_chart_normalisation_and_validation() -> None:
+    from video_api.pipeline.remotion_blueprint import _items_count, validate_scene_payload
+
+    props = {
+        "groups": ["Qwen3-32B", "GLM-4-9B", "Llama-3.3-70B"],
+        "series": [
+            {"label": "Dérive seule", "values": [81, "86", 87]},
+            {"label": "Top-attention", "values": [95, 97, 97], "color": "#22D3EE"},
+            {"label": "incomplete", "values": [1]},
+        ],
+        "bars": [{"label": "ignored", "value": 1}],
+        "unit": " % ",
+    }
+    bar = normalize_remotion_blueprint(_wrap_scene("bars", props), 240)["scenes"][0]
+    assert "bars" not in bar["props"]
+    assert bar["props"]["groups"] == ["Qwen3-32B", "GLM-4-9B", "Llama-3.3-70B"]
+    assert bar["props"]["series"] == [
+        {"label": "Dérive seule", "values": [81.0, 86.0, 87.0]},
+        {"label": "Top-attention", "values": [95.0, 97.0, 97.0], "color": "#22D3EE"},
+    ]
+    assert bar["props"]["unit"] == "%"
+    # One beat per group, not per bar.
+    assert _items_count("BarChartScene", bar["props"]) == 3
+    errors = validate_scene_payload(
+        {"component": "BarChartScene", "narration": "word " * 30, "props": {"groups": ["a"], "series": [{"label": "x", "values": [1]}]}}
+    )
+    assert any("grouped BarChartScene" in e for e in errors)
+    # An unusable grouped shape falls back to plain bars.
+    plain = normalize_remotion_blueprint(
+        _wrap_scene("bars", {"groups": ["a"], "series": "x", "bars": [{"label": "a", "value": 1}, {"label": "b", "value": 2}]}), 240
+    )["scenes"][0]
+    assert "series" not in plain["props"] and len(plain["props"]["bars"]) == 2
+
+
+def test_dark_colours_are_lifted_to_read_on_dark_themes() -> None:
+    from video_api.pipeline.remotion_blueprint import _luminance, _readable_color
+
+    diagram = normalize_remotion_blueprint(
+        _wrap_scene(
+            "diagram",
+            {
+                "nodes": [
+                    {"id": "a", "label": "Préfixe", "x": -3, "y": 0, "color": "#1e3a8a"},
+                    {"id": "b", "label": "Suffixe", "x": 3, "y": 0, "color": "#3A86FF"},
+                ],
+                "edges": [{"from": "a", "to": "b", "color": "#000"}],
+                "accent": "#7f1d1d",
+            },
+        ),
+        240,
+    )["scenes"][0]["props"]
+    lifted = diagram["nodes"][0]["color"]
+    assert lifted != "#1e3a8a"
+    r, g, b = (int(lifted[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    assert _luminance(r, g, b) >= 0.115 and b > r  # still blue
+    assert diagram["nodes"][1]["color"] == "#3A86FF"  # readable colours are untouched
+    assert diagram["edges"][0]["color"] != "#000" and diagram["accent"] != "#7f1d1d"
+    assert _readable_color("var(--c-user)") == "var(--c-user)" and _readable_color("red") == "red"
 
 
 def test_normalise_new_scenes_empty_fallbacks() -> None:

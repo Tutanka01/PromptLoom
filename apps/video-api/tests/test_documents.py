@@ -15,7 +15,14 @@ from fastapi.testclient import TestClient
 import video_api.main as main_module
 from video_api.config import get_settings
 from video_api.db import SessionLocal
-from video_api.documents import DocumentError, DocumentNotFound, DocumentStore, budget_sections, gc_documents
+from video_api.documents import (
+    EXTRACTOR_VERSION,
+    DocumentError,
+    DocumentNotFound,
+    DocumentStore,
+    budget_sections,
+    gc_documents,
+)
 from video_api.models import VideoJob
 from video_api.pipeline.assets import AssetResolver
 from video_api.pipeline.document_figures import parse_regions
@@ -129,6 +136,56 @@ def test_ingest_is_idempotent_and_ids_are_validated(store: DocumentStore, paper)
         store.load("doc_000000000000000000000000")
     with pytest.raises(DocumentNotFound):
         store.figure_file(paper.id, "../source")
+
+
+def test_figure_crop_never_clips_the_neighbouring_column() -> None:
+    """A right-column figure exported with a white canvas wider than itself
+    (it spills over the gutter) must not drag the ends of the left column's
+    lines into the crop — the "tions / First, / r the" sliver bug."""
+    from video_api import documents as D
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_textbox(pymupdf.Rect(50, 60, 300, 330), _BODY * 4, fontsize=10, fontname="helv")
+    page.insert_textbox(pymupdf.Rect(320, 260, 560, 400), _BODY * 2, fontsize=10, fontname="helv")
+    # Invisible white canvas from x=280: over the end of the left column's lines.
+    page.draw_rect(pymupdf.Rect(280, 60, 600, 200), color=None, fill=(1, 1, 1))
+    page.draw_rect(pymupdf.Rect(340, 80, 440, 180), color=(0, 0, 0), fill=(0.8, 0.9, 1.0))
+    page.draw_rect(pymupdf.Rect(460, 80, 560, 180), color=(0, 0, 0), fill=(1.0, 0.9, 0.8))
+    page.insert_text((360, 134), "CACHE", fontsize=8, fontname="helv")
+    page.insert_textbox(pymupdf.Rect(320, 206, 560, 240), "Fig. 1. A figure on a wide white canvas.", fontsize=8, fontname="helv")
+    page = pymupdf.open(stream=doc.tobytes(), filetype="pdf")[0]
+
+    blocks = D._page_blocks(page, 0)
+    captions = [b for b in blocks if D._CAPTION_RE.match(b.lines[0].text)]
+    region = D._figure_region(page, captions[0], D._page_graphics(page), blocks, 10.0, captions)
+    assert region is not None
+    beside = [
+        line.bbox[2]
+        for b in blocks
+        for line in b.lines
+        if line.bbox[0] < 100 and line.bbox[1] < region.y1 and line.bbox[3] > region.y0
+    ]
+    assert beside and region.x0 > max(beside)  # no sliver of the left column
+    assert region.x0 <= 340 and region.x1 >= 560  # the whole figure stays
+
+
+def test_stale_extraction_is_redone_on_reupload(store: DocumentStore, paper) -> None:
+    manifest = store.path(paper.id) / "document.json"
+    stale = json.loads(manifest.read_text(encoding="utf-8"))
+    stale.pop("extractor_version", None)  # stored before versioning
+    stale["title"] = "stale extraction"
+    manifest.write_text(json.dumps(stale), encoding="utf-8")
+    assert store.load(paper.id).extractor_version == 1
+
+    fresh = store.ingest(make_paper_pdf(), "paper.pdf", max_pages=60)
+    assert fresh.id == paper.id
+    assert fresh.extractor_version == EXTRACTOR_VERSION
+    assert fresh.title == "Residual Pipelines for Testing"
+    assert [f.label for f in fresh.figures] == ["Figure 1", "Figure 2"]
+    assert [entry.name for entry in store.root.iterdir()] == [paper.id]  # nothing left aside
+    # Up to date: re-uploading keeps the stored extraction.
+    assert store.ingest(make_paper_pdf(), "paper.pdf", max_pages=60).created_at == fresh.created_at
 
 
 def test_unusable_pdfs_are_rejected(store: DocumentStore) -> None:

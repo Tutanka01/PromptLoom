@@ -38,12 +38,13 @@ export { MemoryGrid } from "./catalog/MemoryGrid";
 export type { MemoryCell } from "./catalog/MemoryGrid";
 export { FlowToken } from "./catalog/FlowToken";
 export { BarChart } from "./catalog/BarChart";
-export type { Bar } from "./catalog/BarChart";
+export type { Bar, BarSeries } from "./catalog/BarChart";
 export { Counter } from "./catalog/Counter";
 export { Icon, ICON_NAMES } from "./catalog/Icon";
 
 // --- Layout primitives -----------------------------------------------------
 export {
+  FitText,
   Background,
   TitleBar,
   Card,
@@ -77,6 +78,9 @@ export {
   mu,
   atCenter,
 } from "./style/tokens";
+
+// --- Text fitting: size an LLM-written label to its box (never overflow) ---
+export { fitText, fitTogether, measureText, wrapText } from "./style/fit";
 
 // --- Beat / cue animation helpers (narration-driven progress p in [0,1]) ---
 export { beat, appear, dimAt, tailFade, cueOr, lastCue } from "./style/anim";

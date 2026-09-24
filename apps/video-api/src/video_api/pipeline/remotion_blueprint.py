@@ -16,6 +16,7 @@ its client/_complete plumbing and calls into here.
 """
 from __future__ import annotations
 
+import colorsys
 import logging
 import math
 import re
@@ -189,7 +190,10 @@ _PALETTE_LINE = (
     "- TerminalScene: { title: str, command: str, output?: str, caption?: str }  — a shell command typed out + its output\n"
     "- MemoryScene:  { title: str, cells: [ {label?: str, sub?: str, color?: \"#hex\", highlight?: bool}, ...(up to 12) ], cols?: int(1-6), caption?: str }  — grid of cells: memory, page tables, registers, stack frames\n"
     "- FlowScene:    { title: str, stages: [ {label: str, sub?: str, icon?: icon_name}, ...(2-5) ], caption?: str }  — a packet travels left->right through stages (data flow, a syscall's path)\n"
-    "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], caption?: str }  — quantities / benchmarks / comparisons\n"
+    "- BarChartScene: { title: str, bars: [ {label: str, value: number, color?: \"#hex\"}, ...(2-6) ], unit?: str, caption?: str }  — quantities / benchmarks / comparisons\n"
+    "      SEVERAL series per category (models x methods, before/after per case) — use INSTEAD of bars, never\n"
+    "      \"Model · method\" bar labels: groups: [str, ...(2-6)], series: [ {label: str, values: [number per group], color?: \"#hex\"}, ...(2-4) ]\n"
+    "      (legend automatic). unit: \"%\", \"ms\", \"MiB\"... shown after each value. Beats: one anchor per bar (or per group).\n"
     "- CounterScene: { title: str, value: number, prefix?: str, suffix?: str, label?: str, decimals?: int, caption?: str }  — one big animated metric (throughput, size, count)\n"
     "- QuoteScene:   { quote: str, author?: str, accent?: \"#hex\" }  — a full-screen headline quotation/statement revealed word-by-word (beats: quote; +1 if author)\n"
     "- SplitFocusScene: { title?: str, caption?: str,\n"
@@ -296,6 +300,68 @@ def _to_float(value: Any, default: float) -> float:
         return default
 
 
+def _clip(value: Any, limit: int) -> str:
+    """Whitespace-collapsed text of at most *limit* characters, cut at a word
+    boundary with an ellipsis — never mid-word ("Qwen3-32B · déri"). The
+    renderer fits text to its box, so these limits only bound pathological
+    lengths; a normal label is kept whole."""
+    text = " ".join(str(value if value is not None else "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    space = cut.rfind(" ")
+    if space >= limit * 0.5:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:·—–-") + "…"
+
+
+_HEX_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+# WCAG 2.x 3:1 contrast for graphics against the darkest theme background.
+_MIN_LUMINANCE = 0.115
+
+
+def _luminance(r: float, g: float, b: float) -> float:
+    def channel(c: float) -> float:
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def _readable_color(value: Any) -> Any:
+    """Every theme is dark, so an LLM colour like navy ``#1e3a8a`` (a node's
+    icon and accent line) vanishes into the background. Raise the lightness of
+    a too-dark hex colour, keeping its hue, until it reaches 3:1 contrast.
+    Other values (theme tokens, CSS names) pass through."""
+    if not isinstance(value, str):
+        return value
+    match = _HEX_COLOR_RE.match(value.strip())
+    if not match:
+        return value
+    digits = match.group(1)
+    if len(digits) == 3:
+        digits = "".join(c * 2 for c in digits)
+    r, g, b = (int(digits[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    if _luminance(r, g, b) >= _MIN_LUMINANCE:
+        return value
+    hue, light, sat = colorsys.rgb_to_hls(r, g, b)
+    while light < 0.92 and _luminance(r, g, b) < _MIN_LUMINANCE:
+        light = min(0.92, light + 0.02)
+        r, g, b = colorsys.hls_to_rgb(hue, light, sat)
+    return "#{:02X}{:02X}{:02X}".format(*(round(c * 255) for c in (r, g, b)))
+
+
+def _readable_colors(value: Any) -> Any:
+    """Apply :func:`_readable_color` to every ``color``/``accent`` in props."""
+    if isinstance(value, dict):
+        return {
+            key: _readable_color(item) if key in {"color", "accent"} else _readable_colors(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_readable_colors(item) for item in value]
+    return value
+
+
 def sample_expr(expr: str, x0: float, x1: float, n: int = 48) -> list[list[float]]:
     """Evaluate a single-variable python expression on a grid (sandboxed math)."""
     points: list[list[float]] = []
@@ -338,7 +404,7 @@ def _norm_plot_curves(value: Any, x_range: list[float]) -> list[dict[str, Any]]:
             continue
         entry: dict[str, Any] = {"points": pts}
         if curve.get("label"):
-            entry["label"] = str(curve["label"])[:40]
+            entry["label"] = _clip(curve["label"], 40)
         if curve.get("dash"):
             entry["dash"] = True
         if curve.get("color"):
@@ -363,7 +429,7 @@ def _norm_plot_markers(value: Any, x_range: list[float]) -> list[dict[str, Any]]
             "y": round(y, 4),
         }
         if marker.get("label"):
-            entry["label"] = str(marker["label"])[:24]
+            entry["label"] = _clip(marker["label"], 32)
         if marker.get("guides") is False:
             entry["guides"] = False
         out.append(entry)
@@ -380,7 +446,7 @@ def _as_str_list(value: Any) -> list[str]:
 
 def _bullets_from_narration(text: str, count: int = 3) -> list[str]:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-    bullets = [s[:70].rstrip(" .,:;") for s in sentences[:count]]
+    bullets = [_clip(s, 70).rstrip(" .,:;") for s in sentences[:count]]
     return bullets or ["Key idea"]
 
 
@@ -411,7 +477,7 @@ def _norm_beats(value: Any) -> list[dict[str, str]]:
 def _label_items(value: Any, fallback_label: str, narration: str) -> dict[str, Any]:
     """Coerce a comparison column into {label, items[<=5]}, tolerating LLM variants."""
     if isinstance(value, dict):
-        label = (str(value.get("label") or value.get("title") or fallback_label).strip() or fallback_label)[:40]
+        label = _clip(value.get("label") or value.get("title") or fallback_label, 48) or fallback_label
         items = _as_str_list(value.get("items") or value.get("bullets") or value.get("points"))[:5]
     elif isinstance(value, (list, tuple)):
         label, items = fallback_label, _as_str_list(value)[:5]
@@ -428,16 +494,16 @@ def _norm_cells(value: Any) -> list[dict[str, Any]]:
             if isinstance(item, dict):
                 cell: dict[str, Any] = {}
                 if item.get("label") is not None:
-                    cell["label"] = str(item["label"])[:14]
+                    cell["label"] = _clip(item["label"], 14)
                 if item.get("sub"):
-                    cell["sub"] = str(item["sub"])[:18]
+                    cell["sub"] = _clip(item["sub"], 18)
                 if isinstance(item.get("color"), str):
                     cell["color"] = item["color"]
                 if item.get("highlight"):
                     cell["highlight"] = True
                 out.append(cell or {"label": ""})
             elif isinstance(item, (str, int, float)):
-                out.append({"label": str(item)[:14]})
+                out.append({"label": _clip(item, 14)})
     return out
 
 
@@ -448,13 +514,38 @@ def _norm_bars(value: Any) -> list[dict[str, Any]]:
         for item in list(value)[:6]:
             if isinstance(item, dict):
                 bar: dict[str, Any] = {
-                    "label": (str(item.get("label") or item.get("name") or "?").strip() or "?")[:16],
+                    "label": _clip(item.get("label") or item.get("name") or "?", 40) or "?",
                     "value": _to_float(item.get("value"), 0.0),
                 }
                 if isinstance(item.get("color"), str):
                     bar["color"] = item["color"]
                 out.append(bar)
     return out
+
+
+def _norm_bar_series(props: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]] | None:
+    """Grouped BarChartScene: groups[2-6] x series[1-4], each series holding one
+    value per group. None when the shape is not usable (the scene then falls
+    back to plain ``bars``)."""
+    groups = [_clip(g, 32) for g in _as_str_list(props.get("groups") or props.get("categories"))][:6]
+    raw = props.get("series")
+    if len(groups) < 2 or not isinstance(raw, list):
+        return None
+    series: list[dict[str, Any]] = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        values = item.get("values") or item.get("data")
+        if not isinstance(values, (list, tuple)) or len(values) < len(groups):
+            continue
+        entry: dict[str, Any] = {
+            "label": _clip(item.get("label") or item.get("name") or f"Series {len(series) + 1}", 32),
+            "values": [_to_float(v, 0.0) for v in list(values)[: len(groups)]],
+        }
+        if isinstance(item.get("color"), str):
+            entry["color"] = item["color"]
+        series.append(entry)
+    return (groups, series) if series else None
 
 
 def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap: int = 40) -> list[dict[str, Any]]:
@@ -466,7 +557,7 @@ def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap
                 label = ""
                 for k in keys:
                     if item.get(k):
-                        label = str(item[k]).strip()[:cap]
+                        label = _clip(item[k], cap)
                         break
                 if not label:
                     continue
@@ -480,10 +571,10 @@ def _norm_records(value: Any, keys: tuple[str, ...], extra: tuple[str, ...], cap
                         if icon:
                             record["icon"] = icon
                     elif item.get(k):
-                        record[k] = str(item[k]).strip()[:48]
+                        record[k] = _clip(item[k], 60)
                 out.append(record)
             elif isinstance(item, str) and item.strip():
-                out.append({"label": item.strip()[:cap]})
+                out.append({"label": _clip(item, cap)})
     return out
 
 
@@ -509,7 +600,7 @@ def _norm_panel(value: Any) -> dict[str, Any] | None:
         if value.get("lang"):
             out["lang"] = str(value["lang"])[:24]
         if value.get("codeTitle"):
-            out["codeTitle"] = str(value["codeTitle"])[:60]
+            out["codeTitle"] = _clip(value["codeTitle"], 60)
         return out
     if kind == "terminal":
         command = str(value.get("command") or value.get("cmd") or "").strip()
@@ -530,7 +621,7 @@ def _norm_panel(value: Any) -> dict[str, Any] | None:
             return None
         out = {"kind": "bullets", "bullets": bullets[:4]}
         if value.get("heading"):
-            out["heading"] = str(value["heading"])[:60]
+            out["heading"] = _clip(value["heading"], 60)
         return out
     # plot
     x_range = _clamp_range(value.get("xRange"), -50, 50, (-4.0, 4.0))
@@ -544,9 +635,9 @@ def _norm_panel(value: Any) -> dict[str, Any] | None:
     if value.get("yRange") is not None:
         out["yRange"] = _clamp_range(value.get("yRange"), -200, 200, (-2.0, 6.0))
     if value.get("xLabel"):
-        out["xLabel"] = str(value["xLabel"])[:24]
+        out["xLabel"] = _clip(value["xLabel"], 32)
     if value.get("yLabel"):
-        out["yLabel"] = str(value["yLabel"])[:24]
+        out["yLabel"] = _clip(value["yLabel"], 32)
     return out
 
 
@@ -640,6 +731,7 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             degrade("DiagramScene without nodes")
         for node in nodes:
             if isinstance(node, dict):
+                node["label"] = _clip(node.get("label") or node.get("id") or "", 48)
                 node["x"] = max(-6.0, min(6.0, _to_float(node.get("x"), 0.0)))
                 node["y"] = max(-3.0, min(3.0, _to_float(node.get("y"), 0.0)))
                 icon = _norm_icon(node.get("icon"))
@@ -648,7 +740,11 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
                 else:
                     node.pop("icon", None)
         props["nodes"] = nodes
-        props["edges"] = props.get("edges") if isinstance(props.get("edges"), list) else []
+        edges = props.get("edges") if isinstance(props.get("edges"), list) else []
+        for edge in edges:
+            if isinstance(edge, dict) and edge.get("label"):
+                edge["label"] = _clip(edge["label"], 40)
+        props["edges"] = edges
     elif component == "ComparisonScene":
         if not isinstance(props.get("left"), (dict, list)) or not isinstance(props.get("right"), (dict, list)):
             degrade("ComparisonScene missing a column — derived from narration")
@@ -661,7 +757,7 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             layers = [{"label": b} for b in _bullets_from_narration(narration, 4)]
         props["layers"] = layers
     elif component == "TimelineScene":
-        steps = _norm_records(props.get("steps"), ("label", "name", "title"), ("sub",), cap=36)
+        steps = _norm_records(props.get("steps"), ("label", "name", "title"), ("sub",), cap=48)
         if not steps:
             degrade("TimelineScene without steps — derived from narration")
             steps = [{"label": b} for b in _bullets_from_narration(narration, 4)]
@@ -683,28 +779,41 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
         props["cells"] = cells
         props["cols"] = max(1, min(6, int(_to_float(props.get("cols"), 4))))
     elif component == "FlowScene":
-        stages = _norm_records(props.get("stages"), ("label", "name", "title"), ("sub", "icon"), cap=24)
+        stages = _norm_records(props.get("stages"), ("label", "name", "title"), ("sub", "icon"), cap=40)
         if not stages:
             degrade("FlowScene without stages — derived from narration")
             stages = [{"label": b} for b in _bullets_from_narration(narration, 4)]
         props["stages"] = stages
     elif component == "BarChartScene":
-        bars = _norm_bars(props.get("bars"))
-        if not bars:
-            degrade("BarChartScene without bars — INVENTED values injected")
-            sentences = _bullets_from_narration(narration, 4)
-            bars = [
-                {"label": (s.split()[0] if s.split() else "?")[:12], "value": float((i + 2) * 2)}
-                for i, s in enumerate(sentences)
-            ]
-        props["bars"] = bars
+        grouped = _norm_bar_series(props)
+        props.pop("categories", None)
+        if grouped:
+            props["groups"], props["series"] = grouped
+            props.pop("bars", None)
+        else:
+            props.pop("groups", None)
+            props.pop("series", None)
+            bars = _norm_bars(props.get("bars"))
+            if not bars:
+                degrade("BarChartScene without bars — INVENTED values injected")
+                sentences = _bullets_from_narration(narration, 4)
+                bars = [
+                    {"label": _clip(s.split()[0] if s.split() else "?", 12), "value": float((i + 2) * 2)}
+                    for i, s in enumerate(sentences)
+                ]
+            props["bars"] = bars
+        unit = _clip(props.get("unit"), 12) if props.get("unit") is not None else ""
+        if unit:
+            props["unit"] = unit
+        else:
+            props.pop("unit", None)
     elif component == "CounterScene":
         if props.get("value") is None:
             degrade("CounterScene without value — placeholder 100 injected")
         props["value"] = _to_float(props.get("value"), 100.0)
         for key in ("prefix", "suffix", "label"):
             if props.get(key) is not None:
-                props[key] = str(props[key])[:40]
+                props[key] = _clip(props[key], 40)
         if props.get("decimals") is not None:
             props["decimals"] = max(0, min(3, int(_to_float(props.get("decimals"), 0))))
     elif component == "QuoteScene":
@@ -713,10 +822,10 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             degrade("QuoteScene without a quote — fell back to a narration bullet list")
             scene["component"] = "BulletScene"
             return {"title": title, "bullets": _bullets_from_narration(narration, 3)}
-        out: dict[str, Any] = {"quote": quote[:240]}
+        out: dict[str, Any] = {"quote": _clip(quote, 240)}
         author = str(props.get("author") or "").strip()
         if author:
-            out["author"] = author[:80]
+            out["author"] = _clip(author, 80)
         if props.get("accent"):
             out["accent"] = str(props["accent"])
         return out
@@ -729,9 +838,9 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             return {"title": title, "bullets": _bullets_from_narration(narration, 4)}
         out = {"left": left, "right": right}
         if props.get("title"):
-            out["title"] = str(props["title"])[:80]
+            out["title"] = _clip(props["title"], 80)
         if props.get("caption"):
-            out["caption"] = str(props["caption"])[:120]
+            out["caption"] = _clip(props["caption"], 160)
         return out
     elif component == "ZoomNarrativeScene":
         raw_items = props.get("canvas") if isinstance(props.get("canvas"), list) else []
@@ -746,14 +855,14 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             seen_ids.add(iid)
             node: dict[str, Any] = {
                 "id": iid,
-                "label": str(it.get("label") or iid)[:48],
+                "label": _clip(it.get("label") or iid, 48),
                 "x": max(-6.0, min(6.0, _to_float(it.get("x"), 0.0))),
                 "y": max(-3.0, min(3.0, _to_float(it.get("y"), 0.0))),
             }
             if it.get("sub"):
-                node["sub"] = str(it["sub"])[:48]
+                node["sub"] = _clip(it["sub"], 48)
             if it.get("detail"):
-                node["detail"] = str(it["detail"])[:120]
+                node["detail"] = _clip(it["detail"], 120)
             items.append(node)
         if len(items) < 2:
             degrade("ZoomNarrativeScene with fewer than 2 canvas items — fell back to a bullet list")
@@ -783,7 +892,7 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             if not nid or nid in ids:
                 continue
             ids.add(nid)
-            node = {"id": nid, "label": str(nd.get("label") or nid)[:40]}
+            node = {"id": nid, "label": _clip(nd.get("label") or nid, 40)}
             if nd.get("group"):
                 node["group"] = str(nd["group"])[:24]
             nodes.append(node)
@@ -803,7 +912,7 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
             if a in ids and b in ids and a != b:
                 link = {"a": a, "b": b}
                 if lk.get("label"):
-                    link["label"] = str(lk["label"])[:32]
+                    link["label"] = _clip(lk["label"], 32)
                 links.append(link)
         return {"nodes": nodes, "links": links}
     elif component == "FigureScene":
@@ -815,7 +924,7 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
                 item = {"label": item}
             if not isinstance(item, dict):
                 continue
-            label = " ".join(str(item.get("label") or item.get("text") or "").split())[:60]
+            label = _clip(item.get("label") or item.get("text") or "", 60)
             if not label:
                 continue
             callout: dict[str, Any] = {"label": label}
@@ -827,7 +936,7 @@ def _normalise_props(scene: dict[str, Any], degradations: list[str] | None = Non
         # figure (assets.py); never trust them from the model.
         out = {"title": title, "figure_id": figure_id, "callouts": callouts}
         if props.get("caption"):
-            out["caption"] = str(props["caption"])[:120]
+            out["caption"] = _clip(props["caption"], 160)
         return out
     elif component in {"ImageScene", "FootageScene"}:
         query = " ".join(str(props.get("asset_query") or props.get("query") or title).split())[:180]
@@ -909,7 +1018,10 @@ def normalize_remotion_blueprint(data: Any, target_duration_seconds: int) -> dic
         )
         scene["component"] = _normalise_component(scene.get("component"))
         scene["visual_intent"] = scene.get("visual_intent") or scene.get("visual") or scene.get("visual_description") or ""
-        scene["props"] = _normalise_props(scene, degradations)
+        props = _normalise_props(scene, degradations)
+        if isinstance(props.get("caption"), str):
+            props["caption"] = _clip(props["caption"], 160)
+        scene["props"] = _readable_colors(props)
         scene["beats"] = _norm_beats(scene.get("beats") or scene.get("anchors") or scene.get("cues"))
         raw_source_ids = scene.get("source_ids") or scene.get("sources") or []
         if isinstance(raw_source_ids, str):
@@ -1058,6 +1170,9 @@ _LIST_PROPS = {
 
 def _items_count(component: str, props: dict[str, Any]) -> int | None:
     """Number of cue-able visual items the component will display, or None."""
+    if component == "BarChartScene" and props.get("series"):
+        groups = props.get("groups")
+        return len(groups) if isinstance(groups, (list, tuple)) else 0
     if component in _LIST_PROPS:
         value = props.get(_LIST_PROPS[component])
         return len(value) if isinstance(value, (list, tuple)) else 0
@@ -1113,7 +1228,13 @@ def validate_scene_payload(scene: dict[str, Any]) -> list[str]:
             "keep the strongest items and move the rest into the narration"
         )
 
-    if component in _LIST_PROPS:
+    if component == "BarChartScene" and props.get("series"):
+        if _norm_bar_series(props) is None:
+            errors.append(
+                "grouped BarChartScene needs groups (2-6 strings) and series "
+                "[{label, values: one number per group}]"
+            )
+    elif component in _LIST_PROPS:
         key = _LIST_PROPS[component]
         value = props.get(key)
         if not isinstance(value, (list, tuple)) or len([v for v in value if v]) < 2:

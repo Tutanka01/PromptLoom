@@ -45,6 +45,9 @@ _FIGURE_ID_RE = re.compile(r"^fig_\d{2}$")
 _FIGURE_TARGET_PX = 2400
 _MAX_FIGURES = 24
 _MIN_TEXT_CHARS = 400
+# Bump when a change to the extraction alters what is stored (figure crops,
+# sections): re-uploading a PDF stored by an older extractor re-extracts it.
+EXTRACTOR_VERSION = 2
 
 
 class DocumentError(ValueError):
@@ -97,6 +100,8 @@ class Document(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     # Vision model that produced figure descriptions/regions, if any.
     figures_analyzed_by: str | None = None
+    # Documents stored before versioning read as 1.
+    extractor_version: int = 1
 
 
 def is_document_id(value: str) -> bool:
@@ -152,8 +157,13 @@ class DocumentStore:
         digest = hashlib.sha256(data).hexdigest()
         document_id = f"doc_{digest[:24]}"
         if self.exists(document_id):
-            self.touch(document_id)
-            return self.load(document_id)
+            stored = self.load(document_id)
+            if stored.extractor_version >= EXTRACTOR_VERSION:
+                self.touch(document_id)
+                return stored
+            logger.info(
+                "document.reextract document_id=%s from_version=%s", document_id, stored.extractor_version
+            )
         self.root.mkdir(parents=True, exist_ok=True)
         staging = self.root / f".staging-{document_id}-{os.getpid()}-{time.monotonic_ns()}"
         staging.mkdir(parents=True)
@@ -165,16 +175,25 @@ class DocumentStore:
                 filename=_safe_filename(filename),
                 sha256=digest,
                 created_at=datetime.now(timezone.utc).isoformat(),
+                extractor_version=EXTRACTOR_VERSION,
                 **extracted,
             )
             (staging / "document.json").write_text(document.model_dump_json(indent=2) + "\n", encoding="utf-8")
             final = self.root / document_id
+            # An older extraction is moved aside, then replaced.
+            stale = self.root / f".stale-{document_id}-{os.getpid()}-{time.monotonic_ns()}"
+            try:
+                final.rename(stale)
+            except OSError:
+                pass
             try:
                 staging.rename(final)
             except OSError:
                 # A concurrent upload of the same file won the race.
                 if not self.exists(document_id):
                     raise
+            finally:
+                shutil.rmtree(stale, ignore_errors=True)
             return self.load(document_id)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
@@ -192,7 +211,7 @@ def gc_documents(root: Path | str, ttl_days: float) -> int:
         if not base.is_dir():
             return 0
         for entry in base.iterdir():
-            if entry.name.startswith(".staging-") and entry.stat().st_mtime < cutoff:
+            if entry.name.startswith((".staging-", ".stale-")) and entry.stat().st_mtime < cutoff:
                 shutil.rmtree(entry, ignore_errors=True)
                 continue
             if not is_document_id(entry.name):
@@ -315,7 +334,21 @@ def _page_blocks(page: Any, page_index: int) -> list[_Block]:
     return blocks
 
 
-def _page_graphics(page: Any) -> list[Any]:
+def _leaves_ink(drawing: dict[str, Any]) -> bool:
+    """False for a path invisible on a white page: a fill-only white (or fully
+    transparent) shape, typically the background canvas of an exported plot."""
+    if "s" in str(drawing.get("type") or ""):
+        return True
+    fill = drawing.get("fill")
+    if not fill or drawing.get("fill_opacity") == 0:
+        return False
+    return not all(float(c) >= 0.97 for c in fill)
+
+
+def _page_graphics(page: Any, ink_only: bool = False) -> list[Any]:
+    """Images and clustered vector drawings of *page*. A plot's white canvas
+    is kept by default (it spans the legend and axis titles); ``ink_only``
+    drops it, for a canvas that overlaps its own caption line."""
     import pymupdf
 
     page_area = _rect_area(page.rect)
@@ -325,7 +358,10 @@ def _page_graphics(page: Any) -> list[Any]:
         if rect.width >= 16 and rect.height >= 16 and _rect_area(rect) < 0.9 * page_area:
             rects.append(rect)
     try:
-        clusters = page.cluster_drawings(x_tolerance=6, y_tolerance=6)
+        drawings = page.get_drawings()
+        if ink_only:
+            drawings = [d for d in drawings if _leaves_ink(d)]
+        clusters = page.cluster_drawings(drawings=drawings, x_tolerance=6, y_tolerance=6) if drawings else []
     except Exception as exc:  # pragma: no cover - defensive against odd PDFs
         logger.warning("document.drawings.failed page=%s error=%s", page.number, exc)
         clusters = []
@@ -355,6 +391,24 @@ def _column_span(caption: tuple[float, float, float, float], width: float) -> tu
     if x1 <= 0.58 * width:
         return 0.0, 0.5 * width + 12
     return 0.5 * width - 12, width
+
+
+def _carve_out(region: Any, rect: Any) -> Any:
+    """Shrink *region* so it no longer overlaps *rect*, cutting the side that
+    costs the least area. Keeps *region* when every cut would cost more than
+    30% of it (the overlap is then not a sliver on an edge)."""
+    import pymupdf
+
+    if not region.intersects(rect):
+        return region
+    options = [
+        pymupdf.Rect(rect.x1 + 1, region.y0, region.x1, region.y1),
+        pymupdf.Rect(region.x0, region.y0, rect.x0 - 1, region.y1),
+        pymupdf.Rect(region.x0, rect.y1 + 1, region.x1, region.y1),
+        pymupdf.Rect(region.x0, region.y0, region.x1, rect.y0 - 1),
+    ]
+    best = max(options, key=_rect_area)
+    return best if _rect_area(best) >= 0.7 * _rect_area(region) else region
 
 
 def _figure_region(
@@ -418,7 +472,9 @@ def _figure_region(
                         continue
             region |= g
             changed = True
-    # Pull in the figure's own text (axis labels, legends, box labels).
+    # Pull in the figure's own text (axis labels, legends, box labels). Text
+    # set smaller than the body is figure text even when it only touches the
+    # region: taken whole, never clipped mid-label.
     skip_ids = {id(b) for b in body} | {id(c) for c in captions}
     for _ in range(2):
         grown = pymupdf.Rect(region) + (-10, -10, 10, 10)
@@ -427,13 +483,23 @@ def _figure_region(
                 continue
             rect = pymupdf.Rect(b.bbox)
             inside = _rect_area(rect & grown)
-            if inside and inside >= 0.5 * _rect_area(rect):
+            if inside and (inside >= 0.5 * _rect_area(rect) or b.size < body_size - 0.5):
                 region |= rect
     region = (region + (-4, -4, 4, 4)) & page.rect
     if direction == "above":
         region.y1 = min(region.y1, cy0 - 1)
     else:
         region.y0 = max(region.y0, cy1 + 1)
+    # Never clip a line of running text (the next column, a paragraph above or
+    # below) into the crop: it would show as a sliver of cut words on the
+    # figure's edge. A line mostly inside the region is figure content.
+    for b in blocks:
+        if b is caption or not (b in others or _is_body(b, body_size, width)):
+            continue
+        for line in b.lines:
+            rect = pymupdf.Rect(line.bbox)
+            if _rect_area(rect & region) < 0.6 * max(_rect_area(rect), 1e-6):
+                region = _carve_out(region, rect)
     if region.width < 60 or region.height < 40 or _rect_area(region) < 0.012 * width * height:
         return None
     return region
@@ -575,11 +641,18 @@ def extract_pdf(data: bytes, out_dir: Path, *, max_pages: int) -> dict[str, Any]
             if not captions:
                 continue
             graphics = _page_graphics(page)
+            ink_graphics = None
             for caption in captions:
                 match = _CAPTION_RE.match(caption.lines[0].text)
                 assert match is not None
                 label = f"Figure {match.group(2)}"
                 region = _figure_region(page, caption, graphics, blocks, body_size, captions)
+                if region is None:
+                    # A white canvas overlapping its own caption hides the
+                    # figure: retry on the inked paths only.
+                    if ink_graphics is None:
+                        ink_graphics = _page_graphics(page, ink_only=True)
+                    region = _figure_region(page, caption, ink_graphics, blocks, body_size, captions)
                 if region is None:
                     continue
                 # "Figure 3 shows ..." in running text is not a caption; a real

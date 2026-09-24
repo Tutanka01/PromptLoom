@@ -87,7 +87,7 @@ The blueprint composes these by `{component, props}`. Signatures: see
 | `ScaleBounce` | `text, fontSize, color, delay` | spring emphasis on a single term |
 | `MemoryGrid` | `cells[{label?,sub?,color?,highlight?}], cols, x, y, reveal, accent` | **cells**: memory blocks, page-table entries, registers, stack frames, buffers |
 | `FlowToken` | `from, to, progress, color, label, size` | a packet/token travelling a path (route it ABOVE/BELOW the row it describes) |
-| `BarChart` | `bars[{label,value,color?}], width, height, grow, maxValue` | quantities / benchmarks (the discrete complement to `Plot`) |
+| `BarChart` | `bars[{label,value,color?}]` or `groups[] + series[{label,values[],color?}]`, `width, height, grow, reveal[] (per category), maxValue, unit` | quantities / benchmarks (the discrete complement to `Plot`); labels never collide (fitted, horizontal layout when long), legend for series |
 | `Counter` | `value, progress, prefix, suffix, decimals, fontSize, color` | a number counting up to a metric |
 
 ## Layout primitives — `components/primitives`
@@ -97,8 +97,9 @@ Positioning uses Manim-style coordinates mapped to pixels via `style/tokens`
 
 | Component | Signature (key props) | Use for |
 |---|---|---|
-| `TitleBar` | `label, opacity` | scene title + underline |
-| `Card` | `x, y, w, h, accent, glow, opacity, fontPx, children` | a labelled node (any concept box) |
+| `FitText` | `text, width, maxLines, max, min?, height?, weight, color, align` | any LLM-written label in a fixed box: largest size that fits (`fitText`/`fitTogether` from `style/fit` give the size) |
+| `TitleBar` | `label, opacity` | scene title + underline (one line, shrinks to fit) |
+| `Card` | `x, y, w, h, accent, glow, opacity, fontPx, children` | a labelled node (any concept box); a string child is fitted to the card |
 | `CodeCard` | Card, mono | short mono label |
 | `Pill` | `x, y, w, label, color, opacity` | small tag / quantity chip |
 | `Zone` | `x, y, w, h, color, fill, label, strokeWidth` | a region / grouping |

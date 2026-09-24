@@ -465,7 +465,9 @@ the render):
      `MemoryGrid` (cells: memory/page-tables/registers), `FlowToken` (packet on
      a path), `BarChart`, `Counter`.
    - Layout: `TitleBar`, `Card`, `CodeCard`, `Pill`, `KernelBadge`, `HardwareBox`,
-     `Zone`, `Arrow`, `Terminal`, `CrossMark`, `Caption`, `Background`.
+     `Zone`, `Arrow`, `Terminal`, `CrossMark`, `Caption`, `Background`, `FitText`.
+   - Text fitting: `fitText`, `fitTogether`, `measureText`, `wrapText` — size any
+     label that sits in a fixed box instead of hard-coding a font size.
    - Tokens/coords: `colors`, `fonts`, `fontSize`, `DIM_OPACITY`, `mx`, `my`,
      `mu`, `atCenter`, `WIDTH`, `HEIGHT`.
    - Beats: `beat`, `appear`, `dimAt`, `tailFade`.

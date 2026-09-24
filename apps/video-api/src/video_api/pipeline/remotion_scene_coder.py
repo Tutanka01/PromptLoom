@@ -84,6 +84,7 @@ Hard rules (a violation makes the scene unusable):
 - `colors` are themed CSS variables. For translucency use `alpha(color, 0.2)` from ../../lib — NEVER string-concatenate a hex suffix like `${color}33` (invalid on a themed colour). In SVG, set colours via `style={{ stroke, fill }}`, not `stroke=`/`fill=` presentation attributes (CSS variables do not resolve there).
 - Prefer the rich catalog from ../../lib (AmbientBackground, MathFormula, CodeBlock, Plot, TitleBar, Card, Arrow, Caption, TextReveal, BlurReveal, MemoryGrid, FlowToken, BarChart, Counter, Zone, Terminal, KernelBadge, HardwareBox, Icon). Compose a real, topic-specific visual that matches the narration; never leave the frame blank.
 - Any chart with x/y axes MUST be the catalog <Plot> (multi-curve via `series`, named points via `markers`, auto-fitted axes with numeric ticks). Never hand-roll SVG axes, gridlines or curves.
+- Text in a box of fixed size (a node, a chip, a column, a bar label) goes through <FitText text={label} width={px} maxLines={2} max={28} /> from ../../lib (or `fitText(...)` for the size), never a fixed fontSize: an LLM-written label of unknown length otherwise overflows its box or overlaps its neighbour. A plain-string <Card> child is fitted automatically.
 - No state, no effects, no timers, no randomness. Pure render from the current frame."""
 
 

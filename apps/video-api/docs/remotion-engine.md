@@ -53,7 +53,7 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 | `TerminalScene`      | `title, command, output?, caption?` |
 | `MemoryScene`        | `title, cells[{label?,sub?,color?,highlight?}][≤12], cols?(1-6), caption?` |
 | `FlowScene`          | `title, stages[{label,sub?}][2-5], caption?` (paquet qui traverse) |
-| `BarChartScene`      | `title, bars[{label,value,color?}][2-6], caption?` |
+| `BarChartScene`      | `title, bars[{label,value,color?}][2-6]` ou groupé `groups[2-6]` + `series[{label,values[],color?}][1-4]` (légende auto), `unit?, caption?` ; une barre (ou un groupe) par ancre ; bascule en barres horizontales si les libellés sont longs |
 | `CounterScene`       | `title, value, prefix?, suffix?, label?, decimals?, caption?` |
 | `QuoteScene`         | `quote, author?, accent?` (citation plein écran mot-à-mot) |
 | `SplitFocusScene`    | `title?, left{kind,…}, right{kind,…}, caption?` ; kinds: `code\|plot\|formula\|bullets\|terminal` |
@@ -61,7 +61,30 @@ défaut **30** via `VIDEO_API_RENDER_FPS`). Le rendu est **silencieux**
 | `NetworkMapScene`    | `nodes[{id,label,group?}], links[{a,b,label?}]` (positions auto-calculées en Python) |
 | `ImageScene`         | `title, asset_query` puis `src` local, `motion?, credit?` |
 | `FootageScene`       | `title, asset_query` puis `src` local, `mediaDurationSeconds, credit?` |
-| `FigureScene`        | `title, figure_id, callouts[{label, region?}][1-5], caption?` puis `src` local, `aspect`, `credit`, `callouts[].box` (figure d'un PDF envoye, jamais rognee ; zoom + projecteur sur la zone de chaque annotation) |
+| `FigureScene`        | `title, figure_id, callouts[{label, region?}][1-5], caption?` puis `src` local, `aspect`, `credit`, `callouts[].box` (figure d'un PDF envoye, jamais rognee ; zoom + projecteur sur la zone de chaque annotation ; annotations en une seule rangée pour une figure large ; le préfixe « Fig. N — » de la légende est retiré, le crédit le porte déjà) |
+
+### Mise en page : le texte s'adapte à sa boîte
+
+Les libellés viennent du LLM, leur longueur est inconnue : aucune scène de la
+palette ne donne une taille fixe à un texte placé dans une boîte fixe.
+`remotion/src/style/fit.ts` mesure le texte (canvas, même Chromium et même pile
+de polices que le DOM) et `fitText`/`fitTogether` renvoient la plus grande
+taille, bornée, à laquelle il tient dans la largeur sur N lignes ; `FitText`
+(primitives) l'applique. `TitleBar` tient toujours sur une ligne, `Caption` sur
+deux lignes équilibrées, un enfant texte de `Card` est ajusté automatiquement.
+Les scènes placent leur contenu dans la bande libre entre le titre et la
+légende (`STAGE_TOP`/`stageBottom`). Nœuds de `DiagramScene` dimensionnés à
+leur libellé (bornés par le voisin), flèches arrêtées au bord des cartes (pointe
+visible) et libellés d'arêtes affichés ; libellés de `TimelineScene`/`FlowScene`
+bornés à leur emplacement ; colonnes de `ComparisonScene` dimensionnées au
+contenu et centrées.
+
+Côté Python, `normalize_remotion_blueprint` ne coupe plus un libellé au milieu
+d'un mot : `_clip` coupe au dernier mot entier avec « … » et ses bornes sont
+larges (libellé de barre 40 caractères, légende 160), le rendu se chargeant de
+l'ajustement. Toute couleur hexadécimale d'un blueprint (`color`, `accent`)
+trop sombre pour les thèmes (tous sombres) est éclaircie à teinte constante
+jusqu'à un contraste 3:1 (`_readable_color`).
 
 Transitions inter-scènes : le fond `AmbientBackground` reste persistant et des
 overlays de coupe (`minimal`, `editorial`, `cinematic`) sont poses a la frontiere
